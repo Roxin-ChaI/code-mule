@@ -21,6 +21,13 @@ from .parsing import (
     parse_progress_report_response,
     parse_review_response,
 )
+from .prompts import (
+    SUPERVISOR_SYSTEM_POLICY,
+    build_impact_analysis_prompt,
+    build_plan_prompt,
+    build_progress_report_prompt,
+    build_review_prompt,
+)
 from .schemas import (
     impact_analysis_response_schema,
     plan_response_schema,
@@ -41,7 +48,12 @@ __all__ = [
     "ReviewResult",
     "SupervisorModelClient",
     "SupervisorOperation",
+    "SUPERVISOR_SYSTEM_POLICY",
     "TaskProposal",
+    "build_impact_analysis_prompt",
+    "build_plan_prompt",
+    "build_progress_report_prompt",
+    "build_review_prompt",
     "impact_analysis_response_schema",
     "parse_impact_analysis_response",
     "parse_plan_response",
