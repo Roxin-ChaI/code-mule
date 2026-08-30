@@ -34,6 +34,7 @@ from .schemas import (
     progress_report_response_schema,
     review_response_schema,
 )
+from .service import SupervisorService
 
 __all__ = [
     "ImpactAnalysisRequest",
@@ -48,6 +49,7 @@ __all__ = [
     "ReviewResult",
     "SupervisorModelClient",
     "SupervisorOperation",
+    "SupervisorService",
     "SUPERVISOR_SYSTEM_POLICY",
     "TaskProposal",
     "build_impact_analysis_prompt",
