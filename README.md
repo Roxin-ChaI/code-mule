@@ -60,3 +60,5 @@ Orchestrator
 ## Status
 
 Early development.
+
+The OpenAI Supervisor provider integration is in v0.1.0 development. Autonomous coding, Codex integration, and production readiness are not yet available.
