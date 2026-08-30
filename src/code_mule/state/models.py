@@ -1,0 +1,35 @@
+"""Snapshot model for durable Code Mule project state."""
+
+from dataclasses import dataclass
+
+from code_mule.domain.models import (
+    ChangeRequest,
+    Decision,
+    ExecutionReport,
+    ImpactAnalysis,
+    Milestone,
+    Plan,
+    Project,
+    ProjectEvent,
+    QualityStatus,
+    Requirement,
+    Task,
+)
+
+
+@dataclass
+class ProjectState:
+    project: Project
+    requirements: tuple[Requirement, ...]
+    plans: tuple[Plan, ...]
+    milestones: tuple[Milestone, ...]
+    tasks: tuple[Task, ...]
+    change_requests: tuple[ChangeRequest, ...]
+    impact_analyses: tuple[ImpactAnalysis, ...]
+    decisions: tuple[Decision, ...]
+    execution_reports: tuple[ExecutionReport, ...]
+    quality_status: QualityStatus | None
+    events: tuple[ProjectEvent, ...]
+
+
+__all__ = ["ProjectState"]
