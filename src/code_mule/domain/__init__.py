@@ -22,6 +22,7 @@ from .models import (
     Requirement,
     Task,
 )
+from .state_machine import InvalidProjectTransition, can_transition, validate_transition
 
 __all__ = [
     "BossCommandType",
@@ -30,6 +31,7 @@ __all__ = [
     "Decision",
     "ExecutionReport",
     "ImpactAnalysis",
+    "InvalidProjectTransition",
     "Milestone",
     "Plan",
     "PlanStatus",
@@ -42,4 +44,6 @@ __all__ = [
     "SupervisorDecisionType",
     "Task",
     "TaskStatus",
+    "can_transition",
+    "validate_transition",
 ]
