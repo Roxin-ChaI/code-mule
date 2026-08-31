@@ -21,6 +21,21 @@ SupervisorService
 
 The adapter sends the shared Supervisor policy through `instructions`, the current ProjectState-derived prompt through `input`, and the Phase 4 response schema through `text.format`. Its format contains only the DeepSeek-documented `type: json_schema`, `name`, and `schema` fields. It accepts only a `completed` response with non-empty `output_text` containing a JSON object. The local Phase 4 parser then performs final strict, fail-closed validation.
 
+An `incomplete` response is also fail-closed. The adapter reads only the public
+`incomplete_details.reason` field and preserves it as typed
+`DeepSeekSupervisorResponseError.incomplete_reason` metadata. This distinguishes
+`max_output_tokens`, `content_filter`, and unavailable details without dumping
+the response, prompt, headers, or credentials. Failed responses may expose only
+the public error code and message summary. Neither case is retried, repaired,
+sent to a fallback model, or used to change reasoning configuration.
+
+`DeepSeekSupervisorConfig.max_output_tokens` remains an explicit production
+composition option. `None` means Code Mule omits the request field completely;
+a positive integer is forwarded unchanged. DeepSeek counts both reasoning
+tokens and visible output tokens against this limit. Manual correctness E2E
+compositions therefore use `None` instead of an unnecessary low hard-coded cap;
+they do not guess a replacement budget or change the model's thinking behavior.
+
 ## State Boundary
 
 ProjectState remains the Source of Truth. The DeepSeek Responses API is stateless, so every request contains the complete current context needed for reasoning. The adapter does not send `conversation`, `previous_response_id`, or `store`, and remote conversation state is not a correctness or recovery dependency.

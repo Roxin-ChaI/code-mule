@@ -181,8 +181,72 @@ class DeepSeekSupervisorResponseTests(unittest.TestCase):
                     self._call(provider)
                 self.assertEqual(len(calls.calls), 1)
 
-    def test_non_completed_statuses_are_rejected_with_status_in_message(self):
-        for status in ("failed", "incomplete", "in_progress", "unknown"):
+    def test_incomplete_max_output_tokens_preserves_typed_reason_without_retry(self):
+        provider, responses = make_provider(
+            SimpleNamespace(
+                status="incomplete",
+                incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+                secret_internal_value="must-not-leak",
+            )
+        )
+        with self.assertRaises(DeepSeekSupervisorResponseError) as context:
+            self._call(provider)
+        error = context.exception
+        self.assertEqual(error.status, "incomplete")
+        self.assertEqual(error.incomplete_reason, "max_output_tokens")
+        self.assertIn("reason='max_output_tokens'", str(error))
+        self.assertNotIn("must-not-leak", str(error))
+        self.assertEqual(len(responses.calls), 1)
+
+    def test_incomplete_content_filter_preserves_typed_reason_without_retry(self):
+        provider, responses = make_provider(
+            SimpleNamespace(
+                status="incomplete",
+                incomplete_details=SimpleNamespace(reason="content_filter"),
+            )
+        )
+        with self.assertRaises(DeepSeekSupervisorResponseError) as context:
+            self._call(provider)
+        self.assertEqual(context.exception.status, "incomplete")
+        self.assertEqual(context.exception.incomplete_reason, "content_filter")
+        self.assertIn("content_filter", str(context.exception))
+        self.assertEqual(len(responses.calls), 1)
+
+    def test_incomplete_without_details_fails_closed_without_attribute_error(self):
+        for response in (
+            SimpleNamespace(status="incomplete", incomplete_details=None),
+            SimpleNamespace(status="incomplete"),
+        ):
+            with self.subTest(response=response):
+                provider, responses = make_provider(response)
+                with self.assertRaises(DeepSeekSupervisorResponseError) as context:
+                    self._call(provider)
+                self.assertEqual(context.exception.status, "incomplete")
+                self.assertIsNone(context.exception.incomplete_reason)
+                self.assertIn("reason=None", str(context.exception))
+                self.assertEqual(len(responses.calls), 1)
+
+    def test_failed_response_exposes_only_safe_public_error_summary(self):
+        provider, responses = make_provider(
+            SimpleNamespace(
+                status="failed",
+                error={"code": "server_error", "message": "request failed"},
+                private_payload="must-not-leak",
+            )
+        )
+        with self.assertRaises(DeepSeekSupervisorResponseError) as context:
+            self._call(provider)
+        error = context.exception
+        self.assertEqual(error.status, "failed")
+        self.assertEqual(error.error_code, "server_error")
+        self.assertEqual(error.error_message, "request failed")
+        self.assertIn("code='server_error'", str(error))
+        self.assertIn("message='request failed'", str(error))
+        self.assertNotIn("must-not-leak", str(error))
+        self.assertEqual(len(responses.calls), 1)
+
+    def test_other_non_completed_statuses_preserve_typed_status_without_retry(self):
+        for status in ("in_progress", "unknown"):
             with self.subTest(status=status):
                 provider, responses = make_provider(
                     SimpleNamespace(status=status, output_text="{}")
@@ -190,6 +254,8 @@ class DeepSeekSupervisorResponseTests(unittest.TestCase):
                 with self.assertRaises(DeepSeekSupervisorResponseError) as context:
                     self._call(provider)
                 self.assertIn(status, str(context.exception))
+                self.assertEqual(context.exception.status, status)
+                self.assertIsNone(context.exception.incomplete_reason)
                 self.assertEqual(len(responses.calls), 1)
 
     def test_underlying_client_exception_propagates_without_retry(self):

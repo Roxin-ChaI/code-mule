@@ -53,6 +53,10 @@ def _build_compatibility_client(deepseek_api_key: str) -> OpenAI:
     )
 
 
+def _build_supervisor_config(model: str) -> DeepSeekSupervisorConfig:
+    return DeepSeekSupervisorConfig(model=model, max_output_tokens=None)
+
+
 def main() -> int:
     print("REAL DEEPSEEK + CODEX MULTI-TASK PROJECT — MANUAL ONLY")
     print("This makes real DeepSeek API calls and may incur billing.")
@@ -71,7 +75,7 @@ def main() -> int:
     supervisor = SupervisorService(
         DeepSeekSupervisorModelClient(
             _build_compatibility_client(deepseek_api_key),
-            DeepSeekSupervisorConfig(model=model, max_output_tokens=1000),
+            _build_supervisor_config(model),
         )
     )
     with TemporaryDirectory(prefix="code-mule-manual-project-") as temporary:

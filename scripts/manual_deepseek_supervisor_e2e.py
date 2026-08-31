@@ -32,6 +32,10 @@ def _build_compatibility_client(deepseek_api_key: str) -> OpenAI:
     )
 
 
+def _build_supervisor_config(model: str) -> DeepSeekSupervisorConfig:
+    return DeepSeekSupervisorConfig(model=model, max_output_tokens=None)
+
+
 def _minimal_project_state() -> ProjectState:
     timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
     return ProjectState(
@@ -71,7 +75,7 @@ def main() -> int:
     compatibility_client = _build_compatibility_client(deepseek_api_key)
     provider = DeepSeekSupervisorModelClient(
         compatibility_client,
-        DeepSeekSupervisorConfig(model=model, max_output_tokens=600),
+        _build_supervisor_config(model),
     )
     supervisor = SupervisorService(provider)
     report = supervisor.report_progress(

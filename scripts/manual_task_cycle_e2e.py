@@ -50,6 +50,10 @@ def _build_compatibility_client(deepseek_api_key: str) -> OpenAI:
     )
 
 
+def _build_supervisor_config(model: str) -> DeepSeekSupervisorConfig:
+    return DeepSeekSupervisorConfig(model=model, max_output_tokens=None)
+
+
 def _initial_state(now: datetime) -> ProjectState:
     task = Task(
         id="manual-task-cycle-task",
@@ -104,7 +108,7 @@ def main() -> int:
     supervisor = SupervisorService(
         DeepSeekSupervisorModelClient(
             compatibility_client,
-            DeepSeekSupervisorConfig(model=model, max_output_tokens=1000),
+            _build_supervisor_config(model),
         )
     )
     with TemporaryDirectory(prefix="code-mule-manual-cycle-") as temporary:

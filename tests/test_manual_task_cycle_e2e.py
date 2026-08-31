@@ -7,6 +7,11 @@ from scripts import manual_task_cycle_e2e as manual_e2e
 
 
 class ManualTaskCycleE2ETests(unittest.TestCase):
+    def test_manual_correctness_e2e_does_not_set_output_token_cap(self):
+        config = manual_e2e._build_supervisor_config("explicit-model")
+        self.assertEqual(config.model, "explicit-model")
+        self.assertIsNone(config.max_output_tokens)
+
     @patch.object(manual_e2e, "OpenAI")
     @patch.object(manual_e2e, "DefaultHttpx2Client")
     def test_client_transport_keeps_tls_defaults_and_ignores_ambient_proxy(
