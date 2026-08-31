@@ -36,10 +36,11 @@ OpenAI(
     api_key=deepseek_api_key,
     base_url="https://api.deepseek.com",
     max_retries=0,
+    http_client=DefaultHttpx2Client(trust_env=False),
 )
 ```
 
-Disabling SDK retries preserves Code Mule's single-request adapter contract. The `OpenAI` name above is the SDK client class; the service provider and billing endpoint are DeepSeek.
+Disabling SDK retries preserves Code Mule's single-request adapter contract. The explicit HTTPX2 client prevents ambient proxy and TLS environment variables from taking over the manual DeepSeek transport. `trust_env=False` does not disable TLS security: certificate verification and hostname validation remain enabled with their default settings. The `OpenAI` name above is the SDK client class; the service provider and billing endpoint are DeepSeek.
 
 ## Automated Tests
 

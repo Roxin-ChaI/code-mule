@@ -10,7 +10,7 @@ _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from openai import OpenAI  # noqa: E402
+from openai import DefaultHttpx2Client, OpenAI  # noqa: E402
 
 from code_mule.domain.enums import ProjectStatus  # noqa: E402
 from code_mule.domain.models import Project  # noqa: E402
@@ -21,6 +21,15 @@ from code_mule.supervisor.providers.deepseek import (  # noqa: E402
     DeepSeekSupervisorModelClient,
 )
 from code_mule.supervisor.service import SupervisorService  # noqa: E402
+
+
+def _build_compatibility_client(deepseek_api_key: str) -> OpenAI:
+    return OpenAI(
+        api_key=deepseek_api_key,
+        base_url="https://api.deepseek.com",
+        max_retries=0,
+        http_client=DefaultHttpx2Client(trust_env=False),
+    )
 
 
 def _minimal_project_state() -> ProjectState:
@@ -59,11 +68,7 @@ def main() -> int:
         print("ERROR: CODE_MULE_DEEPSEEK_MODEL is required.", file=sys.stderr)
         return 2
 
-    compatibility_client = OpenAI(
-        api_key=deepseek_api_key,
-        base_url="https://api.deepseek.com",
-        max_retries=0,
-    )
+    compatibility_client = _build_compatibility_client(deepseek_api_key)
     provider = DeepSeekSupervisorModelClient(
         compatibility_client,
         DeepSeekSupervisorConfig(model=model, max_output_tokens=600),
