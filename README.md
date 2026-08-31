@@ -80,8 +80,19 @@ export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
 
 See [DeepSeek Supervisor Provider](docs/deepseek-supervisor.md) for the runtime and state boundaries.
 
+## Local Codex Worker
+
+Phase 6 provides a Python library boundary for executing one task through the
+locally installed `codex app-server`. It uses the executable's stdio JSONL
+protocol and contains no API key or token configuration. Approval and user-input
+requests fail closed; Code Mule does not answer or approve them automatically.
+
+See [Codex Worker](docs/codex-worker.md) for the tested Codex version, lifecycle,
+sandbox boundary, and conservative `ExecutionReport` mapping. This is not yet a
+CLI or an autonomous Supervisor–Orchestrator–Worker loop.
+
 ## Status
 
 Early development.
 
-The DeepSeek Supervisor provider integration is in v0.1.0 development. It uses the official `openai` Python SDK only as an OpenAI-compatible client for the DeepSeek endpoint; ProjectState remains the Source of Truth. Automated tests do not call real model APIs, and real DeepSeek E2E remains a Boss-only manual gate. Autonomous coding, Codex integration, and production readiness are not yet available.
+The DeepSeek Supervisor provider and local Codex Worker boundaries are in v0.1.0 development. The Supervisor uses the official `openai` Python SDK only as an OpenAI-compatible client for the DeepSeek endpoint, while the Worker uses the local Codex app-server process. ProjectState remains the Source of Truth. Automated tests do not call real model APIs, and real DeepSeek E2E remains a Boss-only manual gate. Autonomous orchestration and production readiness are not yet available.

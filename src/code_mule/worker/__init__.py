@@ -14,6 +14,7 @@ from .contracts import (
     WorkerTurnResult,
 )
 from .parsing import build_execution_report
+from .service import CodexWorkerService
 
 __all__ = [
     "CodexAppServerClient",
@@ -25,6 +26,7 @@ __all__ = [
     "CodexUserInputRequired",
     "CodexWorkerConfig",
     "CodexWorkerError",
+    "CodexWorkerService",
     "WorkerTaskRequest",
     "WorkerTurnResult",
     "build_execution_report",
