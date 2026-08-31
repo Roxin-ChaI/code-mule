@@ -1,6 +1,8 @@
+import json
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import ANY
 
 from code_mule.worker.contracts import (
     CodexProtocolError,
@@ -16,7 +18,23 @@ from .test_contracts import make_task
 class FakeClient:
     def __init__(self, result=None, failure=None):
         self.result = result or WorkerTurnResult(
-            "thread-1", "turn-1", "Completed", True, 3, ()
+            "thread-1",
+            "turn-1",
+            json.dumps(
+                {
+                    "status": "completed",
+                    "summary": "Completed",
+                    "files_changed": [],
+                    "tests": [],
+                    "static_checks": [],
+                    "git_state": "unknown",
+                    "issues": [],
+                    "human_action_required": False,
+                }
+            ),
+            True,
+            3,
+            (),
         )
         self.failure = failure
         self.calls = []
@@ -31,8 +49,8 @@ class FakeClient:
         self.calls.append(("start_thread",))
         return "thread-1"
 
-    def start_turn(self, thread_id, prompt):
-        self.calls.append(("start_turn", thread_id, prompt))
+    def start_turn(self, thread_id, prompt, *, output_schema=None):
+        self.calls.append(("start_turn", thread_id, prompt, output_schema))
         return "turn-1"
 
     def wait_for_turn(self, thread_id, turn_id):
@@ -80,7 +98,7 @@ class CodexWorkerServiceTests(unittest.TestCase):
             [
                 ("initialize",),
                 ("start_thread",),
-                ("start_turn", "thread-1", "Inspect files"),
+                ("start_turn", "thread-1", "Inspect files", ANY),
                 ("wait_for_turn", "thread-1", "turn-1"),
                 ("close",),
             ],

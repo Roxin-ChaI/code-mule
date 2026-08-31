@@ -1,59 +1,80 @@
 import unittest
 from datetime import UTC, datetime
 
-from code_mule.worker.contracts import WorkerTaskRequest, WorkerTurnResult
+from code_mule.worker.contracts import WorkerTaskRequest
 from code_mule.worker.parsing import build_execution_report
+from code_mule.worker.structured_report import (
+    StructuredWorkerReport,
+    WorkerCheckResult,
+    WorkerCheckStatus,
+    WorkerExecutionStatus,
+)
 
 from .test_contracts import make_task
 
 
 class ExecutionReportMappingTests(unittest.TestCase):
-    def test_maps_only_structured_worker_facts(self):
+    def test_maps_all_and_only_validated_structured_evidence(self):
         task = make_task()
         request = WorkerTaskRequest(task, "Run task", "Task")
-        result = WorkerTurnResult(
-            "thread-1",
-            "turn-1",
-            "Tests passed; changed src/claimed.py; git clean.",
-            True,
-            4,
-            ("structured issue",),
+        result = StructuredWorkerReport(
+            status=WorkerExecutionStatus.COMPLETED,
+            summary="Implemented the fix",
+            files_changed=("src/b.py", "src/a.py"),
+            tests=(
+                WorkerCheckResult(
+                    "python -m unittest", WorkerCheckStatus.PASS, "129 passed"
+                ),
+                WorkerCheckResult("integration", WorkerCheckStatus.NOT_RUN, None),
+            ),
+            static_checks=(
+                WorkerCheckResult("compileall", WorkerCheckStatus.PASS, None),
+            ),
+            git_state="dirty",
+            issues=("report issue",),
+            human_action_required=False,
         )
         created_at = datetime.now(UTC)
 
-        report = build_execution_report(request, result, "report-1", created_at)
+        report = build_execution_report(
+            request,
+            result,
+            "report-1",
+            created_at,
+            transport_issues=("transport warning",),
+        )
 
         self.assertEqual(report.task_id, task.id)
         self.assertEqual(report.attempt, 3)
         self.assertEqual(report.status, "completed")
-        self.assertEqual(report.summary, result.final_message)
-        self.assertEqual(report.issues, ("structured issue",))
-        self.assertEqual(report.files_changed, ())
-        self.assertEqual(report.tests, ())
-        self.assertEqual(report.static_checks, ())
-        self.assertEqual(report.git_state, "unknown")
+        self.assertEqual(report.summary, "Implemented the fix")
+        self.assertEqual(report.files_changed, ("src/b.py", "src/a.py"))
+        self.assertEqual(
+            report.tests,
+            (
+                "python -m unittest: pass (129 passed)",
+                "integration: not_run",
+            ),
+        )
+        self.assertEqual(report.static_checks, ("compileall: pass",))
+        self.assertEqual(report.git_state, "dirty")
+        self.assertEqual(report.issues, ("transport warning", "report issue"))
         self.assertFalse(report.human_action_required)
         self.assertIs(report.created_at, created_at)
         self.assertEqual(task.execution_attempts, 2)
 
-    def test_missing_final_message_has_safe_non_evidentiary_fallback(self):
+    def test_structured_failed_and_blocked_statuses_are_preserved(self):
         request = WorkerTaskRequest(make_task(), "Run", "Task")
-        result = WorkerTurnResult("thread", "turn", None, True, 1, ())
-        report = build_execution_report(
-            request, result, "report", datetime.now(UTC)
-        )
-        self.assertEqual(
-            report.summary,
-            "Codex turn completed without a final agent message.",
-        )
-
-    def test_explicit_non_completion_maps_to_failed(self):
-        request = WorkerTaskRequest(make_task(), "Run", "Task")
-        result = WorkerTurnResult("thread", "turn", None, False, 1, ("failed",))
-        report = build_execution_report(
-            request, result, "report", datetime.now(UTC)
-        )
-        self.assertEqual(report.status, "failed")
+        for status in (WorkerExecutionStatus.FAILED, WorkerExecutionStatus.BLOCKED):
+            with self.subTest(status=status):
+                result = StructuredWorkerReport(
+                    status, "Stopped", (), (), (), "unknown", (), True
+                )
+                report = build_execution_report(
+                    request, result, "report", datetime.now(UTC)
+                )
+                self.assertEqual(report.status, status.value)
+                self.assertTrue(report.human_action_required)
 
 
 if __name__ == "__main__":

@@ -155,19 +155,25 @@ class CodexAppServerClient:
             raise CodexProtocolError("thread/start result is missing thread.id")
         return thread_id
 
-    def start_turn(self, thread_id: str, prompt: str) -> str:
+    def start_turn(
+        self,
+        thread_id: str,
+        prompt: str,
+        *,
+        output_schema: dict[str, object] | None = None,
+    ) -> str:
         self._require_initialized()
         if thread_id == "":
             raise ValueError("thread_id must not be empty")
         if prompt == "":
             raise ValueError("prompt must not be empty")
-        result = self._request(
-            TURN_START_METHOD,
-            {
-                "threadId": thread_id,
-                "input": [{"type": "text", "text": prompt}],
-            },
-        )
+        params: dict[str, object] = {
+            "threadId": thread_id,
+            "input": [{"type": "text", "text": prompt}],
+        }
+        if output_schema is not None:
+            params["outputSchema"] = output_schema
+        result = self._request(TURN_START_METHOD, params)
         turn = result.get("turn")
         if not isinstance(turn, dict):
             raise CodexProtocolError("turn/start result is missing turn")

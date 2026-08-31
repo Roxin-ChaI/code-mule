@@ -303,6 +303,32 @@ class CodexAppServerClientTests(unittest.TestCase):
         finally:
             client.close()
 
+    def test_turn_start_passes_native_output_schema_unchanged(self):
+        requests = []
+
+        def handler(process, message):
+            requests.append(message)
+            standard_handler(process, message)
+
+        client, _ = make_client(handler)
+        try:
+            client.initialize()
+            thread_id = client.start_thread()
+            schema = {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {"status": {"type": "string"}},
+                "required": ["status"],
+            }
+            client.start_turn(
+                thread_id,
+                "prompt",
+                output_schema=schema,
+            )
+            self.assertEqual(requests[-1]["params"]["outputSchema"], schema)
+        finally:
+            client.close()
+
     def test_malformed_json_fails_closed(self):
         client, holder = make_client()
         client.start()

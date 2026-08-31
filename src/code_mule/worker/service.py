@@ -9,6 +9,10 @@ from code_mule.domain.models import ExecutionReport
 from .client import CodexAppServerClient
 from .contracts import CodexWorkerConfig, WorkerTaskRequest, WorkerTurnResult
 from .parsing import build_execution_report
+from .structured_report import (
+    parse_structured_worker_report,
+    structured_worker_report_schema,
+)
 
 
 class _WorkerClient(Protocol):
@@ -16,7 +20,13 @@ class _WorkerClient(Protocol):
 
     def start_thread(self) -> str: ...
 
-    def start_turn(self, thread_id: str, prompt: str) -> str: ...
+    def start_turn(
+        self,
+        thread_id: str,
+        prompt: str,
+        *,
+        output_schema: dict[str, object] | None = None,
+    ) -> str: ...
 
     def wait_for_turn(self, thread_id: str, turn_id: str) -> WorkerTurnResult: ...
 
@@ -49,13 +59,19 @@ class CodexWorkerService:
         try:
             client.initialize()
             thread_id = client.start_thread()
-            turn_id = client.start_turn(thread_id, request.prompt)
+            turn_id = client.start_turn(
+                thread_id,
+                request.prompt,
+                output_schema=structured_worker_report_schema(),
+            )
             result = client.wait_for_turn(thread_id, turn_id)
+            report = parse_structured_worker_report(result.final_message)
             return build_execution_report(
                 request=request,
-                result=result,
+                result=report,
                 report_id=report_id,
                 created_at=created_at,
+                transport_issues=result.issues,
             )
         finally:
             client.close()

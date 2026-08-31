@@ -1,22 +1,21 @@
-"""Conservative mapping from structured Codex results to domain reports."""
+"""Deterministic mapping from validated Codex evidence to domain reports."""
 
 from datetime import datetime
 
 from code_mule.domain.models import ExecutionReport
 
-from .contracts import WorkerTaskRequest, WorkerTurnResult
-
-
-_NO_FINAL_MESSAGE = "Codex turn completed without a final agent message."
+from .contracts import WorkerTaskRequest
+from .structured_report import StructuredWorkerReport, WorkerCheckResult
 
 
 def build_execution_report(
     request: WorkerTaskRequest,
-    result: WorkerTurnResult,
+    result: StructuredWorkerReport,
     report_id: str,
     created_at: datetime,
+    transport_issues: tuple[str, ...] = (),
 ) -> ExecutionReport:
-    """Build a report without inferring evidence from the agent's prose."""
+    """Map only fields already validated by the structured report parser."""
 
     if report_id == "":
         raise ValueError("report_id must not be empty")
@@ -24,16 +23,23 @@ def build_execution_report(
         id=report_id,
         task_id=request.task.id,
         attempt=request.task.execution_attempts + 1,
-        status="completed" if result.completed else "failed",
-        files_changed=(),
-        tests=(),
-        static_checks=(),
-        git_state="unknown",
-        issues=result.issues,
-        human_action_required=False,
-        summary=result.final_message or _NO_FINAL_MESSAGE,
+        status=result.status.value,
+        files_changed=result.files_changed,
+        tests=tuple(_format_check(check) for check in result.tests),
+        static_checks=tuple(_format_check(check) for check in result.static_checks),
+        git_state=result.git_state,
+        issues=transport_issues + result.issues,
+        human_action_required=result.human_action_required,
+        summary=result.summary,
         created_at=created_at,
     )
+
+
+def _format_check(check: WorkerCheckResult) -> str:
+    formatted = f"{check.name}: {check.status.value}"
+    if check.detail is not None:
+        return f"{formatted} ({check.detail})"
+    return formatted
 
 
 __all__ = ["build_execution_report"]
