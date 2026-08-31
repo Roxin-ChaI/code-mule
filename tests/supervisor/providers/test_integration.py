@@ -3,7 +3,11 @@ from types import SimpleNamespace
 import unittest
 
 from code_mule.domain.enums import SupervisorDecisionType
-from code_mule.supervisor.contracts import ReviewRequest
+from code_mule.supervisor.contracts import ProgressReport, ProgressReportRequest, ReviewRequest
+from code_mule.supervisor.providers.deepseek import (
+    DeepSeekSupervisorConfig,
+    DeepSeekSupervisorModelClient,
+)
 from code_mule.supervisor.providers.openai import (
     OpenAISupervisorConfig,
     OpenAISupervisorModelClient,
@@ -63,6 +67,62 @@ class OpenAISupervisorIntegrationTests(unittest.TestCase):
         response_format = api_request["text"]["format"]
         self.assertEqual(response_format["name"], "code_mule_review")
         self.assertIs(response_format["strict"], True)
+        self.assertEqual(response_format["schema"]["additionalProperties"], False)
+        self.assertEqual(state, request.project_state)
+
+
+class DeepSeekIntegrationFakeResponsesAPI:
+    def __init__(self):
+        self.calls: list[dict[str, object]] = []
+
+    def create(self, **kwargs: object) -> object:
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            status="completed",
+            output_text=json.dumps(
+                {
+                    "summary": "Phase 5 correction is running",
+                    "current_status": "running",
+                    "current_work": "DeepSeek provider",
+                    "completed": ["OpenAI provider retained"],
+                    "remaining": ["manual DeepSeek E2E"],
+                    "blockers": [],
+                    "risks": ["real E2E not yet run"],
+                    "quality_summary": "automated boundary verified",
+                }
+            ),
+        )
+
+
+class DeepSeekIntegrationFakeClient:
+    def __init__(self):
+        self.responses = DeepSeekIntegrationFakeResponsesAPI()
+
+
+class DeepSeekSupervisorIntegrationTests(unittest.TestCase):
+    def test_progress_report_crosses_provider_and_local_parser_boundaries(self):
+        state = make_project_state()
+        client = DeepSeekIntegrationFakeClient()
+        provider = DeepSeekSupervisorModelClient(
+            client,
+            DeepSeekSupervisorConfig("deepseek-integration-model", 500),
+        )
+        service = SupervisorService(provider)
+        request = ProgressReportRequest(state, question="What remains?")
+
+        result = service.report_progress(request)
+
+        self.assertIsInstance(result, ProgressReport)
+        self.assertEqual(result.current_status, "running")
+        self.assertEqual(result.remaining, ("manual DeepSeek E2E",))
+        self.assertEqual(len(client.responses.calls), 1)
+        api_request = client.responses.calls[0]
+        self.assertEqual(api_request["model"], "deepseek-integration-model")
+        self.assertEqual(api_request["max_output_tokens"], 500)
+        response_format = api_request["text"]["format"]
+        self.assertEqual(response_format["name"], "code_mule_progress_report")
+        self.assertNotIn("strict", response_format)
+        self.assertNotIn("store", api_request)
         self.assertEqual(response_format["schema"]["additionalProperties"], False)
         self.assertEqual(state, request.project_state)
 
