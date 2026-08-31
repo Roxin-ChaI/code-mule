@@ -88,11 +88,22 @@ protocol and contains no API key or token configuration. Approval and user-input
 requests fail closed; Code Mule does not answer or approve them automatically.
 
 See [Codex Worker](docs/codex-worker.md) for the tested Codex version, lifecycle,
-sandbox boundary, and conservative `ExecutionReport` mapping. This is not yet a
-CLI or an autonomous Supervisor–Orchestrator–Worker loop.
+sandbox boundary, and structured `ExecutionReport` mapping.
+
+## Single-Task Cycle
+
+Phase 7 provides a bounded autonomous cycle for exactly one current task. A
+deterministic runtime persists each structured Codex report before Supervisor
+REVIEW, reuses one Codex thread for REWORK turns, and stops on CONTINUE, DONE,
+HUMAN_REQUIRED, execution limit, or Worker failure. It does not select another
+task or apply a Plan automatically.
+
+See [Single-Task Autonomous Cycle](docs/task-cycle.md) for persistence ordering,
+evidence rules, Human Gates, local smoke verification, and the Boss-only manual
+DeepSeek + Codex E2E command.
 
 ## Status
 
 Early development.
 
-The DeepSeek Supervisor provider and local Codex Worker boundaries are in v0.1.0 development. The Supervisor uses the official `openai` Python SDK only as an OpenAI-compatible client for the DeepSeek endpoint, while the Worker uses the local Codex app-server process. ProjectState remains the Source of Truth. Automated tests do not call real model APIs, and real DeepSeek E2E remains a Boss-only manual gate. Autonomous orchestration and production readiness are not yet available.
+The DeepSeek Supervisor provider, local Codex Worker, and deterministic single-task cycle are in v0.1.0 development. The Supervisor uses the official `openai` Python SDK only as an OpenAI-compatible client for the DeepSeek endpoint, while the Worker uses the local Codex app-server process. ProjectState remains the Source of Truth. Automated tests do not call real model APIs, and the combined real DeepSeek + Codex E2E remains a Boss-only manual gate. Multi-task scheduling, full autonomous orchestration, and production readiness are not yet available.

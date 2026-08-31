@@ -30,10 +30,11 @@ The app-server protocol has no turn-title field, so `WorkerTaskRequest.title`
 remains Code Mule metadata and is not added to the wire request.
 
 Only a completed `agentMessage` delivered by `item/completed` becomes the final
-message. Delta events, stderr output, and prose keywords do not control task
-status. The first request timeout terminates the child process and is not
-retried automatically. At most the last 100 stderr lines are retained for
-local diagnostics.
+message. Phase 7 passes a strict native `outputSchema` on every Worker turn and
+validates that final message as one structured execution report. Delta events,
+stderr output, and prose keywords do not control task status. The first request
+timeout terminates the child process and is not retried automatically. At most
+the last 100 stderr lines are retained for local diagnostics.
 
 ## Approval and Input Boundary
 
@@ -61,13 +62,14 @@ token field and does not read credentials.
 
 ## Execution Reports
 
-`CodexWorkerService.execute` runs one task through a fresh app-server process
-and maps its structured completion into an `ExecutionReport`. The final agent
-message is preserved only as `summary`. Until a later structured worker-report
-protocol supplies evidence, files changed, tests, and static checks remain
-empty, while Git state remains `unknown`. Natural-language claims such as
-“tests passed” or “git clean” are not promoted into control facts.
+`CodexWorkerService.execute` runs one task through a fresh app-server process.
+`CodexWorkerSession` additionally supports multiple turns on one thread for a
+bounded REWORK cycle. Native structured output supplies execution status,
+summary, files changed, individual checks, Git state, issues, and the Human
+Gate flag. Every field is validated locally without prose parsing; `not_run`
+and `unknown` remain explicit evidence states rather than implied success.
 
 Project State Store remains the source of truth. The Worker neither mutates a
-`Task` nor advances project state; an Orchestrator must persist and apply any
-result in a later integration phase.
+`Task` nor advances project state; the deterministic Phase 7 task-cycle service
+persists reports and applies review outcomes. See [Single-Task Autonomous
+Cycle](task-cycle.md).
