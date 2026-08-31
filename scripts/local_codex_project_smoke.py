@@ -19,6 +19,12 @@ from code_mule.domain.enums import (  # noqa: E402
     TaskStatus,
 )
 from code_mule.domain.models import Milestone, Plan, Project, Task  # noqa: E402
+from code_mule.progress import (  # noqa: E402
+    CompositeProgressSink,
+    ConsoleProgressRenderer,
+    ProgressEventType,
+    RecordingProgressSink,
+)
 from code_mule.runtime import (  # noqa: E402
     ProjectExecutionConfig,
     ProjectExecutionService,
@@ -157,6 +163,10 @@ def main() -> int:
         report_ids = _IdFactory("local-project-report")
         decision_ids = _IdFactory("local-project-decision")
         cycle_event_ids = _IdFactory("local-project-cycle-event")
+        progress_clock = lambda: datetime.now(UTC)
+        renderer = ConsoleProgressRenderer(sys.stderr)
+        recording = RecordingProgressSink()
+        progress = CompositeProgressSink((renderer, recording))
 
         def task_cycle_factory() -> TaskCycleService:
             def worker_session_factory() -> CodexWorkerSession:
@@ -167,7 +177,9 @@ def main() -> int:
                         approval_policy="on-request",
                         sandbox="workspace-write",
                         read_timeout_seconds=360,
-                    )
+                    ),
+                    progress_sink=progress,
+                    clock=progress_clock,
                 )
                 sessions.append(session)
                 return session
@@ -176,11 +188,12 @@ def main() -> int:
                 worker_session_factory=worker_session_factory,
                 supervisor=supervisor,
                 store=store,
-                clock=lambda: datetime.now(UTC),
+                clock=progress_clock,
                 report_id_factory=report_ids,
                 decision_id_factory=decision_ids,
                 event_id_factory=cycle_event_ids,
                 config=TaskCycleConfig(max_attempts=1),
+                progress_sink=progress,
             )
 
         runtime = ProjectExecutionService(
@@ -188,11 +201,13 @@ def main() -> int:
             scheduler=TaskScheduler(),
             task_cycle_factory=task_cycle_factory,
             prompt_builder=TaskPromptBuilder(),
-            clock=lambda: datetime.now(UTC),
+            clock=progress_clock,
             event_id_factory=_IdFactory("local-project-event"),
             config=ProjectExecutionConfig(max_tasks_per_run=2),
+            progress_sink=progress,
         )
-        outcome = runtime.run()
+        with renderer:
+            outcome = runtime.run()
         final_state = store.load()
         verification = subprocess.run(
             [sys.executable, "-m", "unittest", "-v"],
@@ -203,6 +218,24 @@ def main() -> int:
         )
         math_source = (workspace / "math_utils.py").read_text(encoding="utf-8")
         test_source = (workspace / "test_math_utils.py").read_text(encoding="utf-8")
+        worker_event_types = [
+            event.type.value
+            for event in recording.events
+            if event.type
+            in {
+                ProgressEventType.WORKER_STARTING,
+                ProgressEventType.WORKER_STARTED,
+                ProgressEventType.WORKER_ACTIVITY,
+                ProgressEventType.WORKER_COMPLETED,
+                ProgressEventType.WORKER_FAILED,
+            }
+        ]
+        activity_types = [
+            event.metadata["activity"]
+            for event in recording.events
+            if event.type is ProgressEventType.WORKER_ACTIVITY
+            and "activity" in event.metadata
+        ]
         payload = {
             "workspace_type": "disposable temporary git repository",
             "task_order": list(outcome.task_ids),
@@ -216,6 +249,12 @@ def main() -> int:
             "math_utils": math_source,
             "test_math_utils": test_source,
             "independent_test_returncode": verification.returncode,
+            "progress_event_count": len(recording.events),
+            "worker_events_observed": worker_event_types,
+            "codex_activity_types": activity_types,
+            "final_percentage": renderer.snapshot.percentage,
+            "renderer_closed": renderer.closed,
+            "renderer_thread_alive": renderer.thread_alive,
         }
         print(json.dumps(payload, sort_keys=True))
         passed = (
@@ -234,6 +273,12 @@ def main() -> int:
             and "return a + b" in math_source
             and "add(2, 3)" in test_source
             and verification.returncode == 0
+            and ProgressEventType.WORKER_STARTED.value in worker_event_types
+            and ProgressEventType.WORKER_COMPLETED.value in worker_event_types
+            and len(activity_types) >= 1
+            and renderer.snapshot.percentage == 100.0
+            and renderer.closed
+            and not renderer.thread_alive
         )
     return 0 if passed else 1
 

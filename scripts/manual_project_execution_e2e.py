@@ -16,6 +16,7 @@ for path in (_ROOT, _SRC):
 
 from openai import DefaultHttpx2Client, OpenAI  # noqa: E402
 
+from code_mule.progress import ConsoleProgressRenderer  # noqa: E402
 from code_mule.runtime import (  # noqa: E402
     ProjectExecutionConfig,
     ProjectExecutionService,
@@ -94,6 +95,8 @@ def main() -> int:
         report_ids = _IdFactory("manual-project-report")
         decision_ids = _IdFactory("manual-project-decision")
         cycle_event_ids = _IdFactory("manual-project-cycle-event")
+        progress_clock = lambda: datetime.now(UTC)
+        renderer = ConsoleProgressRenderer()
 
         def task_cycle_factory() -> TaskCycleService:
             def worker_session_factory() -> CodexWorkerSession:
@@ -104,18 +107,21 @@ def main() -> int:
                         approval_policy="on-request",
                         sandbox="workspace-write",
                         read_timeout_seconds=360,
-                    )
+                    ),
+                    progress_sink=renderer,
+                    clock=progress_clock,
                 )
 
             return TaskCycleService(
                 worker_session_factory=worker_session_factory,
                 supervisor=supervisor,
                 store=store,
-                clock=lambda: datetime.now(UTC),
+                clock=progress_clock,
                 report_id_factory=report_ids,
                 decision_id_factory=decision_ids,
                 event_id_factory=cycle_event_ids,
                 config=TaskCycleConfig(max_attempts=2),
+                progress_sink=renderer,
             )
 
         runtime = ProjectExecutionService(
@@ -123,11 +129,13 @@ def main() -> int:
             scheduler=TaskScheduler(),
             task_cycle_factory=task_cycle_factory,
             prompt_builder=TaskPromptBuilder(),
-            clock=lambda: datetime.now(UTC),
+            clock=progress_clock,
             event_id_factory=_IdFactory("manual-project-event"),
             config=ProjectExecutionConfig(max_tasks_per_run=2),
+            progress_sink=renderer,
         )
-        outcome = runtime.run()
+        with renderer:
+            outcome = runtime.run()
         final_state = store.load()
         print(
             {

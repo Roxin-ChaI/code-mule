@@ -14,6 +14,11 @@ from openai import DefaultHttpx2Client, OpenAI  # noqa: E402
 
 from code_mule.domain.enums import ProjectStatus  # noqa: E402
 from code_mule.domain.models import Project  # noqa: E402
+from code_mule.progress import (  # noqa: E402
+    ConsoleProgressRenderer,
+    ProgressEvent,
+    ProgressEventType,
+)
 from code_mule.state.models import ProjectState  # noqa: E402
 from code_mule.supervisor.contracts import ProgressReportRequest  # noqa: E402
 from code_mule.supervisor.providers.deepseek import (  # noqa: E402
@@ -78,12 +83,54 @@ def main() -> int:
         _build_supervisor_config(model),
     )
     supervisor = SupervisorService(provider)
-    report = supervisor.report_progress(
-        ProgressReportRequest(
-            project_state=_minimal_project_state(),
-            question=None,
+    state = _minimal_project_state()
+    renderer = ConsoleProgressRenderer()
+    with renderer:
+        renderer.emit(
+            ProgressEvent(
+                ProgressEventType.SUPERVISOR_REVIEW_STARTED,
+                datetime.now(timezone.utc),
+                state.project.id,
+                None,
+                None,
+                "Supervisor reviewing progress",
+                {"operation": "progress_report"},
+            )
         )
-    )
+        try:
+            report = supervisor.report_progress(
+                ProgressReportRequest(
+                    project_state=state,
+                    question=None,
+                )
+            )
+        except BaseException as error:
+            renderer.emit(
+                ProgressEvent(
+                    ProgressEventType.SUPERVISOR_FAILED,
+                    datetime.now(timezone.utc),
+                    state.project.id,
+                    None,
+                    None,
+                    "Supervisor request failed",
+                    {
+                        "operation": "progress_report",
+                        "error_type": type(error).__name__,
+                    },
+                )
+            )
+            raise
+        renderer.emit(
+            ProgressEvent(
+                ProgressEventType.SUPERVISOR_REVIEW_COMPLETED,
+                datetime.now(timezone.utc),
+                state.project.id,
+                None,
+                None,
+                "Supervisor progress report completed",
+                {"operation": "progress_report"},
+            )
+        )
     print(report)
     return 0
 

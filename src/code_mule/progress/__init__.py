@@ -6,6 +6,7 @@ from .contracts import (
     ProgressSnapshot,
     progress_percentage,
 )
+from .console import ConsoleProgressRenderer
 from .sink import (
     CompositeProgressSink,
     NoopProgressSink,
@@ -16,6 +17,7 @@ from .sink import (
 
 __all__ = [
     "CompositeProgressSink",
+    "ConsoleProgressRenderer",
     "NoopProgressSink",
     "ProgressEvent",
     "ProgressEventType",

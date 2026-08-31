@@ -16,6 +16,7 @@ from openai import DefaultHttpx2Client, OpenAI  # noqa: E402
 
 from code_mule.domain.enums import ProjectStatus, TaskStatus  # noqa: E402
 from code_mule.domain.models import Project, Task  # noqa: E402
+from code_mule.progress import ConsoleProgressRenderer  # noqa: E402
 from code_mule.runtime import (  # noqa: E402
     TaskCycleConfig,
     TaskCycleRequest,
@@ -140,6 +141,8 @@ def main() -> int:
         initial = _initial_state(now)
         store = JsonProjectStateStore(root / "project-state.json")
         store.save(initial)
+        progress_clock = lambda: datetime.now(UTC)
+        renderer = ConsoleProgressRenderer()
 
         def session_factory() -> CodexWorkerSession:
             return CodexWorkerSession(
@@ -149,29 +152,33 @@ def main() -> int:
                     approval_policy="on-request",
                     sandbox="workspace-write",
                     read_timeout_seconds=360,
-                )
+                ),
+                progress_sink=renderer,
+                clock=progress_clock,
             )
 
         cycle = TaskCycleService(
             worker_session_factory=session_factory,
             supervisor=supervisor,
             store=store,
-            clock=lambda: datetime.now(UTC),
+            clock=progress_clock,
             report_id_factory=_IdFactory("manual-report"),
             decision_id_factory=_IdFactory("manual-decision"),
             event_id_factory=_IdFactory("manual-event"),
             config=TaskCycleConfig(max_attempts=2),
+            progress_sink=renderer,
         )
-        outcome = cycle.execute(
-            TaskCycleRequest(
-                task=initial.tasks[0],
-                initial_prompt=(
-                    "Fix calculator.py so add(a, b) returns the sum, then run "
-                    "test_calculator.py locally. Work only in this repository. "
-                    "Do not push, tag, release, deploy, or access external services."
-                ),
+        with renderer:
+            outcome = cycle.execute(
+                TaskCycleRequest(
+                    task=initial.tasks[0],
+                    initial_prompt=(
+                        "Fix calculator.py so add(a, b) returns the sum, then run "
+                        "test_calculator.py locally. Work only in this repository. "
+                        "Do not push, tag, release, deploy, or access external services."
+                    ),
+                )
             )
-        )
         print(
             {
                 "task_id": outcome.task_id,

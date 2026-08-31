@@ -115,6 +115,19 @@ See [Multi-Task Project Execution](docs/project-execution.md) for ordering,
 recovery, completion, Human Gate, real local Codex smoke, and the Boss-only
 manual DeepSeek + Codex multi-task E2E command.
 
+## Runtime Progress
+
+Phase 8.5 adds real-time execution progress and console observability without
+turning presentation into control state. Typed ephemeral events expose project,
+task, Codex Worker, and Supervisor stages. The standard-library renderer uses a
+live TTY dashboard or line-oriented redirected logs, while ProjectState remains
+the Source of Truth. This is runtime/manual-script presentation support, not a
+formal CLI or GUI.
+
+See [Runtime Progress and Observability](docs/progress-observability.md) for the
+event boundary, truthful Codex activity projection, deterministic percentage,
+privacy rules, and renderer lifecycle.
+
 ## Status
 
 Early development.
@@ -127,4 +140,5 @@ app-server process. ProjectState remains the Source of Truth. Automated tests
 do not call real model APIs, and the real DeepSeek + Codex multi-task E2E
 remains a Boss-only manual gate. Plan application, CHANGE replanning,
 parallel/multi-project execution, and production readiness are not yet
-available.
+available. Real-time progress and console observability are available for the
+current runtime and manual verification paths.
