@@ -12,6 +12,12 @@ from code_mule.domain.enums import (
 )
 from code_mule.domain.models import Decision, ExecutionReport, ProjectEvent, Task
 from code_mule.domain.state_machine import validate_transition
+from code_mule.progress import (
+    ProgressEvent,
+    ProgressEventType,
+    ProgressSink,
+    resilient_progress_sink,
+)
 from code_mule.state.models import ProjectState
 from code_mule.supervisor.contracts import ReviewRequest, ReviewResult
 from code_mule.worker.contracts import CodexWorkerError, WorkerTaskRequest
@@ -62,6 +68,7 @@ class TaskCycleService:
         decision_id_factory: Callable[[], str],
         event_id_factory: Callable[[], str],
         config: TaskCycleConfig,
+        progress_sink: ProgressSink | None = None,
     ) -> None:
         self._worker_session_factory = worker_session_factory
         self._supervisor = supervisor
@@ -71,6 +78,11 @@ class TaskCycleService:
         self._decision_id_factory = decision_id_factory
         self._event_id_factory = event_id_factory
         self._config = config
+        self._progress = resilient_progress_sink(progress_sink)
+
+    @property
+    def progress_errors(self) -> tuple[BaseException, ...]:
+        return self._progress.errors
 
     def execute(self, request: TaskCycleRequest) -> TaskCycleOutcome:
         state = self._store.load()
@@ -82,15 +94,36 @@ class TaskCycleService:
 
         try:
             try:
+                self._emit_progress(
+                    state,
+                    task,
+                    ProgressEventType.WORKER_STARTING,
+                    "Codex Worker starting",
+                )
                 session.start()
+                self._emit_progress(
+                    state,
+                    task,
+                    ProgressEventType.WORKER_STARTED,
+                    "Codex Worker started",
+                )
             except CodexWorkerError as error:
                 self._record_worker_failure(state, task, error)
+                self._emit_worker_failure(state, task, error)
                 return self._human_outcome(
                     task.id, reports, decisions, final_prompt=None
                 )
             while True:
                 task = self._task(state, request.task.id)
                 state = self._record_execution_started(state, task)
+                attempt = task.execution_attempts + 1
+                self._emit_progress(
+                    state,
+                    task,
+                    ProgressEventType.TASK_STARTED,
+                    f"Task attempt {attempt} started",
+                    attempt=attempt,
+                )
                 worker_request = WorkerTaskRequest(task, prompt, task.title)
                 try:
                     report = session.execute(
@@ -100,12 +133,22 @@ class TaskCycleService:
                     )
                 except CodexWorkerError as error:
                     state = self._record_worker_failure(state, task, error)
+                    self._emit_worker_failure(state, task, error)
                     return self._human_outcome(
                         task.id,
                         reports,
                         decisions,
                         final_prompt=None,
                     )
+
+                self._emit_progress(
+                    state,
+                    task,
+                    ProgressEventType.WORKER_COMPLETED,
+                    "Codex Worker completed",
+                    attempt=report.attempt,
+                    metadata={"status": report.status},
+                )
 
                 state = self._persist_report(state, task, report)
                 reports += (report,)
@@ -117,20 +160,60 @@ class TaskCycleService:
                         event_types=("task.human_required",),
                         metadata={"source": "worker_report"},
                     )
+                    self._emit_human_gate(
+                        state,
+                        self._task(state, task.id),
+                        "worker_report",
+                        attempt=report.attempt,
+                    )
                     return self._human_outcome(
                         task.id, reports, decisions, final_prompt=None
                     )
 
                 persisted = self._store.load()
                 persisted_task = self._task(persisted, task.id)
-                review = self._supervisor.review(
-                    ReviewRequest(persisted, persisted_task, report)
+                self._emit_progress(
+                    persisted,
+                    persisted_task,
+                    ProgressEventType.SUPERVISOR_REVIEW_STARTED,
+                    "Supervisor reviewing",
+                    attempt=report.attempt,
+                )
+                try:
+                    review = self._supervisor.review(
+                        ReviewRequest(persisted, persisted_task, report)
+                    )
+                except BaseException as error:
+                    self._emit_progress(
+                        persisted,
+                        persisted_task,
+                        ProgressEventType.SUPERVISOR_FAILED,
+                        "Supervisor review failed",
+                        attempt=report.attempt,
+                        metadata={"error_type": type(error).__name__},
+                    )
+                    raise
+                self._emit_progress(
+                    persisted,
+                    persisted_task,
+                    ProgressEventType.SUPERVISOR_REVIEW_COMPLETED,
+                    f"Supervisor decision: {review.decision.value}",
+                    attempt=report.attempt,
+                    metadata={"decision": review.decision.value},
                 )
                 state, decision = self._persist_decision(persisted, persisted_task, review)
                 decisions += (decision,)
 
                 if review.decision is SupervisorDecisionType.CONTINUE:
                     self._complete_task(state, persisted_task, review.decision)
+                    self._emit_progress(
+                        state,
+                        persisted_task,
+                        ProgressEventType.TASK_COMPLETED,
+                        "Task completed",
+                        attempt=report.attempt,
+                        metadata={"decision": review.decision.value},
+                    )
                     return TaskCycleOutcome(
                         task_id=task.id,
                         attempts=len(reports),
@@ -143,6 +226,14 @@ class TaskCycleService:
 
                 if review.decision is SupervisorDecisionType.DONE:
                     self._complete_task(state, persisted_task, review.decision)
+                    self._emit_progress(
+                        state,
+                        persisted_task,
+                        ProgressEventType.TASK_COMPLETED,
+                        "Task completed",
+                        attempt=report.attempt,
+                        metadata={"decision": review.decision.value},
+                    )
                     return TaskCycleOutcome(
                         task_id=task.id,
                         attempts=len(reports),
@@ -160,6 +251,12 @@ class TaskCycleService:
                         event_types=("task.human_required",),
                         metadata={"source": "supervisor"},
                     )
+                    self._emit_human_gate(
+                        state,
+                        persisted_task,
+                        "supervisor",
+                        attempt=report.attempt,
+                    )
                     return self._human_outcome(
                         task.id, reports, decisions, final_prompt=None
                     )
@@ -173,6 +270,14 @@ class TaskCycleService:
                 if prompt in (None, ""):
                     raise InvalidTaskCycleState("REWORK requires next_task_prompt")
                 state = self._record_rework(state, persisted_task, decision)
+                self._emit_progress(
+                    state,
+                    persisted_task,
+                    ProgressEventType.TASK_REWORK,
+                    "Task rework requested",
+                    attempt=report.attempt,
+                    metadata={"decision": review.decision.value},
+                )
                 if len(reports) >= self._config.max_attempts:
                     self._transition_human_required(
                         state,
@@ -183,6 +288,12 @@ class TaskCycleService:
                         ),
                         metadata={"max_attempts": str(self._config.max_attempts)},
                     )
+                    self._emit_human_gate(
+                        state,
+                        self._task(state, task.id),
+                        "task_cycle_limit",
+                        attempt=report.attempt,
+                    )
                     return self._human_outcome(
                         task.id,
                         reports,
@@ -191,6 +302,70 @@ class TaskCycleService:
                     )
         finally:
             session.close()
+
+    def _emit_worker_failure(
+        self, state: ProjectState, task: Task, error: CodexWorkerError
+    ) -> None:
+        attempt = task.execution_attempts + 1
+        self._emit_progress(
+            state,
+            task,
+            ProgressEventType.WORKER_FAILED,
+            "Codex Worker failed",
+            attempt=attempt,
+            metadata={"error_type": type(error).__name__},
+        )
+        self._emit_human_gate(
+            state, task, "worker_failure", attempt=attempt
+        )
+
+    def _emit_human_gate(
+        self,
+        state: ProjectState,
+        task: Task,
+        source: str,
+        *,
+        attempt: int,
+    ) -> None:
+        metadata = {"source": source}
+        self._emit_progress(
+            state,
+            task,
+            ProgressEventType.TASK_HUMAN_REQUIRED,
+            "Task requires human action",
+            attempt=attempt,
+            metadata=metadata,
+        )
+        self._emit_progress(
+            state,
+            task,
+            ProgressEventType.HUMAN_GATE,
+            "Human action required",
+            attempt=attempt,
+            metadata=metadata,
+        )
+
+    def _emit_progress(
+        self,
+        state: ProjectState,
+        task: Task,
+        event_type: ProgressEventType,
+        message: str,
+        *,
+        attempt: int | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
+        self._progress.emit(
+            ProgressEvent(
+                type=event_type,
+                timestamp=self._clock(),
+                project_id=state.project.id,
+                task_id=task.id,
+                attempt=attempt,
+                message=message,
+                metadata=metadata or {},
+            )
+        )
 
     def _validate_start(
         self, state: ProjectState, request: TaskCycleRequest

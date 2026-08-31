@@ -9,7 +9,16 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
+from datetime import datetime
+from pathlib import Path
 from typing import IO, Protocol, cast
+
+from code_mule.progress import (
+    ProgressEvent,
+    ProgressEventType,
+    ProgressSink,
+    resilient_progress_sink,
+)
 
 from .contracts import (
     CodexAppServerStartError,
@@ -64,6 +73,8 @@ class CodexAppServerClient:
         config: CodexWorkerConfig,
         *,
         popen_factory: _PopenFactory = subprocess.Popen,
+        progress_sink: ProgressSink | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._config = config
         self._popen_factory = popen_factory
@@ -74,10 +85,16 @@ class CodexAppServerClient:
         self._reader_threads: list[threading.Thread] = []
         self._next_request_id = 1
         self._initialized = False
+        self._progress = resilient_progress_sink(progress_sink)
+        self._clock = clock
 
     @property
     def stderr_tail(self) -> tuple[str, ...]:
         return tuple(self._stderr_lines)
+
+    @property
+    def progress_errors(self) -> tuple[BaseException, ...]:
+        return self._progress.errors
 
     def start(self) -> None:
         if self._process is not None:
@@ -211,6 +228,9 @@ class CodexAppServerClient:
             if isinstance(turn, dict) and turn.get("id") == turn_id:
                 matches_turn = True
 
+            if matches_thread and matches_turn:
+                self._project_activity(method, params)
+
             if method == ITEM_COMPLETED_METHOD:
                 self._require_event_identity(params, method)
                 if matches_thread and matches_turn:
@@ -265,6 +285,95 @@ class CodexAppServerClient:
 
             if matches_thread and matches_turn:
                 event_count += 1
+
+    def _project_activity(
+        self, method: str, params: dict[str, object]
+    ) -> None:
+        if self._clock is None:
+            return
+        message: str | None = None
+        metadata: dict[str, str] = {}
+        if method == "turn/started":
+            message = "Codex turn started"
+            metadata = {"activity": "turn.started"}
+        elif method == "turn/completed":
+            message = "Codex turn completed"
+            metadata = {"activity": "turn.completed"}
+        elif method in {"item/started", "item/completed"}:
+            item = params.get("item")
+            if not isinstance(item, dict):
+                return
+            item_type = item.get("type")
+            phase = "started" if method == "item/started" else "completed"
+            if item_type == "commandExecution":
+                message = (
+                    self._safe_command_message(item)
+                    if phase == "started"
+                    else "Command completed"
+                )
+                metadata = {"activity": f"command_execution.{phase}"}
+            elif item_type == "fileChange":
+                safe_path = self._safe_file_path(item)
+                message = (
+                    f"Editing {safe_path}"
+                    if safe_path is not None and phase == "started"
+                    else (
+                        f"Updated {safe_path}"
+                        if safe_path is not None
+                        else "Updating file"
+                    )
+                )
+                metadata = {"activity": f"file_change.{phase}"}
+                if safe_path is not None:
+                    metadata["path"] = safe_path
+            elif item_type == "agentMessage":
+                message = f"Codex response {phase}"
+                metadata = {"activity": f"agent_message.{phase}"}
+        if message is None:
+            return
+        self._progress.emit(
+            ProgressEvent(
+                type=ProgressEventType.WORKER_ACTIVITY,
+                timestamp=self._clock(),
+                project_id=None,
+                task_id=None,
+                attempt=None,
+                message=message,
+                metadata=metadata,
+            )
+        )
+
+    @staticmethod
+    def _safe_command_message(item: dict[str, object]) -> str:
+        actions = item.get("commandActions")
+        if isinstance(actions, list) and actions:
+            action_types = {
+                action.get("type")
+                for action in actions
+                if isinstance(action, dict)
+            }
+            if action_types and action_types <= {"read", "listFiles", "search"}:
+                return "Inspecting repository"
+        return "Running command"
+
+    def _safe_file_path(self, item: dict[str, object]) -> str | None:
+        changes = item.get("changes")
+        if not isinstance(changes, list) or not changes:
+            return None
+        first = changes[0]
+        if not isinstance(first, dict):
+            return None
+        raw_path = first.get("path")
+        if not isinstance(raw_path, str) or raw_path == "":
+            return None
+        workspace = self._config.workspace.resolve()
+        candidate = Path(raw_path)
+        if not candidate.is_absolute():
+            candidate = workspace / candidate
+        try:
+            return candidate.resolve().relative_to(workspace).as_posix()
+        except (OSError, ValueError):
+            return None
 
     def close(self) -> None:
         process = self._process

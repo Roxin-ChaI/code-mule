@@ -8,6 +8,7 @@ from code_mule.domain.enums import (
     TaskStatus,
 )
 from code_mule.domain.models import ExecutionReport
+from code_mule.progress import ProgressEventType, RecordingProgressSink
 from code_mule.runtime import (
     InvalidTaskCycleState,
     TaskCycleConfig,
@@ -133,6 +134,7 @@ def build_cycle(
     session=None,
     supervisor=None,
     max_attempts=3,
+    progress_sink=None,
 ):
     store = store or FakeStore(cycle_state())
     session = session or FakeWorkerSession()
@@ -154,6 +156,7 @@ def build_cycle(
         decision_id_factory=IdFactory("decision"),
         event_id_factory=IdFactory("event"),
         config=TaskCycleConfig(max_attempts),
+        progress_sink=progress_sink,
     )
     request_task = (
         store.current.tasks[0]
@@ -202,6 +205,59 @@ class TaskCycleContractTests(unittest.TestCase):
 
 
 class TaskCycleFlowTests(unittest.TestCase):
+    def test_rework_progress_exposes_attempts_and_supervisor_decisions(self):
+        progress = RecordingProgressSink()
+        supervisor = FakeSupervisor(
+            [
+                review(SupervisorDecisionType.REWORK, "repair addition"),
+                review(SupervisorDecisionType.CONTINUE),
+            ]
+        )
+        service, request, _, _, _, _ = build_cycle(
+            supervisor=supervisor,
+            progress_sink=progress,
+        )
+        service.execute(request)
+        relevant = tuple(
+            event
+            for event in progress.events
+            if event.type
+            in {
+                ProgressEventType.TASK_STARTED,
+                ProgressEventType.SUPERVISOR_REVIEW_STARTED,
+                ProgressEventType.SUPERVISOR_REVIEW_COMPLETED,
+                ProgressEventType.TASK_REWORK,
+                ProgressEventType.TASK_COMPLETED,
+            }
+        )
+        self.assertEqual(
+            tuple(event.type for event in relevant),
+            (
+                ProgressEventType.TASK_STARTED,
+                ProgressEventType.SUPERVISOR_REVIEW_STARTED,
+                ProgressEventType.SUPERVISOR_REVIEW_COMPLETED,
+                ProgressEventType.TASK_REWORK,
+                ProgressEventType.TASK_STARTED,
+                ProgressEventType.SUPERVISOR_REVIEW_STARTED,
+                ProgressEventType.SUPERVISOR_REVIEW_COMPLETED,
+                ProgressEventType.TASK_COMPLETED,
+            ),
+        )
+        self.assertEqual(
+            tuple(
+                event.attempt
+                for event in relevant
+                if event.type is ProgressEventType.TASK_STARTED
+            ),
+            (1, 2),
+        )
+        decisions = tuple(
+            event.metadata["decision"]
+            for event in relevant
+            if event.type is ProgressEventType.SUPERVISOR_REVIEW_COMPLETED
+        )
+        self.assertEqual(decisions, ("rework", "continue"))
+
     def test_continue_runs_one_turn_persists_and_completes_only_current_task(self):
         original = cycle_state()
         store = FakeStore(original)
@@ -349,8 +405,11 @@ class TaskCycleFailureTests(unittest.TestCase):
     def test_worker_approval_returns_human_required_without_supervisor(self):
         session = FakeWorkerSession([CodexApprovalRequired("approval")])
         supervisor = FakeSupervisor([])
+        progress = RecordingProgressSink()
         service, request, store, session, supervisor, _ = build_cycle(
-            session=session, supervisor=supervisor
+            session=session,
+            supervisor=supervisor,
+            progress_sink=progress,
         )
 
         outcome = service.execute(request)
@@ -362,6 +421,10 @@ class TaskCycleFailureTests(unittest.TestCase):
         event_types = tuple(event.event_type for event in store.current.events)
         self.assertIn("task.execution_failed", event_types)
         self.assertIn("task.human_required", event_types)
+        progress_types = tuple(event.type for event in progress.events)
+        self.assertIn(ProgressEventType.WORKER_FAILED, progress_types)
+        self.assertIn(ProgressEventType.TASK_HUMAN_REQUIRED, progress_types)
+        self.assertIn(ProgressEventType.HUMAN_GATE, progress_types)
 
     def test_malformed_worker_report_returns_human_without_prose_fallback(self):
         session = FakeWorkerSession([InvalidWorkerReport("malformed JSON")])
@@ -394,7 +457,11 @@ class TaskCycleFailureTests(unittest.TestCase):
 
     def test_supervisor_failure_keeps_report_persisted_and_does_not_retry(self):
         supervisor = FakeSupervisor([RuntimeError("provider failed")])
-        service, request, store, session, _, _ = build_cycle(supervisor=supervisor)
+        progress = RecordingProgressSink()
+        service, request, store, session, _, _ = build_cycle(
+            supervisor=supervisor,
+            progress_sink=progress,
+        )
 
         with self.assertRaisesRegex(RuntimeError, "provider failed"):
             service.execute(request)
@@ -403,6 +470,21 @@ class TaskCycleFailureTests(unittest.TestCase):
         self.assertEqual(len(store.current.execution_reports), 1)
         self.assertEqual(store.current.tasks[0].execution_attempts, 1)
         self.assertEqual(session.closed, 1)
+        self.assertEqual(
+            tuple(
+                event.type
+                for event in progress.events
+                if event.type
+                in {
+                    ProgressEventType.SUPERVISOR_REVIEW_STARTED,
+                    ProgressEventType.SUPERVISOR_FAILED,
+                }
+            ),
+            (
+                ProgressEventType.SUPERVISOR_REVIEW_STARTED,
+                ProgressEventType.SUPERVISOR_FAILED,
+            ),
+        )
 
 
 if __name__ == "__main__":

@@ -1,7 +1,12 @@
 import unittest
 from datetime import UTC, datetime
 
-from code_mule.progress import ProgressEvent, ProgressEventType
+from code_mule.progress import (
+    ProgressEvent,
+    ProgressEventType,
+    ProgressSnapshot,
+    progress_percentage,
+)
 
 
 NOW = datetime(2026, 9, 1, 9, 0, tzinfo=UTC)
@@ -50,6 +55,35 @@ class ProgressContractTests(unittest.TestCase):
                 None,
                 {"count": 1},  # type: ignore[dict-item]
             )
+
+    def test_progress_percentage_uses_only_completed_over_total(self):
+        self.assertEqual(progress_percentage(0, 4), 0.0)
+        self.assertEqual(progress_percentage(1, 4), 25.0)
+        self.assertEqual(progress_percentage(2, 4), 50.0)
+        self.assertEqual(progress_percentage(4, 4), 100.0)
+        self.assertEqual(progress_percentage(0, 0), 0.0)
+        for completed, total in ((-1, 4), (1, -1), (5, 4)):
+            with self.subTest(completed=completed, total=total):
+                with self.assertRaises(ValueError):
+                    progress_percentage(completed, total)
+
+    def test_snapshot_percentage_does_not_use_attempt_or_elapsed_time(self):
+        snapshot = ProgressSnapshot(
+            project_id="project-1",
+            project_status="running",
+            completed_tasks=1,
+            total_tasks=4,
+            current_task_id="task-2",
+            current_task_title="Task two",
+            current_attempt=99,
+            worker_status="working",
+            supervisor_status="waiting",
+            project_started_at=NOW,
+            task_started_at=NOW,
+            stage_started_at=NOW,
+            recent_events=(),
+        )
+        self.assertEqual(snapshot.percentage, 25.0)
 
 
 if __name__ == "__main__":

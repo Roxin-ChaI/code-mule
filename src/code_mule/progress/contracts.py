@@ -48,4 +48,40 @@ class ProgressEvent:
             raise TypeError("metadata keys and values must be strings")
 
 
-__all__ = ["ProgressEvent", "ProgressEventType"]
+@dataclass(frozen=True)
+class ProgressSnapshot:
+    project_id: str | None
+    project_status: str | None
+    completed_tasks: int
+    total_tasks: int
+    current_task_id: str | None
+    current_task_title: str | None
+    current_attempt: int | None
+    worker_status: str
+    supervisor_status: str
+    project_started_at: datetime | None
+    task_started_at: datetime | None
+    stage_started_at: datetime | None
+    recent_events: tuple[ProgressEvent, ...]
+
+    @property
+    def percentage(self) -> float:
+        return progress_percentage(self.completed_tasks, self.total_tasks)
+
+
+def progress_percentage(completed_tasks: int, total_tasks: int) -> float:
+    if completed_tasks < 0 or total_tasks < 0:
+        raise ValueError("task counts must be non-negative")
+    if completed_tasks > total_tasks:
+        raise ValueError("completed_tasks must not exceed total_tasks")
+    if total_tasks == 0:
+        return 0.0
+    return completed_tasks / total_tasks * 100.0
+
+
+__all__ = [
+    "ProgressEvent",
+    "ProgressEventType",
+    "ProgressSnapshot",
+    "progress_percentage",
+]

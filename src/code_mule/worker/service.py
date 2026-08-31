@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Protocol
 
 from code_mule.domain.models import ExecutionReport
+from code_mule.progress import ProgressSink
 
 from .client import CodexAppServerClient
 from .contracts import CodexWorkerConfig, WorkerTaskRequest, WorkerTurnResult
@@ -45,9 +46,18 @@ class CodexWorkerSession:
         self,
         config: CodexWorkerConfig,
         *,
-        client_factory: _ClientFactory = CodexAppServerClient,
+        client_factory: _ClientFactory | None = None,
+        progress_sink: ProgressSink | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
-        self._client = client_factory(config)
+        if client_factory is None:
+            self._client = CodexAppServerClient(
+                config,
+                progress_sink=progress_sink,
+                clock=clock,
+            )
+        else:
+            self._client = client_factory(config)
         self._thread_id: str | None = None
 
     @property
@@ -106,10 +116,14 @@ class CodexWorkerService:
         self,
         config: CodexWorkerConfig,
         *,
-        client_factory: _ClientFactory = CodexAppServerClient,
+        client_factory: _ClientFactory | None = None,
+        progress_sink: ProgressSink | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._config = config
         self._client_factory = client_factory
+        self._progress_sink = progress_sink
+        self._clock = clock
 
     def execute(
         self,
@@ -121,6 +135,8 @@ class CodexWorkerService:
         with CodexWorkerSession(
             self._config,
             client_factory=self._client_factory,
+            progress_sink=self._progress_sink,
+            clock=self._clock,
         ) as session:
             return session.execute(
                 request,

@@ -9,6 +9,10 @@ from code_mule.domain.enums import (
     TaskStatus,
 )
 from code_mule.domain.models import Milestone, Plan, Project, Task
+from code_mule.progress import (
+    ProgressEventType,
+    RecordingProgressSink,
+)
 from code_mule.runtime import (
     InvalidProjectExecutionState,
     ProjectExecutionConfig,
@@ -188,7 +192,14 @@ class FakeCycleFactory:
         )
 
 
-def build_service(state, *, max_tasks=20, cycle_options=None, store=None):
+def build_service(
+    state,
+    *,
+    max_tasks=20,
+    cycle_options=None,
+    store=None,
+    progress_sink=None,
+):
     store = store or FakeStore(state)
     cycles = FakeCycleFactory(store, **(cycle_options or {}))
     service = ProjectExecutionService(
@@ -199,6 +210,7 @@ def build_service(state, *, max_tasks=20, cycle_options=None, store=None):
         clock=lambda: NOW,
         event_id_factory=IdFactory(),
         config=ProjectExecutionConfig(max_tasks),
+        progress_sink=progress_sink,
     )
     return service, store, cycles
 
@@ -256,6 +268,59 @@ class ProjectExecutionContractTests(unittest.TestCase):
 
 
 class ProjectExecutionFlowTests(unittest.TestCase):
+    def test_project_progress_events_preserve_required_execution_order(self):
+        state = make_state(
+            (
+                make_task("task-a"),
+                make_task("task-b", dependencies=("task-a",)),
+            )
+        )
+        progress = RecordingProgressSink()
+        service, _, _ = build_service(state, progress_sink=progress)
+        service.run()
+        self.assertEqual(
+            tuple(event.type for event in progress.events),
+            (
+                ProgressEventType.PROJECT_STARTED,
+                ProgressEventType.TASK_DISPATCHED,
+                ProgressEventType.TASK_COMPLETED,
+                ProgressEventType.TASK_DISPATCHED,
+                ProgressEventType.TASK_COMPLETED,
+                ProgressEventType.PLAN_COMPLETED,
+                ProgressEventType.PROJECT_COMPLETED,
+            ),
+        )
+        task_events = tuple(
+            event
+            for event in progress.events
+            if event.type is ProgressEventType.TASK_COMPLETED
+        )
+        self.assertEqual(
+            tuple(event.metadata["completed_tasks"] for event in task_events),
+            ("1", "2"),
+        )
+        self.assertEqual(
+            tuple(event.metadata["total_tasks"] for event in task_events),
+            ("2", "2"),
+        )
+
+    def test_broken_progress_sink_does_not_stop_project_execution(self):
+        class BrokenProgressSink:
+            def emit(self, event):
+                raise RuntimeError("presentation failed")
+
+        state = make_state((make_task("task-a"),))
+        service, store, cycles = build_service(
+            state, progress_sink=BrokenProgressSink()
+        )
+        outcome = service.run()
+        self.assertIs(
+            outcome.stop_reason, ProjectExecutionStopReason.PLAN_COMPLETED
+        )
+        self.assertIs(store.current.project.status, ProjectStatus.DONE)
+        self.assertEqual(len(cycles.requests), 1)
+        self.assertGreaterEqual(len(service.progress_errors), 1)
+
     def test_dependency_chain_completes_tasks_milestone_plan_and_project(self):
         original = make_state(
             (

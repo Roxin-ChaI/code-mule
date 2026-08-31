@@ -1,6 +1,11 @@
 """Ephemeral runtime progress and presentation contracts."""
 
-from .contracts import ProgressEvent, ProgressEventType
+from .contracts import (
+    ProgressEvent,
+    ProgressEventType,
+    ProgressSnapshot,
+    progress_percentage,
+)
 from .sink import (
     CompositeProgressSink,
     NoopProgressSink,
@@ -15,6 +20,8 @@ __all__ = [
     "ProgressEvent",
     "ProgressEventType",
     "ProgressSink",
+    "ProgressSnapshot",
     "RecordingProgressSink",
+    "progress_percentage",
     "resilient_progress_sink",
 ]

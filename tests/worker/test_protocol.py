@@ -4,8 +4,10 @@ import queue
 import subprocess
 import threading
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 
+from code_mule.progress import ProgressEventType, RecordingProgressSink
 from code_mule.worker.client import CodexAppServerClient
 from code_mule.worker.contracts import (
     CodexApprovalRequired,
@@ -117,7 +119,7 @@ def standard_handler(process, message):
         )
 
 
-def make_client(handler=standard_handler, timeout=0.2):
+def make_client(handler=standard_handler, timeout=0.2, progress_sink=None):
     holder = {}
 
     def factory(*args, **kwargs):
@@ -126,7 +128,15 @@ def make_client(handler=standard_handler, timeout=0.2):
         holder["process"] = FakeProcess(handler)
         return holder["process"]
 
-    return CodexAppServerClient(config(timeout), popen_factory=factory), holder
+    return (
+        CodexAppServerClient(
+            config(timeout),
+            popen_factory=factory,
+            progress_sink=progress_sink,
+            clock=lambda: datetime(2026, 9, 1, 9, 0, tzinfo=UTC),
+        ),
+        holder,
+    )
 
 
 class ProtocolHelperTests(unittest.TestCase):
@@ -181,6 +191,132 @@ class ProtocolHelperTests(unittest.TestCase):
 
 
 class CodexAppServerClientTests(unittest.TestCase):
+    def test_projects_only_schema_backed_safe_worker_activity(self):
+        progress = RecordingProgressSink()
+        client, holder = make_client(progress_sink=progress)
+        try:
+            client.initialize()
+            thread_id = client.start_thread()
+            turn_id = client.start_turn(thread_id, "prompt")
+            process = holder["process"]
+            events = (
+                {
+                    "method": "turn/started",
+                    "params": {
+                        "threadId": thread_id,
+                        "turn": {"id": turn_id, "status": "inProgress"},
+                    },
+                },
+                {
+                    "method": "item/started",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "startedAtMs": 1,
+                        "item": {
+                            "id": "command-1",
+                            "type": "commandExecution",
+                            "command": "curl -H 'Authorization: secret-value'",
+                            "commandActions": [{"type": "unknown"}],
+                            "cwd": "/tmp/project",
+                            "status": "inProgress",
+                        },
+                    },
+                },
+                {
+                    "method": "item/started",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "startedAtMs": 2,
+                        "item": {
+                            "id": "file-1",
+                            "type": "fileChange",
+                            "changes": [
+                                {
+                                    "path": "/tmp/project/src/module.py",
+                                    "kind": "update",
+                                    "diff": "private diff",
+                                }
+                            ],
+                            "status": "inProgress",
+                        },
+                    },
+                },
+                {
+                    "method": "item/started",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "startedAtMs": 3,
+                        "item": {
+                            "id": "file-2",
+                            "type": "fileChange",
+                            "changes": [
+                                {
+                                    "path": "/Users/private/.ssh/id_rsa",
+                                    "kind": "update",
+                                    "diff": "private diff",
+                                }
+                            ],
+                            "status": "inProgress",
+                        },
+                    },
+                },
+                {
+                    "method": "item/completed",
+                    "params": {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "completedAtMs": 4,
+                        "item": {
+                            "id": "message-1",
+                            "type": "agentMessage",
+                            "text": '{"status":"completed"}',
+                        },
+                    },
+                },
+                {
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": thread_id,
+                        "turn": {
+                            "id": turn_id,
+                            "items": [],
+                            "status": "completed",
+                        },
+                    },
+                },
+            )
+            for event in events:
+                process.stdout.emit(event)
+            client.wait_for_turn(thread_id, turn_id)
+
+            self.assertTrue(
+                all(
+                    event.type is ProgressEventType.WORKER_ACTIVITY
+                    for event in progress.events
+                )
+            )
+            messages = tuple(event.message for event in progress.events)
+            self.assertEqual(
+                messages,
+                (
+                    "Codex turn started",
+                    "Running command",
+                    "Editing src/module.py",
+                    "Updating file",
+                    "Codex response completed",
+                    "Codex turn completed",
+                ),
+            )
+            projected = repr(progress.events)
+            self.assertNotIn("secret-value", projected)
+            self.assertNotIn("id_rsa", projected)
+            self.assertNotIn("private diff", projected)
+        finally:
+            client.close()
+
     def test_full_initialize_thread_turn_and_completion_flow(self):
         requests = []
 

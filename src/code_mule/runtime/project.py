@@ -8,7 +8,13 @@ from typing import Protocol
 from code_mule.domain.enums import PlanStatus, ProjectStatus, TaskStatus
 from code_mule.domain.models import Milestone, ProjectEvent, Task
 from code_mule.domain.state_machine import validate_transition
-from code_mule.scheduler import TaskScheduler
+from code_mule.progress import (
+    ProgressEvent,
+    ProgressEventType,
+    ProgressSink,
+    resilient_progress_sink,
+)
+from code_mule.scheduler import SchedulerError, TaskScheduler
 from code_mule.scheduler.selection import resolve_active_plan_graph
 from code_mule.state.models import ProjectState
 
@@ -85,6 +91,7 @@ class ProjectExecutionService:
         clock: Callable[[], datetime],
         event_id_factory: Callable[[], str],
         config: ProjectExecutionConfig,
+        progress_sink: ProgressSink | None = None,
     ) -> None:
         self._store = store
         self._scheduler = scheduler
@@ -93,8 +100,39 @@ class ProjectExecutionService:
         self._clock = clock
         self._event_id_factory = event_id_factory
         self._config = config
+        self._progress = resilient_progress_sink(progress_sink)
+
+    @property
+    def progress_errors(self) -> tuple[BaseException, ...]:
+        return self._progress.errors
 
     def run(self) -> ProjectExecutionOutcome:
+        initial = self._store.load()
+        completed, total = self._progress_counts(initial)
+        self._emit_progress(
+            initial,
+            ProgressEventType.PROJECT_STARTED,
+            "Project execution started",
+            metadata={
+                "project_name": initial.project.name,
+                "project_status": initial.project.status.value,
+                "completed_tasks": str(completed),
+                "total_tasks": str(total),
+            },
+        )
+        try:
+            return self._run()
+        except BaseException as error:
+            latest = self._store.load()
+            self._emit_progress(
+                latest,
+                ProgressEventType.ERROR,
+                "Project execution failed",
+                metadata={"error_type": type(error).__name__},
+            )
+            raise
+
+    def _run(self) -> ProjectExecutionOutcome:
         started = 0
         completed = 0
         task_ids: tuple[str, ...] = ()
@@ -103,6 +141,7 @@ class ProjectExecutionService:
             state = self._store.load()
             boundary = self._boundary_outcome(state, started, completed, task_ids)
             if boundary is not None:
+                self._emit_stopped(state, boundary.stop_reason)
                 return boundary
 
             self._scheduler.validate(state)
@@ -111,6 +150,25 @@ class ProjectExecutionService:
 
             if self._scheduler.is_plan_complete(state):
                 final_state = self._complete_plan(state)
+                completed_count, total = self._progress_counts_from_closed_plan(
+                    final_state
+                )
+                completion_metadata = {
+                    "completed_tasks": str(completed_count),
+                    "total_tasks": str(total),
+                }
+                self._emit_progress(
+                    final_state,
+                    ProgressEventType.PLAN_COMPLETED,
+                    "Active Plan completed",
+                    metadata=completion_metadata,
+                )
+                self._emit_progress(
+                    final_state,
+                    ProgressEventType.PROJECT_COMPLETED,
+                    "Project completed",
+                    metadata=completion_metadata,
+                )
                 return self._outcome(
                     final_state,
                     started,
@@ -126,6 +184,9 @@ class ProjectExecutionService:
                     "project.execution_limit_reached",
                     {"max_tasks": str(self._config.max_tasks_per_run)},
                 )
+                self._emit_stopped(
+                    stopped, ProjectExecutionStopReason.TASK_LIMIT_REACHED
+                )
                 return self._outcome(
                     stopped,
                     started,
@@ -140,6 +201,9 @@ class ProjectExecutionService:
                 stopped = self._stop_for_human(
                     state, "project.no_runnable_task", {}
                 )
+                self._emit_stopped(
+                    stopped, ProjectExecutionStopReason.NO_RUNNABLE_TASK
+                )
                 return self._outcome(
                     stopped,
                     started,
@@ -150,6 +214,18 @@ class ProjectExecutionService:
                 )
 
             dispatched = self._dispatch(state, task)
+            completed_before, total = self._progress_counts(dispatched)
+            self._emit_progress(
+                dispatched,
+                ProgressEventType.TASK_DISPATCHED,
+                f"Dispatched {task.title}",
+                task_id=task.id,
+                metadata={
+                    "task_title": task.title,
+                    "completed_tasks": str(completed_before),
+                    "total_tasks": str(total),
+                },
+            )
             started += 1
             task_ids += (task.id,)
             current = self._task(dispatched, task.id)
@@ -160,6 +236,9 @@ class ProjectExecutionService:
             latest = self._store.load()
             if cycle_outcome.human_action_required:
                 latest = self._ensure_human_required(latest, task.id)
+                self._emit_stopped(
+                    latest, ProjectExecutionStopReason.HUMAN_REQUIRED
+                )
                 return self._outcome(
                     latest,
                     started,
@@ -178,6 +257,19 @@ class ProjectExecutionService:
                     "TaskCycle success must persist COMPLETED and clear current_task_id"
                 )
             completed += 1
+            completed_count, total = self._progress_counts(latest)
+            self._emit_progress(
+                latest,
+                ProgressEventType.TASK_COMPLETED,
+                f"Completed {persisted_task.title}",
+                task_id=persisted_task.id,
+                attempt=persisted_task.execution_attempts or None,
+                metadata={
+                    "task_title": persisted_task.title,
+                    "completed_tasks": str(completed_count),
+                    "total_tasks": str(total),
+                },
+            )
             self._complete_ready_milestones(latest)
 
     def _boundary_outcome(
@@ -259,6 +351,7 @@ class ProjectExecutionService:
             {"reason": "execution_ownership_uncertain"},
             entity_id=current.id,
         )
+        self._emit_stopped(stopped, ProjectExecutionStopReason.HUMAN_REQUIRED)
         return self._outcome(
             stopped,
             started,
@@ -404,6 +497,79 @@ class ProjectExecutionService:
         )
         self._store.save(updated)
         return updated
+
+    def _emit_stopped(
+        self,
+        state: ProjectState,
+        reason: ProjectExecutionStopReason,
+    ) -> None:
+        completed, total = self._progress_counts(state)
+        self._emit_progress(
+            state,
+            ProgressEventType.PROJECT_STOPPED,
+            f"Project execution stopped: {reason.value}",
+            task_id=state.project.current_task_id,
+            metadata={
+                "reason": reason.value,
+                "project_status": state.project.status.value,
+                "completed_tasks": str(completed),
+                "total_tasks": str(total),
+            },
+        )
+
+    def _emit_progress(
+        self,
+        state: ProjectState,
+        event_type: ProgressEventType,
+        message: str,
+        *,
+        task_id: str | None = None,
+        attempt: int | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
+        self._progress.emit(
+            ProgressEvent(
+                type=event_type,
+                timestamp=self._clock(),
+                project_id=state.project.id,
+                task_id=task_id,
+                attempt=attempt,
+                message=message,
+                metadata=metadata or {},
+            )
+        )
+
+    @staticmethod
+    def _progress_counts(state: ProjectState) -> tuple[int, int]:
+        try:
+            graph = resolve_active_plan_graph(state)
+        except SchedulerError:
+            return 0, 0
+        return (
+            sum(task.status is TaskStatus.COMPLETED for task in graph.tasks),
+            len(graph.tasks),
+        )
+
+    @staticmethod
+    def _progress_counts_from_closed_plan(state: ProjectState) -> tuple[int, int]:
+        active_plan_id = state.project.active_plan_id
+        plan = next(
+            (item for item in state.plans if item.id == active_plan_id), None
+        )
+        if plan is None:
+            return 0, 0
+        milestone_ids = set(plan.milestone_ids)
+        task_ids = {
+            task_id
+            for milestone in state.milestones
+            if milestone.id in milestone_ids and milestone.plan_id == plan.id
+            for task_id in milestone.task_ids
+        }
+        tasks = tuple(task for task in state.tasks if task.id in task_ids)
+        return (
+            sum(task.status is TaskStatus.COMPLETED for task in tasks),
+            len(tasks),
+        )
 
     def _event(
         self,
