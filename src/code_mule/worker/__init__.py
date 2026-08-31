@@ -14,7 +14,7 @@ from .contracts import (
     WorkerTurnResult,
 )
 from .parsing import build_execution_report
-from .service import CodexWorkerService
+from .service import CodexWorkerService, CodexWorkerSession
 from .structured_report import (
     InvalidWorkerReport,
     StructuredWorkerReport,
@@ -36,6 +36,7 @@ __all__ = [
     "CodexWorkerConfig",
     "CodexWorkerError",
     "CodexWorkerService",
+    "CodexWorkerSession",
     "InvalidWorkerReport",
     "StructuredWorkerReport",
     "WorkerCheckResult",

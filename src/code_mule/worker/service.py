@@ -1,5 +1,7 @@
 """Application service for one isolated Codex Worker execution."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from datetime import datetime
 from typing import Protocol
@@ -36,6 +38,67 @@ class _WorkerClient(Protocol):
 _ClientFactory = Callable[[CodexWorkerConfig], _WorkerClient]
 
 
+class CodexWorkerSession:
+    """Reuse one initialized Codex thread across multiple task attempts."""
+
+    def __init__(
+        self,
+        config: CodexWorkerConfig,
+        *,
+        client_factory: _ClientFactory = CodexAppServerClient,
+    ) -> None:
+        self._client = client_factory(config)
+        self._thread_id: str | None = None
+
+    @property
+    def thread_id(self) -> str | None:
+        return self._thread_id
+
+    def start(self) -> None:
+        if self._thread_id is not None:
+            return
+        self._client.initialize()
+        self._thread_id = self._client.start_thread()
+
+    def execute(
+        self,
+        request: WorkerTaskRequest,
+        *,
+        report_id: str,
+        created_at: datetime,
+    ) -> ExecutionReport:
+        if self._thread_id is None:
+            raise RuntimeError("Codex Worker session has not been started")
+        turn_id = self._client.start_turn(
+            self._thread_id,
+            request.prompt,
+            output_schema=structured_worker_report_schema(),
+        )
+        result = self._client.wait_for_turn(self._thread_id, turn_id)
+        report = parse_structured_worker_report(result.final_message)
+        return build_execution_report(
+            request=request,
+            result=report,
+            report_id=report_id,
+            created_at=created_at,
+            transport_issues=result.issues,
+        )
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> CodexWorkerSession:
+        try:
+            self.start()
+        except BaseException:
+            self.close()
+            raise
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+
 class CodexWorkerService:
     """Execute one task through a fresh local app-server process."""
 
@@ -55,26 +118,15 @@ class CodexWorkerService:
         report_id: str,
         created_at: datetime,
     ) -> ExecutionReport:
-        client = self._client_factory(self._config)
-        try:
-            client.initialize()
-            thread_id = client.start_thread()
-            turn_id = client.start_turn(
-                thread_id,
-                request.prompt,
-                output_schema=structured_worker_report_schema(),
-            )
-            result = client.wait_for_turn(thread_id, turn_id)
-            report = parse_structured_worker_report(result.final_message)
-            return build_execution_report(
-                request=request,
-                result=report,
+        with CodexWorkerSession(
+            self._config,
+            client_factory=self._client_factory,
+        ) as session:
+            return session.execute(
+                request,
                 report_id=report_id,
                 created_at=created_at,
-                transport_issues=result.issues,
             )
-        finally:
-            client.close()
 
 
-__all__ = ["CodexWorkerService"]
+__all__ = ["CodexWorkerService", "CodexWorkerSession"]
