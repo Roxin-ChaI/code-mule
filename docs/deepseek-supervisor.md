@@ -4,7 +4,7 @@
 
 DeepSeek is the configured real Supervisor provider for Code Mule. The adapter uses DeepSeek's OpenAI-compatible Responses API with JSON Schema structured output and returns a plain JSON-compatible object to the existing local parser. The official DeepSeek [Responses API guide](https://api-docs.deepseek.com/guides/responses_api/) documents the compatibility surface and the `https://api.deepseek.com` base URL.
 
-The official `openai` Python SDK is used only as a compatibility transport client. Code Mule does not use an OpenAI API key, OpenAI endpoint, or OpenAI billing for its configured real Supervisor path.
+The official [`openai` Python SDK](https://developers.openai.com/api/docs/libraries) is used only as a compatibility transport client. Code Mule does not use an OpenAI API key, OpenAI endpoint, or OpenAI billing for its configured real Supervisor path.
 
 ## Architecture
 
@@ -52,10 +52,12 @@ The manual script makes a real DeepSeek API request and may incur charges. Only 
 From the repository root:
 
 ```bash
-source .venv/bin/activate
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -e .
+
 export DEEPSEEK_API_KEY="..."
-export CODE_MULE_DEEPSEEK_MODEL="..."
-python3.12 scripts/manual_deepseek_supervisor_e2e.py
+export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
+.venv/bin/python scripts/manual_deepseek_supervisor_e2e.py
 ```
 
-The script prints a prominent warning before validating configuration. It never prints or persists the API key. It constructs a minimal deterministic ProjectState and performs one `report_progress()` request without tools, repository mutation, Codex, deployment, or Git operations.
+The explicit `.venv/bin/python` command guarantees that the script runs in the environment where Code Mule and its declared runtime dependencies were installed; global Python packages are not assumed. The script prints a prominent warning before validating configuration. It never prints or persists the API key. It constructs a minimal deterministic ProjectState and performs one `report_progress()` request without tools, repository mutation, Codex, deployment, or Git operations.

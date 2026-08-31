@@ -57,6 +57,29 @@ Orchestrator
   └── Codex Worker
 ```
 
+## Local Setup
+
+Use the repository-local Python 3.12 environment so Code Mule and its declared runtime dependencies share one interpreter:
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -e .
+```
+
+Do not rely on packages installed in the global `python3.12` environment.
+
+## Manual DeepSeek E2E
+
+This command makes a real DeepSeek API request and may incur charges. It is a Boss-only manual gate and is not run by automated verification or Codex.
+
+```bash
+export DEEPSEEK_API_KEY="..."
+export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
+.venv/bin/python scripts/manual_deepseek_supervisor_e2e.py
+```
+
+See [DeepSeek Supervisor Provider](docs/deepseek-supervisor.md) for the runtime and state boundaries.
+
 ## Status
 
 Early development.
