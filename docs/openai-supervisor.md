@@ -2,7 +2,9 @@
 
 ## Purpose
 
-OpenAI is the first concrete provider for the Code Mule Supervisor reasoning boundary. The adapter uses the OpenAI Responses API with JSON Schema Structured Outputs and returns a plain JSON-compatible object to the existing local parser. See the official [Create a model response](https://developers.openai.com/api/reference/cli/resources/responses/methods/create) reference.
+`OpenAISupervisorModelClient` is a retained provider implementation for the Code Mule Supervisor reasoning boundary. It uses the OpenAI Responses API with JSON Schema Structured Outputs and returns a plain JSON-compatible object to the existing local parser. See the official [Create a model response](https://developers.openai.com/api/reference/cli/resources/responses/methods/create) reference.
+
+This implementation is not Code Mule's configured real Supervisor provider. The configured project path is [DeepSeek](deepseek-supervisor.md); it uses the official `openai` Python SDK only as an OpenAI-compatible transport client pointed at the DeepSeek endpoint. Code Mule does not require an OpenAI API key or an OpenAI real E2E run.
 
 ## Architecture
 
@@ -32,17 +34,6 @@ When constructing a real OpenAI client, set `max_retries=0` so SDK transport ret
 
 All automated provider and service-integration tests use an injected fake `responses.create` surface. They make no network requests, read no API key, and produce no API charges.
 
-## Manual Real E2E
+## Real E2E Status
 
-The manual script makes a real OpenAI API request and may incur charges. It must be run only by a user who has reviewed and approved that external action.
-
-From the repository root:
-
-```bash
-source .venv/bin/activate
-export OPENAI_API_KEY="..."
-export CODE_MULE_OPENAI_MODEL="..."
-python3.12 scripts/manual_openai_supervisor_e2e.py
-```
-
-The script prints a prominent warning before validating configuration. It never prints or persists the API key. It constructs a minimal deterministic ProjectState and performs one `report_progress()` request without tools, repository mutation, Codex, deployment, or Git operations.
+Code Mule has no configured real OpenAI E2E path. Real Supervisor validation uses the Boss-only manual DeepSeek procedure documented in [DeepSeek Supervisor Provider](deepseek-supervisor.md). The OpenAI implementation and its fake-client unit and integration tests remain available to preserve the provider abstraction.

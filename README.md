@@ -61,4 +61,4 @@ Orchestrator
 
 Early development.
 
-The OpenAI Supervisor provider integration is in v0.1.0 development. Autonomous coding, Codex integration, and production readiness are not yet available.
+The DeepSeek Supervisor provider integration is in v0.1.0 development. It uses the official `openai` Python SDK only as an OpenAI-compatible client for the DeepSeek endpoint; ProjectState remains the Source of Truth. Automated tests do not call real model APIs, and real DeepSeek E2E remains a Boss-only manual gate. Autonomous coding, Codex integration, and production readiness are not yet available.

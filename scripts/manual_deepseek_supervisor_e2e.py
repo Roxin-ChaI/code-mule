@@ -1,4 +1,4 @@
-"""Manual, billable OpenAI Supervisor E2E. Never run in automation."""
+"""Manual, billable DeepSeek Supervisor E2E. Never run in automation."""
 
 from datetime import datetime, timezone
 import os
@@ -16,9 +16,9 @@ from code_mule.domain.enums import ProjectStatus  # noqa: E402
 from code_mule.domain.models import Project  # noqa: E402
 from code_mule.state.models import ProjectState  # noqa: E402
 from code_mule.supervisor.contracts import ProgressReportRequest  # noqa: E402
-from code_mule.supervisor.providers.openai import (  # noqa: E402
-    OpenAISupervisorConfig,
-    OpenAISupervisorModelClient,
+from code_mule.supervisor.providers.deepseek import (  # noqa: E402
+    DeepSeekSupervisorConfig,
+    DeepSeekSupervisorModelClient,
 )
 from code_mule.supervisor.service import SupervisorService  # noqa: E402
 
@@ -28,7 +28,7 @@ def _minimal_project_state() -> ProjectState:
     return ProjectState(
         project=Project(
             id="manual-e2e-project",
-            name="Code Mule Manual E2E",
+            name="Code Mule Manual DeepSeek E2E",
             status=ProjectStatus.IDLE,
             active_plan_id=None,
             current_task_id=None,
@@ -49,20 +49,24 @@ def _minimal_project_state() -> ProjectState:
 
 
 def main() -> int:
-    print("REAL OPENAI API CALL — MANUAL ONLY")
-    api_key = os.getenv("OPENAI_API_KEY")
-    model = os.getenv("CODE_MULE_OPENAI_MODEL")
-    if not api_key:
-        print("ERROR: OPENAI_API_KEY is required.", file=sys.stderr)
+    print("REAL DEEPSEEK API CALL — MANUAL ONLY")
+    deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
+    model = os.getenv("CODE_MULE_DEEPSEEK_MODEL")
+    if not deepseek_api_key:
+        print("ERROR: DEEPSEEK_API_KEY is required.", file=sys.stderr)
         return 2
     if not model:
-        print("ERROR: CODE_MULE_OPENAI_MODEL is required.", file=sys.stderr)
+        print("ERROR: CODE_MULE_DEEPSEEK_MODEL is required.", file=sys.stderr)
         return 2
 
-    openai_client = OpenAI(api_key=api_key, max_retries=0)
-    provider = OpenAISupervisorModelClient(
-        openai_client,
-        OpenAISupervisorConfig(model=model, max_output_tokens=600),
+    compatibility_client = OpenAI(
+        api_key=deepseek_api_key,
+        base_url="https://api.deepseek.com",
+        max_retries=0,
+    )
+    provider = DeepSeekSupervisorModelClient(
+        compatibility_client,
+        DeepSeekSupervisorConfig(model=model, max_output_tokens=600),
     )
     supervisor = SupervisorService(provider)
     report = supervisor.report_progress(
