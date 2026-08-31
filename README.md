@@ -102,8 +102,29 @@ See [Single-Task Autonomous Cycle](docs/task-cycle.md) for persistence ordering,
 evidence rules, Human Gates, local smoke verification, and the Boss-only manual
 DeepSeek + Codex E2E command.
 
+## Multi-Task Project Execution
+
+Phase 8 adds a pure deterministic scheduler and a bounded project runtime over
+an already-materialized active Plan. It dispatches one Ready Task at a time,
+persists before starting Codex, reloads state at every Task boundary, honors
+PAUSE and CHANGE safe points, and completes the Project only when the active
+Plan satisfies deterministic completion rules. It does not apply Supervisor
+Plan proposals or perform CHANGE replanning.
+
+See [Multi-Task Project Execution](docs/project-execution.md) for ordering,
+recovery, completion, Human Gate, real local Codex smoke, and the Boss-only
+manual DeepSeek + Codex multi-task E2E command.
+
 ## Status
 
 Early development.
 
-The DeepSeek Supervisor provider, local Codex Worker, and deterministic single-task cycle are in v0.1.0 development. The Supervisor uses the official `openai` Python SDK only as an OpenAI-compatible client for the DeepSeek endpoint, while the Worker uses the local Codex app-server process. ProjectState remains the Source of Truth. Automated tests do not call real model APIs, and the combined real DeepSeek + Codex E2E remains a Boss-only manual gate. Multi-task scheduling, full autonomous orchestration, and production readiness are not yet available.
+The DeepSeek Supervisor provider, local Codex Worker, deterministic task cycle,
+and bounded multi-task active-Plan execution are in v0.1.0 development. The
+Supervisor uses the official `openai` Python SDK only as an OpenAI-compatible
+client for the DeepSeek endpoint, while the Worker uses the local Codex
+app-server process. ProjectState remains the Source of Truth. Automated tests
+do not call real model APIs, and the real DeepSeek + Codex multi-task E2E
+remains a Boss-only manual gate. Plan application, CHANGE replanning,
+parallel/multi-project execution, and production readiness are not yet
+available.
