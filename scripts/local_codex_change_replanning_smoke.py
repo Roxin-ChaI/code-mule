@@ -171,6 +171,7 @@ class _FakeChangeSupervisor:
                 ),
             ),
             dependency_changes=(),
+            task_requirement_updates=(),
             risks=(),
             recommendation="Create Plan v2 and resume.",
             rationale="The change is additive and keeps completed work.",

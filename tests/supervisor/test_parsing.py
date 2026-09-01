@@ -92,6 +92,9 @@ def impact_payload():
         "dependency_changes": [
             {"task_id": "task-1", "dependencies": ["task-0"]}
         ],
+        "task_requirement_updates": [
+            {"task_id": "task-1", "requirement_ids": ["req-2-v2"]}
+        ],
         "risks": ["integration risk"],
         "recommendation": "replan",
         "rationale": "scope changed",
@@ -184,8 +187,13 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(task["properties"]["requirement_ids"]["minItems"], 1)
         impact = impact_analysis_response_schema()
         self.assertIn("milestone_ids_reused", impact["required"])
+        self.assertIn("task_requirement_updates", impact["required"])
         self.assertFalse(
             impact["properties"]["milestones"]["items"]["additionalProperties"]
+        )
+        self.assertFalse(
+            impact["properties"]["task_requirement_updates"]["items"]
+            ["additionalProperties"]
         )
 
 
@@ -230,6 +238,10 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(impact.milestones[0].id, "milestone-v2")
         self.assertEqual(impact.milestone_ids_reused, ("milestone-1",))
         self.assertEqual(impact.dependency_changes[0].task_id, "task-1")
+        self.assertEqual(
+            impact.task_requirement_updates[0].requirement_ids,
+            ("req-2-v2",),
+        )
         self.assertEqual(progress.completed, ("task-0",))
         self.assertIsNone(progress.quality_summary)
 

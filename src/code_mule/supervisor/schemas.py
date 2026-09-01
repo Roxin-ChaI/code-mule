@@ -129,6 +129,13 @@ def impact_analysis_response_schema() -> dict[str, object]:
         },
         ["task_id", "dependencies"],
     )
+    task_requirement_update_schema = _strict_object(
+        {
+            "task_id": {"type": "string", "minLength": 1},
+            "requirement_ids": _non_empty_string_array(),
+        },
+        ["task_id", "requirement_ids"],
+    )
     return _strict_object(
         {
             "change_request_id": {"type": "string", "minLength": 1},
@@ -163,6 +170,10 @@ def impact_analysis_response_schema() -> dict[str, object]:
                 "type": "array",
                 "items": dependency_change_schema,
             },
+            "task_requirement_updates": {
+                "type": "array",
+                "items": task_requirement_update_schema,
+            },
             "risks": _string_array(),
             "recommendation": {"type": "string", "minLength": 1},
             "rationale": {"type": "string", "minLength": 1},
@@ -185,6 +196,7 @@ def impact_analysis_response_schema() -> dict[str, object]:
             "milestone_ids_reused",
             "milestones",
             "dependency_changes",
+            "task_requirement_updates",
             "risks",
             "recommendation",
             "rationale",

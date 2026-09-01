@@ -15,6 +15,7 @@ from .contracts import (
     ReviewResult,
     SupervisorOperation,
     TaskDependencyChange,
+    TaskRequirementUpdate,
     TaskProposal,
 )
 from .parsing import (
@@ -58,6 +59,7 @@ __all__ = [
     "SUPERVISOR_SYSTEM_POLICY",
     "TaskProposal",
     "TaskDependencyChange",
+    "TaskRequirementUpdate",
     "build_impact_analysis_prompt",
     "build_plan_prompt",
     "build_progress_report_prompt",

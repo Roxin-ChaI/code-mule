@@ -14,6 +14,7 @@ from code_mule.supervisor.contracts import (
     ReviewResult,
     SupervisorOperation,
     TaskDependencyChange,
+    TaskRequirementUpdate,
     TaskProposal,
 )
 
@@ -122,6 +123,7 @@ class SupervisorContractTests(unittest.TestCase):
             "milestone_ids_reused": (),
             "milestones": (),
             "dependency_changes": (),
+            "task_requirement_updates": (),
             "risks": (),
             "recommendation": "replan",
             "rationale": "requirement changed",
@@ -146,8 +148,10 @@ class SupervisorContractTests(unittest.TestCase):
             ),
         )
         dependency = TaskDependencyChange("task-1", ("task-0",))
+        traceability = TaskRequirementUpdate("task-1", ("req-new",))
         self.assertEqual(update.supersedes_id, "req-old")
         self.assertEqual(dependency.dependencies, ("task-0",))
+        self.assertEqual(traceability.requirement_ids, ("req-new",))
 
 
 if __name__ == "__main__":

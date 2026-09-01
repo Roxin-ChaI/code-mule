@@ -118,6 +118,17 @@ class TaskDependencyChange:
 
 
 @dataclass(frozen=True)
+class TaskRequirementUpdate:
+    task_id: str
+    requirement_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _require_non_empty(self.task_id, "task_id")
+        if not self.requirement_ids:
+            raise ValueError("requirement_ids must contain at least one item")
+
+
+@dataclass(frozen=True)
 class PlanProposal:
     summary: str
     requirements: tuple[RequirementProposal, ...]
@@ -172,6 +183,7 @@ class ImpactAnalysisResult:
     milestone_ids_reused: tuple[str, ...]
     milestones: tuple[MilestoneProposal, ...]
     dependency_changes: tuple[TaskDependencyChange, ...]
+    task_requirement_updates: tuple[TaskRequirementUpdate, ...]
     risks: tuple[str, ...]
     recommendation: str
     rationale: str
@@ -210,4 +222,5 @@ __all__ = [
     "SupervisorOperation",
     "TaskProposal",
     "TaskDependencyChange",
+    "TaskRequirementUpdate",
 ]

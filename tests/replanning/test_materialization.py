@@ -18,9 +18,15 @@ from code_mule.supervisor import (
     MilestoneProposal,
     RequirementProposal,
     RequirementUpdateProposal,
+    TaskRequirementUpdate,
 )
 
-from replanning.test_validation import NOW, state, valid_proposal
+from replanning.test_validation import (
+    NOW,
+    replacement_proposal,
+    state,
+    valid_proposal,
+)
 
 
 def replanning_state():
@@ -63,12 +69,45 @@ class ChangeReplanMaterializerTests(unittest.TestCase):
         self.assertIs(tasks["T1"].status, TaskStatus.COMPLETED)
         self.assertEqual(tasks["T1"].execution_attempts, 1)
         self.assertIs(tasks["T2"].status, TaskStatus.PENDING)
+        self.assertEqual(tasks["T2"].requirement_ids, ("REQ-BASE",))
         self.assertIs(tasks["T3"].status, TaskStatus.PENDING)
         self.assertTrue(all(tasks[item].milestone_id == "M2" for item in ("T1", "T2", "T3")))
         self.assertIs(
             result.change_requests[0].status, ChangeRequestStatus.APPLIED
         )
         self.assertEqual(result.impact_analyses[-1].tasks_to_add, ("T3",))
+        active_plan = result.plans[-1]
+        active_task_ids = {
+            task_id
+            for milestone in result.milestones
+            if milestone.id in active_plan.milestone_ids
+            for task_id in milestone.task_ids
+        }
+        for task_id in active_task_ids:
+            with self.subTest(task_id=task_id):
+                self.assertLessEqual(
+                    set(tasks[task_id].requirement_ids),
+                    set(active_plan.requirement_ids),
+                )
+
+    def test_explicit_traceability_update_is_materialized_for_reopened_task(self):
+        proposal = replace(
+            replacement_proposal(),
+            tasks_to_reopen=("T1",),
+        )
+        result = self.materializer.materialize(
+            self.state,
+            self.change,
+            proposal,
+            plan_id="PLAN-2",
+            operation_time=NOW,
+        )
+
+        tasks = {item.id: item for item in result.tasks}
+        self.assertIs(tasks["T1"].status, TaskStatus.REOPENED)
+        self.assertEqual(tasks["T1"].requirement_ids, ("REQ-BASE-V2",))
+        self.assertEqual(tasks["T2"].requirement_ids, ("REQ-BASE-V2",))
+        self.assertEqual(result.plans[-1].requirement_ids, ("REQ-BASE-V2",))
 
     def test_explicit_reopen_changes_only_named_completed_task(self):
         proposal = replace(
@@ -112,7 +151,8 @@ class ChangeReplanMaterializerTests(unittest.TestCase):
         proposal = replace(
             valid_proposal(),
             affected_requirement_ids=("REQ-BASE",),
-            affected_task_ids=("T2",),
+            affected_task_ids=("T1", "T2"),
+            affected_completed_tasks=("T1",),
             affected_pending_tasks=("T2",),
             requirements_to_add=(),
             requirements_to_update=(
@@ -134,6 +174,9 @@ class ChangeReplanMaterializerTests(unittest.TestCase):
                     requirement_ids=("REQ-BASE-V2",),
                 ),
             ),
+            task_requirement_updates=(
+                TaskRequirementUpdate("T1", ("REQ-BASE-V2",)),
+            ),
             milestones=(MilestoneProposal("M2", "Changed", ("T1", "T3")),),
         )
         result = self.materializer.materialize(
@@ -151,6 +194,10 @@ class ChangeReplanMaterializerTests(unittest.TestCase):
             requirements["REQ-BASE-V2"].supersedes_id, "REQ-BASE"
         )
         self.assertEqual(result.plans[-1].requirement_ids, ("REQ-BASE-V2",))
+        self.assertEqual(
+            next(item for item in result.tasks if item.id == "T1").requirement_ids,
+            ("REQ-BASE-V2",),
+        )
         self.assertIs(
             next(item for item in result.tasks if item.id == "T2").status,
             TaskStatus.CANCELLED,

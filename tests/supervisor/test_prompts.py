@@ -136,6 +136,10 @@ class SupervisorPromptTests(unittest.TestCase):
         self.assertIn("milestones field contains only", prompt)
         self.assertIn("incorrect new milestone id: M1", prompt)
         self.assertIn("fresh ID such as M2", prompt)
+        self.assertIn("task_requirement_updates explicitly maps", prompt)
+        self.assertIn("remain unchanged unless", prompt)
+        self.assertIn("never infer Task traceability", prompt)
+        self.assertIn("must belong to the replacement Plan", prompt)
 
     def test_history_bounds_and_original_order_are_preserved(self):
         state = make_project_state()

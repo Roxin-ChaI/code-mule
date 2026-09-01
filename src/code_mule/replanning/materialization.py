@@ -134,6 +134,10 @@ class ChangeReplanMaterializer:
         dependency_changes = {
             item.task_id: item.dependencies for item in proposal.dependency_changes
         }
+        task_requirement_updates = {
+            item.task_id: item.requirement_ids
+            for item in proposal.task_requirement_updates
+        }
         active_ids = set(active_task_ids)
         tasks: tuple[Task, ...] = ()
         for task in state.tasks:
@@ -157,6 +161,9 @@ class ChangeReplanMaterializer:
                         ),
                         dependencies=dependency_changes.get(
                             task.id, task.dependencies
+                        ),
+                        requirement_ids=task_requirement_updates.get(
+                            task.id, task.requirement_ids
                         ),
                         updated_at=operation_time,
                     ),

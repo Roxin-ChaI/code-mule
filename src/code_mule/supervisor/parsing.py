@@ -14,6 +14,7 @@ from .contracts import (
     RequirementUpdateProposal,
     ReviewResult,
     TaskDependencyChange,
+    TaskRequirementUpdate,
     TaskProposal,
 )
 
@@ -158,6 +159,19 @@ def _dependency_change(value: object, context: str) -> TaskDependencyChange:
     )
 
 
+def _task_requirement_update(
+    value: object, context: str
+) -> TaskRequirementUpdate:
+    payload = _object(value, context)
+    _exact_fields(payload, {"task_id", "requirement_ids"}, context)
+    return TaskRequirementUpdate(
+        task_id=_string(payload["task_id"], f"{context}.task_id"),
+        requirement_ids=_string_tuple(
+            payload["requirement_ids"], f"{context}.requirement_ids"
+        ),
+    )
+
+
 def _parse(parse_operation: Callable[[], _R]) -> _R:
     try:
         return parse_operation()
@@ -258,6 +272,7 @@ def parse_impact_analysis_response(
                 "milestone_ids_reused",
                 "milestones",
                 "dependency_changes",
+                "task_requirement_updates",
                 "risks",
                 "recommendation",
                 "rationale",
@@ -334,6 +349,17 @@ def parse_impact_analysis_response(
                 _dependency_change(item, f"dependency_changes[{index}]")
                 for index, item in enumerate(
                     _array(root["dependency_changes"], "dependency_changes")
+                )
+            ),
+            task_requirement_updates=tuple(
+                _task_requirement_update(
+                    item, f"task_requirement_updates[{index}]"
+                )
+                for index, item in enumerate(
+                    _array(
+                        root["task_requirement_updates"],
+                        "task_requirement_updates",
+                    )
                 )
             ),
             risks=_string_tuple(root["risks"], "risks"),

@@ -117,6 +117,9 @@ class ChangeReplanValidator:
             proposal.tasks_to_reopen
             + proposal.tasks_to_cancel
             + tuple(item.task_id for item in proposal.dependency_changes)
+            + tuple(
+                item.task_id for item in proposal.task_requirement_updates
+            )
         )
         self._known(
             controlled_tasks,
@@ -155,8 +158,20 @@ class ChangeReplanValidator:
             set(retained_task_ids),
             "dependency-change Task",
         )
+        task_requirement_updates = {
+            item.task_id: item.requirement_ids
+            for item in proposal.task_requirement_updates
+        }
+        self._unique(
+            tuple(item.task_id for item in proposal.task_requirement_updates),
+            "task-requirement-update Task",
+        )
+        self._known(
+            tuple(task_requirement_updates),
+            set(retained_task_ids),
+            "task-requirement-update Task",
+        )
         new_tasks = {item.id: item for item in proposal.tasks_to_add}
-        reopened_tasks = set(proposal.tasks_to_reopen)
         dependencies: dict[str, tuple[str, ...]] = {}
         requirement_references: dict[str, tuple[str, ...]] = {}
         for task_id in replacement_task_ids:
@@ -172,7 +187,9 @@ class ChangeReplanValidator:
                 task_dependencies = dependency_changes.get(
                     task_id, task.dependencies
                 )
-                requirement_ids = task.requirement_ids
+                requirement_ids = task_requirement_updates.get(
+                    task_id, task.requirement_ids
+                )
             self._unique(task_dependencies, f"Task {task_id} dependency")
             for dependency_id in task_dependencies:
                 if dependency_id == task_id:
@@ -187,26 +204,17 @@ class ChangeReplanValidator:
                 raise InvalidReplanProposal(
                     f"Task has no Requirement traceability: {task_id}"
                 )
+            self._unique(
+                requirement_ids, f"Task {task_id} Requirement traceability"
+            )
             for requirement_id in requirement_ids:
                 if requirement_id not in replacement_requirements:
-                    unchanged_completed = (
-                        task_id not in new_tasks
-                        and existing_tasks[task_id].status is TaskStatus.COMPLETED
-                        and task_id not in reopened_tasks
-                        and requirement_id in existing_requirements
-                    )
-                    if unchanged_completed:
-                        continue
                     raise UnknownReplanReference(
                         f"Task {task_id} references unavailable Requirement: "
                         f"{requirement_id}"
                     )
             dependencies[task_id] = task_dependencies
-            requirement_references[task_id] = tuple(
-                requirement_id
-                for requirement_id in requirement_ids
-                if requirement_id in replacement_requirements
-            )
+            requirement_references[task_id] = requirement_ids
 
         self._acyclic(replacement_task_ids, dependencies)
         self._unique(proposal.milestone_ids_reused, "reused Milestone")

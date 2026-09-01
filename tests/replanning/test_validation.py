@@ -33,6 +33,7 @@ from code_mule.supervisor import (
     RequirementProposal,
     RequirementUpdateProposal,
     TaskDependencyChange,
+    TaskRequirementUpdate,
     TaskProposal,
 )
 
@@ -163,9 +164,43 @@ def valid_proposal() -> ImpactAnalysisResult:
             MilestoneProposal("M2", "Changed calculator", ("T1", "T2", "T3")),
         ),
         dependency_changes=(),
+        task_requirement_updates=(),
         risks=(),
         recommendation="Create Plan v2.",
         rationale="The change is additive.",
+    )
+
+
+def replacement_proposal() -> ImpactAnalysisResult:
+    return replace(
+        valid_proposal(),
+        affected_requirement_ids=("REQ-BASE",),
+        affected_task_ids=("T1", "T2"),
+        affected_completed_tasks=("T1",),
+        affected_pending_tasks=("T2",),
+        requirements_to_add=(),
+        requirements_to_update=(
+            RequirementUpdateProposal(
+                "REQ-BASE",
+                RequirementProposal(
+                    "REQ-BASE-V2",
+                    "Calculator v2",
+                    "Replacement calculator requirement.",
+                    "high",
+                    ("replacement behavior is tested",),
+                ),
+            ),
+        ),
+        tasks_to_add=(
+            replace(
+                valid_proposal().tasks_to_add[0],
+                requirement_ids=("REQ-BASE-V2",),
+            ),
+        ),
+        task_requirement_updates=(
+            TaskRequirementUpdate("T1", ("REQ-BASE-V2",)),
+            TaskRequirementUpdate("T2", ("REQ-BASE-V2",)),
+        ),
     )
 
 
@@ -188,6 +223,32 @@ class ChangeReplanValidatorTests(unittest.TestCase):
 
     def test_new_task_belongs_only_in_tasks_to_add(self):
         self.validator.validate(self.state, self.change, valid_proposal())
+
+    def test_reopened_task_can_explicitly_adopt_replacement_requirement(self):
+        proposal = replace(
+            replacement_proposal(),
+            tasks_to_reopen=("T1",),
+        )
+        self.validator.validate(self.state, self.change, proposal)
+
+    def test_superseded_requirement_reference_is_unavailable_without_update(self):
+        proposal = replace(
+            replacement_proposal(),
+            task_requirement_updates=(),
+        )
+        with self.assertRaises(UnknownReplanReference):
+            self.validator.validate(self.state, self.change, proposal)
+
+    def test_unknown_requirement_in_explicit_task_update_is_rejected(self):
+        proposal = replace(
+            replacement_proposal(),
+            task_requirement_updates=(
+                TaskRequirementUpdate("T1", ("REQ-UNKNOWN",)),
+                TaskRequirementUpdate("T2", ("REQ-BASE-V2",)),
+            ),
+        )
+        with self.assertRaises(UnknownReplanReference):
+            self.validator.validate(self.state, self.change, proposal)
 
     def test_new_task_cannot_also_be_an_affected_reference(self):
         proposal = replace(
@@ -250,7 +311,8 @@ class ChangeReplanValidatorTests(unittest.TestCase):
         proposal = replace(
             valid_proposal(),
             affected_requirement_ids=("REQ-BASE",),
-            affected_task_ids=("T2",),
+            affected_task_ids=("T1", "T2"),
+            affected_completed_tasks=("T1",),
             affected_pending_tasks=("T2",),
             requirements_to_add=(),
             requirements_to_update=(
@@ -273,6 +335,9 @@ class ChangeReplanValidatorTests(unittest.TestCase):
             ),
             milestones=(MilestoneProposal("M2", "Changed", ("T3",)),),
             tasks_to_cancel=("T2",),
+            task_requirement_updates=(
+                TaskRequirementUpdate("T1", ("REQ-BASE-V2",)),
+            ),
         )
         with self.assertRaises(InvalidReplanProposal):
             self.validator.validate(self.state, self.change, proposal)

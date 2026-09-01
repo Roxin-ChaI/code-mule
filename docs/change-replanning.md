@@ -38,6 +38,14 @@ Requirement and Task bodies are typed nested proposals. Requirement updates
 create a new entity with `supersedes_id`; they never overwrite historical
 content.
 
+Existing Task traceability is immutable unless the proposal explicitly names
+the Task in `task_requirement_updates` with its complete replacement
+`requirement_ids`. This is required when a retained or reopened Task moves from
+a superseded Requirement to its replacement. Unmentioned Tasks preserve their
+recorded traceability; names and Milestone placement never imply a change. Every
+Task retained by the replacement Plan must reference only Requirements in that
+Plan.
+
 Affected references and additions are distinct. `affected_requirement_ids`
 may reference only Requirements in the active Plan, and
 `affected_task_ids` may reference only Tasks in the active Plan. New entities
