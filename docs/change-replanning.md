@@ -20,8 +20,13 @@ Boss CHANGE
 ```
 
 CHANGE never hard-cancels an active Codex turn. TaskCycle reloads persisted
-state after Worker completion so a ChangeRequest written during the turn is
-preserved. Multiple simultaneous ChangeRequests are not supported.
+state at each owned persistence boundary after Worker and Supervisor calls, so
+a ChangeRequest written during the turn is preserved. TaskCycle owns Task
+attempt/status updates, ExecutionReports, Decisions, and Safe-Point clearing of
+`current_task_id`; Boss/Orchestrator owns external control statuses such as
+`CHANGE_REQUESTED` and `PAUSED_BY_BOSS`. TaskCycle merges its fields into the
+latest snapshot and never restores a stale `RUNNING` status. Multiple
+simultaneous ChangeRequests are not supported.
 
 QUERY remains read-only in CHANGE_REQUESTED and REPLANNING.
 

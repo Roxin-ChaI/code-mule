@@ -9,7 +9,17 @@ from code_mule.domain.enums import (
     TaskStatus,
 )
 from code_mule.domain.models import ExecutionReport
+from code_mule.orchestrator import (
+    ChangeCommand,
+    OrchestratorService,
+    PauseCommand,
+)
 from code_mule.progress import ProgressEventType, RecordingProgressSink
+from code_mule.replanning import (
+    ChangeReplanningRequest,
+    ChangeReplanningService,
+    SupervisorReplanningError,
+)
 from code_mule.runtime import (
     InvalidTaskCycleState,
     TaskCycleConfig,
@@ -206,6 +216,111 @@ class TaskCycleContractTests(unittest.TestCase):
 
 
 class TaskCycleFlowTests(unittest.TestCase):
+    def test_boss_change_during_supervisor_review_is_preserved_at_safe_point(self):
+        store = FakeStore(replace(cycle_state(), change_requests=()))
+        orchestrator = OrchestratorService(
+            store,
+            clock=lambda: NOW,
+            event_id_factory=IdFactory("boss-event"),
+        )
+        observed_after_change = []
+
+        class ChangeInjectingSupervisor(FakeSupervisor):
+            def review(self, request):
+                orchestrator.change(
+                    ChangeCommand(
+                        "project-1",
+                        "Change during Task execution.",
+                        "boss",
+                        "change-during-review",
+                    )
+                )
+                project = store.load().project
+                observed_after_change.append(
+                    (project.status, project.current_task_id)
+                )
+                return super().review(request)
+
+        supervisor = ChangeInjectingSupervisor(
+            [review(SupervisorDecisionType.CONTINUE)]
+        )
+        service, request, _, _, _, _ = build_cycle(
+            store=store,
+            supervisor=supervisor,
+        )
+
+        service.execute(request)
+
+        self.assertEqual(
+            observed_after_change,
+            [(ProjectStatus.CHANGE_REQUESTED, request.task.id)],
+        )
+        self.assertIs(store.current.project.status, ProjectStatus.CHANGE_REQUESTED)
+        self.assertIsNone(store.current.project.current_task_id)
+        self.assertIs(store.current.tasks[0].status, TaskStatus.COMPLETED)
+        self.assertEqual(
+            store.current.change_requests[-1].id,
+            "change-during-review",
+        )
+
+        observed_replanning_state = []
+
+        class ReplanningProbe:
+            def analyze_change(self, request):
+                observed_replanning_state.append(
+                    (
+                        request.project_state.project.status,
+                        request.project_state.project.current_task_id,
+                    )
+                )
+                raise RuntimeError("stop after observing replanning handoff")
+
+        replanning = ChangeReplanningService(
+            store=store,
+            supervisor=ReplanningProbe(),
+            clock=lambda: NOW,
+            plan_id_factory=IdFactory("replacement-plan"),
+            event_id_factory=IdFactory("replanning-event"),
+        )
+        with self.assertRaises(SupervisorReplanningError):
+            replanning.replan(
+                ChangeReplanningRequest(
+                    "project-1",
+                    "change-during-review",
+                )
+            )
+        self.assertEqual(
+            observed_replanning_state,
+            [(ProjectStatus.REPLANNING, None)],
+        )
+
+    def test_boss_pause_during_supervisor_review_is_preserved_at_safe_point(self):
+        store = FakeStore(cycle_state())
+        orchestrator = OrchestratorService(
+            store,
+            clock=lambda: NOW,
+            event_id_factory=IdFactory("boss-event"),
+        )
+
+        class PauseInjectingSupervisor(FakeSupervisor):
+            def review(self, request):
+                orchestrator.pause(PauseCommand("project-1"))
+                return super().review(request)
+
+        supervisor = PauseInjectingSupervisor(
+            [review(SupervisorDecisionType.CONTINUE)]
+        )
+        service, request, _, _, _, _ = build_cycle(
+            store=store,
+            supervisor=supervisor,
+        )
+
+        service.execute(request)
+
+        self.assertIs(store.current.project.status, ProjectStatus.PAUSED_BY_BOSS)
+        self.assertIsNone(store.current.project.current_task_id)
+        self.assertIs(store.current.tasks[0].status, TaskStatus.COMPLETED)
+
     def test_change_persisted_during_worker_is_preserved_at_safe_point(self):
         store = FakeStore(cycle_state())
 

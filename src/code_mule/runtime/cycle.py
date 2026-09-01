@@ -402,6 +402,7 @@ class TaskCycleService:
     def _record_execution_started(
         self, state: ProjectState, task: Task
     ) -> ProjectState:
+        state, task = self._reload_task_state(task.id)
         operation_time = self._clock()
         event = self._event(
             state,
@@ -424,6 +425,7 @@ class TaskCycleService:
         task: Task,
         report: ExecutionReport,
     ) -> ProjectState:
+        state, task = self._reload_task_state(task.id)
         if report.task_id != task.id:
             raise InvalidTaskCycleState("Worker report targets a different task")
         if report.attempt != task.execution_attempts + 1:
@@ -463,6 +465,10 @@ class TaskCycleService:
         task: Task,
         review: ReviewResult,
     ) -> tuple[ProjectState, Decision]:
+        # Supervisor review is an external-call window. A Boss command may have
+        # persisted a control status while it was running, so merge this
+        # TaskCycle-owned Decision into the latest source-of-truth snapshot.
+        state, task = self._reload_task_state(task.id)
         operation_time = self._clock()
         decision = Decision(
             id=self._decision_id_factory(),
@@ -492,6 +498,7 @@ class TaskCycleService:
     def _record_rework(
         self, state: ProjectState, task: Task, decision: Decision
     ) -> ProjectState:
+        state, task = self._reload_task_state(task.id)
         operation_time = self._clock()
         event = self._event(
             state,
@@ -514,6 +521,10 @@ class TaskCycleService:
         task: Task,
         decision: SupervisorDecisionType,
     ) -> ProjectState:
+        # TaskCycle owns completion and current_task_id clearing, but not the
+        # Project control status. Reload immediately before the Safe-Point save
+        # so CHANGE_REQUESTED, PAUSED_BY_BOSS, or HUMAN_REQUIRED survives.
+        state, task = self._reload_task_state(task.id)
         operation_time = self._clock()
         current_task = self._task(state, task.id)
         completed_task = replace(
@@ -604,6 +615,10 @@ class TaskCycleService:
     @staticmethod
     def _replace_task(tasks: tuple[Task, ...], updated: Task) -> tuple[Task, ...]:
         return tuple(updated if task.id == updated.id else task for task in tasks)
+
+    def _reload_task_state(self, task_id: str) -> tuple[ProjectState, Task]:
+        latest = self._store.load()
+        return latest, self._task(latest, task_id)
 
     @staticmethod
     def _human_outcome(

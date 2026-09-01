@@ -444,10 +444,13 @@ class ProjectExecutionFlowTests(unittest.TestCase):
                 )
                 outcome = service.run()
                 self.assertIs(outcome.stop_reason, reason)
+                self.assertIs(outcome.final_project_status, status)
                 self.assertEqual(outcome.task_ids, ("task-a",))
                 self.assertEqual(
                     tuple(item.task.id for item in cycles.requests), ("task-a",)
                 )
+                self.assertIsNone(store.current.project.current_task_id)
+                self.assertIs(store.current.tasks[0].status, TaskStatus.COMPLETED)
                 self.assertIs(store.current.tasks[1].status, TaskStatus.PENDING)
 
     def test_task_limit_is_a_persisted_human_gate(self):
