@@ -16,6 +16,11 @@ class ProgressContractTests(unittest.TestCase):
     def test_event_types_use_stable_dot_style_values(self):
         self.assertEqual(ProgressEventType.PROJECT_STARTED, "project.started")
         self.assertEqual(ProgressEventType.WORKER_ACTIVITY, "worker.activity")
+        self.assertEqual(ProgressEventType.PLANNING_STARTED, "planning.started")
+        self.assertEqual(
+            ProgressEventType.SUPERVISOR_PLAN_STARTED,
+            "supervisor.plan_started",
+        )
         self.assertEqual(
             ProgressEventType.SUPERVISOR_REVIEW_COMPLETED,
             "supervisor.review_completed",

@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from io import StringIO
+from time import sleep
 import unittest
 
 from code_mule.progress import (
@@ -134,7 +135,9 @@ class ConsoleProgressRendererTests(unittest.TestCase):
 
     def test_human_gate_stops_running_display(self):
         stream = FakeTTY()
-        renderer = ConsoleProgressRenderer(stream, monotonic=lambda: 1.0)
+        renderer = ConsoleProgressRenderer(
+            stream, refresh_interval=0.05, monotonic=lambda: 1.0
+        )
         with renderer:
             renderer.emit(
                 event(
@@ -148,6 +151,42 @@ class ConsoleProgressRendererTests(unittest.TestCase):
         self.assertIn(
             "PROJECT PAUSED — HUMAN ACTION REQUIRED", stream.getvalue()
         )
+
+    def test_planning_has_no_fake_percentage_and_materialization_sets_task_total(self):
+        stream = FakeTTY()
+        renderer = ConsoleProgressRenderer(
+            stream, refresh_interval=0.05, monotonic=lambda: 1.0
+        )
+        with renderer:
+            renderer.emit(
+                event(
+                    ProgressEventType.PLANNING_STARTED,
+                    message="Planning started",
+                )
+            )
+            renderer.emit(
+                event(
+                    ProgressEventType.SUPERVISOR_PLAN_STARTED,
+                    second=1,
+                    message="Supervisor planning",
+                )
+            )
+            self.assertEqual(renderer.snapshot.project_status, "planning")
+            self.assertEqual(renderer.snapshot.total_tasks, 0)
+            sleep(0.06)
+            renderer.emit(
+                event(
+                    ProgressEventType.PLANNING_COMPLETED,
+                    second=2,
+                    message="Plan v1 created with 2 tasks",
+                    metadata={"total_tasks": "2"},
+                )
+            )
+        output = stream.getvalue()
+        self.assertIn("Progress     Planning", output)
+        self.assertEqual(renderer.snapshot.project_status, "running")
+        self.assertEqual(renderer.snapshot.total_tasks, 2)
+        self.assertEqual(renderer.snapshot.percentage, 0.0)
 
 
 if __name__ == "__main__":

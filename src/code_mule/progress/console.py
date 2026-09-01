@@ -139,6 +139,48 @@ class ConsoleProgressRenderer:
                 project_started_at=event.timestamp,
             )
             self._project_started_mono = self._monotonic()
+        elif event.type is ProgressEventType.PLANNING_STARTED:
+            updates.update(
+                project_status="planning",
+                completed_tasks=0,
+                total_tasks=0,
+                project_started_at=event.timestamp,
+                worker_status="Waiting",
+                supervisor_status="Waiting",
+            )
+            self._project_started_mono = self._monotonic()
+        elif event.type is ProgressEventType.SUPERVISOR_PLAN_STARTED:
+            updates.update(
+                supervisor_status="Planning",
+                stage_started_at=event.timestamp,
+            )
+            self._stage_started_mono = self._monotonic()
+        elif event.type is ProgressEventType.SUPERVISOR_PLAN_COMPLETED:
+            updates.update(
+                supervisor_status="Plan ready",
+                stage_started_at=event.timestamp,
+            )
+            self._stage_started_mono = None
+        elif event.type is ProgressEventType.PLANNING_MATERIALIZING:
+            updates.update(
+                supervisor_status="Completed",
+                stage_started_at=event.timestamp,
+            )
+        elif event.type is ProgressEventType.PLANNING_COMPLETED:
+            updates.update(
+                project_status="running",
+                completed_tasks=0,
+                total_tasks=_count(event, "total_tasks", 0),
+                supervisor_status="Completed",
+            )
+            self._stage_started_mono = None
+        elif event.type is ProgressEventType.PLANNING_FAILED:
+            updates.update(
+                project_status="human_required",
+                supervisor_status="FAILED",
+                stage_started_at=event.timestamp,
+            )
+            self._stage_started_mono = None
         elif event.type is ProgressEventType.TASK_DISPATCHED:
             updates.update(
                 current_task_id=event.task_id,
@@ -241,20 +283,25 @@ class ConsoleProgressRenderer:
         supervisor = snapshot.supervisor_status
         if not final and worker == "Working":
             worker = f"{spinner} Working... {stage_elapsed}"
-        if not final and supervisor == "Reviewing":
-            supervisor = f"{spinner} Reviewing... {stage_elapsed}"
+        if not final and supervisor in {"Reviewing", "Planning"}:
+            supervisor = f"{spinner} {supervisor}... {stage_elapsed}"
         task = snapshot.current_task_title or snapshot.current_task_id or "—"
         attempt = str(snapshot.current_attempt or "—")
+        progress = (
+            "Planning"
+            if snapshot.project_status == "planning" and snapshot.total_tasks == 0
+            else (
+                f"[{bar}] {snapshot.completed_tasks} / "
+                f"{snapshot.total_tasks} ({snapshot.percentage:.0f}%)"
+            )
+        )
         lines = [
             "Code Mule",
             "Powered by prompts. Paid in tokens.",
             "",
             f"Project      {snapshot.project_id or '—'}",
             f"Status       {(snapshot.project_status or 'waiting').upper()}",
-            (
-                f"Progress     [{bar}] {snapshot.completed_tasks} / "
-                f"{snapshot.total_tasks} ({snapshot.percentage:.0f}%)"
-            ),
+            f"Progress     {progress}",
             "",
             f"Current Task {task}",
             f"Attempt      {attempt}",
