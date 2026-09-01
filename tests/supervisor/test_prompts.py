@@ -46,6 +46,12 @@ class SupervisorPromptTests(unittest.TestCase):
         self.assertIn(
             "requirements_considered may contain only IDs", user_prompt
         )
+        self.assertIn(
+            "exactly the fields defined by the response schema", user_prompt
+        )
+        self.assertIn("Never add placeholder, helper", user_prompt)
+        self.assertIn("return an empty array for that official field", user_prompt)
+        self.assertNotIn("not_used", user_prompt)
         self.assertLess(user_prompt.index('id="req-2"'), user_prompt.index('id="req-1"'))
         self.assertNotIn("ProjectState(", user_prompt)
         self.assertNotIn("Requirement(", user_prompt)

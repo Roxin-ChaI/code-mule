@@ -245,6 +245,11 @@ def build_plan_prompt(request: PlanRequest) -> tuple[str, str]:
         'exactly "requirements_considered": []. Example — Existing requirements: '
         'none. Correct: "requirements_considered": []. Incorrect: '
         '"requirements_considered": ["No existing requirements exist"].\n'
+        "Output must contain exactly the fields defined by the response schema. "
+        "Never add placeholder, helper, compatibility, or explanatory fields. "
+        "When an optional concept maps to a schema-defined array and has no "
+        "items, return an empty array for that official field instead of adding "
+        "a new field. "
         "Decompose the objective into the smallest deliverable requirements with "
         "verifiable acceptance criteria, milestones, and independently reviewable "
         "tasks sized for one Codex execution cycle. Every task must reference at "

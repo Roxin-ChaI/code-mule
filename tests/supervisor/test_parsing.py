@@ -112,6 +112,55 @@ def progress_payload():
 
 
 class SchemaTests(unittest.TestCase):
+    def test_plan_schema_and_parser_have_exact_top_level_field_parity(self):
+        schema = plan_response_schema()
+        schema_fields = set(schema["properties"])
+        self.assertEqual(schema_fields, set(schema["required"]))
+        self.assertEqual(
+            schema_fields,
+            {
+                "summary",
+                "requirements",
+                "requirements_considered",
+                "milestones",
+                "tasks",
+                "risks",
+                "rationale",
+            },
+        )
+
+        parse_plan_response(plan_payload())
+        for field in schema_fields:
+            payload = plan_payload()
+            payload.pop(field)
+            with self.subTest(missing=field):
+                with self.assertRaises(InvalidSupervisorResponse):
+                    parse_plan_response(payload)
+
+        payload = plan_payload()
+        payload["not_used"] = []
+        with self.assertRaises(InvalidSupervisorResponse):
+            parse_plan_response(payload)
+
+    def test_every_plan_object_schema_rejects_additional_properties(self):
+        def assert_strict_objects(node):
+            if isinstance(node, dict):
+                if node.get("type") == "object":
+                    self.assertIs(node.get("additionalProperties"), False)
+                    self.assertEqual(
+                        set(node["properties"]),
+                        set(node["required"]),
+                    )
+                for value in node.values():
+                    assert_strict_objects(value)
+            elif isinstance(node, list):
+                for value in node:
+                    assert_strict_objects(value)
+
+        schema = plan_response_schema()
+        assert_strict_objects(schema)
+        self.assertNotIn("not_used", repr(schema))
+
     def test_schemas_are_strict_and_fresh(self):
         factories = (
             plan_response_schema,
