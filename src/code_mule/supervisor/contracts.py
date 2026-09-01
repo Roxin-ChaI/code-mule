@@ -53,17 +53,39 @@ class ProgressReportRequest:
 
 
 @dataclass(frozen=True)
-class TaskProposal:
+class RequirementProposal:
     id: str
     title: str
     description: str
-    dependencies: tuple[str, ...]
+    priority: str
     acceptance_criteria: tuple[str, ...]
 
     def __post_init__(self) -> None:
         _require_non_empty(self.id, "id")
         _require_non_empty(self.title, "title")
         _require_non_empty(self.description, "description")
+        _require_non_empty(self.priority, "priority")
+        if not self.acceptance_criteria:
+            raise ValueError("acceptance_criteria must contain at least one item")
+
+
+@dataclass(frozen=True)
+class TaskProposal:
+    id: str
+    title: str
+    description: str
+    dependencies: tuple[str, ...]
+    acceptance_criteria: tuple[str, ...]
+    requirement_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _require_non_empty(self.id, "id")
+        _require_non_empty(self.title, "title")
+        _require_non_empty(self.description, "description")
+        if not self.acceptance_criteria:
+            raise ValueError("acceptance_criteria must contain at least one item")
+        if not self.requirement_ids:
+            raise ValueError("requirement_ids must contain at least one item")
 
 
 @dataclass(frozen=True)
@@ -80,6 +102,7 @@ class MilestoneProposal:
 @dataclass(frozen=True)
 class PlanProposal:
     summary: str
+    requirements: tuple[RequirementProposal, ...]
     requirements_considered: tuple[str, ...]
     milestones: tuple[MilestoneProposal, ...]
     tasks: tuple[TaskProposal, ...]
@@ -150,6 +173,7 @@ __all__ = [
     "PlanRequest",
     "ProgressReport",
     "ProgressReportRequest",
+    "RequirementProposal",
     "ReviewRequest",
     "ReviewResult",
     "SupervisorOperation",

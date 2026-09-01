@@ -24,12 +24,22 @@ def task_payload():
         "description": "Implement the contract",
         "dependencies": ["task-0"],
         "acceptance_criteria": ["tests pass"],
+        "requirement_ids": ["req-2"],
     }
 
 
 def plan_payload():
     return {
         "summary": "Plan summary",
+        "requirements": [
+            {
+                "id": "req-new",
+                "title": "New requirement",
+                "description": "Deliver the new behavior",
+                "priority": "high",
+                "acceptance_criteria": ["behavior is verified"],
+            }
+        ],
         "requirements_considered": ["req-2", "req-1"],
         "milestones": [
             {"id": "milestone-1", "title": "Core", "task_ids": ["task-1"]}
@@ -85,13 +95,21 @@ class SchemaTests(unittest.TestCase):
                 first["mutated"] = True
                 self.assertNotIn("mutated", second)
 
+        plan = plan_response_schema()
+        requirement = plan["properties"]["requirements"]["items"]
+        task = plan["properties"]["tasks"]["items"]
+        self.assertFalse(requirement["additionalProperties"])
+        self.assertEqual(task["properties"]["requirement_ids"]["minItems"], 1)
+
 
 class ParsingTests(unittest.TestCase):
     def test_plan_parser_restores_nested_tuples_in_original_order(self):
         result = parse_plan_response(plan_payload())
         self.assertEqual(result.requirements_considered, ("req-2", "req-1"))
+        self.assertEqual(result.requirements[0].id, "req-new")
         self.assertEqual(result.risks, ("risk-b", "risk-a"))
         self.assertEqual(result.tasks[0].dependencies, ("task-0",))
+        self.assertEqual(result.tasks[0].requirement_ids, ("req-2",))
         self.assertEqual(result.milestones[0].task_ids, ("task-1",))
 
     def test_review_parser_supports_every_valid_decision(self):

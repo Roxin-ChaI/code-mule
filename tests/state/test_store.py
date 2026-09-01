@@ -9,6 +9,7 @@ from code_mule.state import (
     JsonProjectStateStore,
     ProjectStateNotFound,
 )
+from code_mule.state.serialization import CURRENT_SCHEMA_VERSION
 
 from state import make_project_state
 
@@ -26,7 +27,7 @@ class JsonProjectStateStoreTests(unittest.TestCase):
         self.assertEqual(self.store.load(), state)
 
         payload = json.loads(self.path.read_text(encoding="utf-8"))
-        self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["schema_version"], CURRENT_SCHEMA_VERSION)
         self.assertTrue(self.path.read_text(encoding="utf-8").endswith("\n"))
 
     def test_exists_is_false_before_save_and_true_after_save(self):

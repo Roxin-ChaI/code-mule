@@ -17,6 +17,10 @@ def _string_array() -> dict[str, object]:
     return {"type": "array", "items": {"type": "string"}}
 
 
+def _non_empty_string_array() -> dict[str, object]:
+    return {"type": "array", "items": {"type": "string"}, "minItems": 1}
+
+
 def _task_proposal_schema() -> dict[str, object]:
     return _strict_object(
         {
@@ -24,9 +28,34 @@ def _task_proposal_schema() -> dict[str, object]:
             "title": {"type": "string", "minLength": 1},
             "description": {"type": "string", "minLength": 1},
             "dependencies": _string_array(),
-            "acceptance_criteria": _string_array(),
+            "acceptance_criteria": _non_empty_string_array(),
+            "requirement_ids": _non_empty_string_array(),
         },
-        ["id", "title", "description", "dependencies", "acceptance_criteria"],
+        [
+            "id",
+            "title",
+            "description",
+            "dependencies",
+            "acceptance_criteria",
+            "requirement_ids",
+        ],
+    )
+
+
+def _requirement_proposal_schema() -> dict[str, object]:
+    return _strict_object(
+        {
+            "id": {"type": "string", "minLength": 1},
+            "title": {"type": "string", "minLength": 1},
+            "description": {"type": "string", "minLength": 1},
+            "priority": {"type": "string", "minLength": 1},
+            "acceptance_criteria": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+            },
+        },
+        ["id", "title", "description", "priority", "acceptance_criteria"],
     )
 
 
@@ -42,6 +71,10 @@ def plan_response_schema() -> dict[str, object]:
     return _strict_object(
         {
             "summary": {"type": "string", "minLength": 1},
+            "requirements": {
+                "type": "array",
+                "items": _requirement_proposal_schema(),
+            },
             "requirements_considered": _string_array(),
             "milestones": {"type": "array", "items": milestone_schema},
             "tasks": {"type": "array", "items": _task_proposal_schema()},
@@ -50,6 +83,7 @@ def plan_response_schema() -> dict[str, object]:
         },
         [
             "summary",
+            "requirements",
             "requirements_considered",
             "milestones",
             "tasks",

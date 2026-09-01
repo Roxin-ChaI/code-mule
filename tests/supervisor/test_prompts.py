@@ -36,6 +36,10 @@ class SupervisorPromptTests(unittest.TestCase):
         self.assertIn("Quality Status:", user_prompt)
         self.assertIn("Operation: PLAN", user_prompt)
         self.assertIn('Objective: "Implement Phase 4"', user_prompt)
+        self.assertIn("smallest deliverable requirements", user_prompt)
+        self.assertIn("one Codex execution cycle", user_prompt)
+        self.assertIn("Every task must reference", user_prompt)
+        self.assertIn("do not add deployment or release", user_prompt)
         self.assertLess(user_prompt.index('id="req-2"'), user_prompt.index('id="req-1"'))
         self.assertNotIn("ProjectState(", user_prompt)
         self.assertNotIn("Requirement(", user_prompt)
@@ -129,6 +133,9 @@ class SupervisorPromptTests(unittest.TestCase):
             "irreversible external side effect",
             "recommend HUMAN_REQUIRED",
             "Enforcement belongs to the Orchestrator",
+            "tasks must be independently reviewable",
+            "trace to at least one proposed or existing requirement",
+            "Human Gate operations must never be proposed as silently automatic",
         )
         for phrase in required_policy:
             with self.subTest(phrase=phrase):

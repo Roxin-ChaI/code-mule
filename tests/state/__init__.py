@@ -112,6 +112,7 @@ def make_project_state(
                 2,
                 CREATED,
                 UPDATED,
+                ("req-2",),
             ),
         ),
         change_requests=(

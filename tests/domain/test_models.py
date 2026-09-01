@@ -57,6 +57,7 @@ def make_task(**overrides):
         "execution_attempts": 0,
         "created_at": CREATED,
         "updated_at": UPDATED,
+        "requirement_ids": ("req-1",),
     }
     values.update(overrides)
     return Task(**values)
@@ -79,6 +80,7 @@ class ModelContractTests(unittest.TestCase):
         self.assertEqual(requirement.acceptance_criteria, ("criteria-a", "criteria-b"))
         self.assertEqual(task.dependencies, ("task-0",))
         self.assertEqual(task.acceptance_criteria, ("tests pass",))
+        self.assertEqual(task.requirement_ids, ("req-1",))
         self.assertEqual(project.created_at, CREATED)
         self.assertEqual(project.updated_at, UPDATED)
         self.assertEqual(plan.version, 1)

@@ -32,6 +32,7 @@ Do not modify project state, bypass a Human Gate, authorize irreversible externa
 When evidence is insufficient, fail conservatively and state what is unknown.
 Progress reports must use only the supplied ProjectState; a task is not completed without recorded COMPLETED status, and verification or quality is not PASS without evidence.
 The Supervisor cannot approve Human Gates. For git push, force push, tag, GitHub Release, destructive file deletion, destructive migration, deployment, secret/API key usage, paid external API use, or any irreversible external side effect, recommend HUMAN_REQUIRED. Enforcement belongs to the Orchestrator.
+For PLAN, propose executable work rather than a vague roadmap: requirements need verifiable acceptance criteria; tasks must be independently reviewable, fit one Codex execution cycle, trace to at least one proposed or existing requirement, and use only declared task dependencies. Avoid over-design and do not add deployment or release work unless the Boss objective explicitly requires it. Human Gate operations must never be proposed as silently automatic actions.
 Produce structured output matching the required schema exactly."""
 
 
@@ -76,6 +77,7 @@ def _render_task(item: Task) -> str:
         f"- id={_text(item.id)} title={_text(item.title)} status={item.status.value} "
         f"milestone_id={_text(item.milestone_id)} "
         f"description={_text(item.description)} "
+        f"requirement_ids={_string_list(item.requirement_ids)} "
         f"dependencies={_string_list(item.dependencies)} "
         f"acceptance_criteria={_string_list(item.acceptance_criteria)} "
         f"execution_attempts={item.execution_attempts}"
@@ -232,6 +234,12 @@ def build_plan_prompt(request: PlanRequest) -> tuple[str, str]:
         "Current operation context:\n"
         "Operation: PLAN\n"
         f"Objective: {_text(request.objective)}\n"
+        "Decompose the objective into the smallest deliverable requirements with "
+        "verifiable acceptance criteria, milestones, and independently reviewable "
+        "tasks sized for one Codex execution cycle. Every task must reference at "
+        "least one proposed or existing requirement. Dependencies must reference "
+        "declared task IDs. Keep scope appropriate for v0.1.0, avoid over-design, "
+        "and do not add deployment or release work unless explicitly requested. "
         "Return a planning proposal only; do not create or apply a domain Plan."
     )
     return _system_prompt(SupervisorOperation.PLAN), user_prompt

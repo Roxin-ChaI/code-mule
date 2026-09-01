@@ -29,7 +29,7 @@ from code_mule.domain.models import (
 from .models import ProjectState
 
 
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 
 class UnsupportedStateSchema(ValueError):
@@ -163,6 +163,7 @@ def _task_to_payload(task: Task) -> dict[str, object]:
         "status": task.status.value,
         "dependencies": list(task.dependencies),
         "acceptance_criteria": list(task.acceptance_criteria),
+        "requirement_ids": list(task.requirement_ids),
         "execution_attempts": task.execution_attempts,
         "created_at": task.created_at.isoformat(),
         "updated_at": task.updated_at.isoformat(),
@@ -407,7 +408,25 @@ def _task_from_payload(value: object) -> Task:
         updated_at=_datetime(
             _field(payload, "updated_at", "task"), "task.updated_at"
         ),
+        requirement_ids=_strings(
+            _field(payload, "requirement_ids", "task"),
+            "task.requirement_ids",
+        ),
     )
+
+
+def _migrate_v1_to_v2(root: dict[str, object]) -> dict[str, object]:
+    """Return a v2 snapshot without mutating the historical v1 payload."""
+
+    migrated_tasks: list[dict[str, object]] = []
+    for item in _expect_list(_field(root, "tasks", "project state"), "tasks"):
+        task = dict(_expect_object(item, "task"))
+        task["requirement_ids"] = []
+        migrated_tasks.append(task)
+    migrated = dict(root)
+    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
+    migrated["tasks"] = migrated_tasks
+    return migrated
 
 
 def _change_request_from_payload(value: object) -> ChangeRequest:
@@ -617,10 +636,12 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     schema_version = root["schema_version"]
     if type(schema_version) is not int:
         raise UnsupportedStateSchema("schema_version must be an integer")
-    if schema_version != CURRENT_SCHEMA_VERSION:
+    if schema_version not in {1, CURRENT_SCHEMA_VERSION}:
         raise UnsupportedStateSchema(
             f"unsupported schema_version: {schema_version!r}"
         )
+    if schema_version == 1:
+        root = _migrate_v1_to_v2(root)
 
     try:
         quality_value = _field(root, "quality_status", "project state")

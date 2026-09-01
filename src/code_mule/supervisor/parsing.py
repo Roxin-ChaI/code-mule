@@ -10,6 +10,7 @@ from .contracts import (
     MilestoneProposal,
     PlanProposal,
     ProgressReport,
+    RequirementProposal,
     ReviewResult,
     TaskProposal,
 )
@@ -75,7 +76,14 @@ def _task_proposal(value: object, context: str) -> TaskProposal:
     payload = _object(value, context)
     _exact_fields(
         payload,
-        {"id", "title", "description", "dependencies", "acceptance_criteria"},
+        {
+            "id",
+            "title",
+            "description",
+            "dependencies",
+            "acceptance_criteria",
+            "requirement_ids",
+        },
         context,
     )
     return TaskProposal(
@@ -85,6 +93,27 @@ def _task_proposal(value: object, context: str) -> TaskProposal:
         dependencies=_string_tuple(
             payload["dependencies"], f"{context}.dependencies"
         ),
+        acceptance_criteria=_string_tuple(
+            payload["acceptance_criteria"], f"{context}.acceptance_criteria"
+        ),
+        requirement_ids=_string_tuple(
+            payload["requirement_ids"], f"{context}.requirement_ids"
+        ),
+    )
+
+
+def _requirement_proposal(value: object, context: str) -> RequirementProposal:
+    payload = _object(value, context)
+    _exact_fields(
+        payload,
+        {"id", "title", "description", "priority", "acceptance_criteria"},
+        context,
+    )
+    return RequirementProposal(
+        id=_string(payload["id"], f"{context}.id"),
+        title=_string(payload["title"], f"{context}.title"),
+        description=_string(payload["description"], f"{context}.description"),
+        priority=_string(payload["priority"], f"{context}.priority"),
         acceptance_criteria=_string_tuple(
             payload["acceptance_criteria"], f"{context}.acceptance_criteria"
         ),
@@ -117,6 +146,7 @@ def parse_plan_response(payload: dict[str, object]) -> PlanProposal:
             root,
             {
                 "summary",
+                "requirements",
                 "requirements_considered",
                 "milestones",
                 "tasks",
@@ -135,6 +165,12 @@ def parse_plan_response(payload: dict[str, object]) -> PlanProposal:
         )
         return PlanProposal(
             summary=_string(root["summary"], "summary"),
+            requirements=tuple(
+                _requirement_proposal(item, f"requirements[{index}]")
+                for index, item in enumerate(
+                    _array(root["requirements"], "requirements")
+                )
+            ),
             requirements_considered=_string_tuple(
                 root["requirements_considered"], "requirements_considered"
             ),

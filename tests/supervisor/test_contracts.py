@@ -8,6 +8,7 @@ from code_mule.supervisor.contracts import (
     PlanProposal,
     PlanRequest,
     ProgressReportRequest,
+    RequirementProposal,
     ReviewRequest,
     ReviewResult,
     SupervisorOperation,
@@ -53,15 +54,24 @@ class SupervisorContractTests(unittest.TestCase):
         self.assertEqual(ProgressReportRequest(state, " ").question, " ")
 
     def test_proposal_validation_and_order_preservation(self):
-        task = TaskProposal("task-1", "Title", "Description", ("b", "a"), ("z", "y"))
+        requirement = RequirementProposal(
+            "req-new", "Requirement", "Description", "high", ("verified",)
+        )
+        task = TaskProposal(
+            "task-1", "Title", "Description", ("b", "a"), ("z", "y"),
+            ("req-new",),
+        )
         milestone = MilestoneProposal("milestone-1", "Milestone", ("task-2", "task-1"))
-        proposal = PlanProposal("Summary", ("req-2", "req-1"), (milestone,), (task,), ("risk",), "Rationale")
+        proposal = PlanProposal(
+            "Summary", (requirement,), ("req-2", "req-1"), (milestone,),
+            (task,), ("risk",), "Rationale"
+        )
         self.assertEqual(task.dependencies, ("b", "a"))
         self.assertEqual(milestone.task_ids, ("task-2", "task-1"))
         self.assertEqual(proposal.requirements_considered, ("req-2", "req-1"))
 
         for field in ("id", "title", "description"):
-            values = {"id": "task", "title": "title", "description": "description", "dependencies": (), "acceptance_criteria": ()}
+            values = {"id": "task", "title": "title", "description": "description", "dependencies": (), "acceptance_criteria": ("verified",), "requirement_ids": ("req",)}
             values[field] = ""
             with self.subTest(field=field):
                 with self.assertRaises(ValueError):
@@ -69,7 +79,11 @@ class SupervisorContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             MilestoneProposal("", "title", ())
         with self.assertRaises(ValueError):
-            PlanProposal("", (), (), (), (), "rationale")
+            PlanProposal("", (), (), (), (), (), "rationale")
+        with self.assertRaises(ValueError):
+            RequirementProposal("req", "title", "description", "high", ())
+        with self.assertRaises(ValueError):
+            TaskProposal("task", "title", "description", (), ("done",), ())
 
     def test_review_result_invariants(self):
         ReviewResult(SupervisorDecisionType.CONTINUE, "ok", None, ())

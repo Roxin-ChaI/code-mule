@@ -33,6 +33,7 @@ class ProjectStateSerializationTests(unittest.TestCase):
         self.assertIsInstance(requirements[0]["acceptance_criteria"], list)
         tasks = payload["tasks"]
         self.assertEqual(tasks[0]["status"], TaskStatus.IN_PROGRESS.value)
+        self.assertEqual(tasks[0]["requirement_ids"], ["req-2"])
 
     def test_deserialize_restores_tuples_enums_and_datetimes(self):
         original = make_project_state()
@@ -42,6 +43,7 @@ class ProjectStateSerializationTests(unittest.TestCase):
         self.assertIsInstance(restored.requirements[0].acceptance_criteria, tuple)
         self.assertIs(restored.project.status, ProjectStatus.RUNNING)
         self.assertIs(restored.tasks[0].status, TaskStatus.IN_PROGRESS)
+        self.assertEqual(restored.tasks[0].requirement_ids, ("req-2",))
         self.assertEqual(restored.project.created_at, original.project.created_at)
 
     def test_quality_status_value_round_trip(self):
@@ -66,7 +68,7 @@ class InvalidProjectStateTests(unittest.TestCase):
             deserialize_project_state(self.payload)
 
     def test_unsupported_schema_version_is_rejected(self):
-        self.payload["schema_version"] = 2
+        self.payload["schema_version"] = 3
         with self.assertRaises(UnsupportedStateSchema):
             deserialize_project_state(self.payload)
 
@@ -103,6 +105,34 @@ class InvalidProjectStateTests(unittest.TestCase):
         payload["tasks"][0]["execution_attempts"] = -1
         with self.assertRaises(InvalidProjectState):
             deserialize_project_state(payload)
+
+    def test_v1_state_migrates_task_traceability_without_reordering(self):
+        payload = copy.deepcopy(self.payload)
+        payload["schema_version"] = 1
+        for task in payload["tasks"]:
+            task.pop("requirement_ids")
+        original = copy.deepcopy(payload)
+
+        restored = deserialize_project_state(payload)
+
+        self.assertEqual(payload, original)
+        self.assertEqual(tuple(task.id for task in restored.tasks), ("task-1",))
+        self.assertEqual(restored.tasks[0].requirement_ids, ())
+        self.assertEqual(
+            tuple(requirement.id for requirement in restored.requirements),
+            ("req-2", "req-1"),
+        )
+
+    def test_v2_task_requirement_ids_are_required_and_typed(self):
+        missing = copy.deepcopy(self.payload)
+        missing["tasks"][0].pop("requirement_ids")
+        with self.assertRaises(InvalidProjectState):
+            deserialize_project_state(missing)
+
+        invalid = copy.deepcopy(self.payload)
+        invalid["tasks"][0]["requirement_ids"] = ["req-2", 1]
+        with self.assertRaises(InvalidProjectState):
+            deserialize_project_state(invalid)
 
     def test_collection_with_wrong_type_is_invalid(self):
         self.payload["requirements"] = {}

@@ -49,6 +49,7 @@ class Task:
     execution_attempts: int
     created_at: datetime
     updated_at: datetime
+    requirement_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _require_non_empty(self.id, "id")
