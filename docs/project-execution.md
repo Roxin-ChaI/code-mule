@@ -2,7 +2,7 @@
 
 Phase 8 executes an already-materialized active Plan through deterministic,
 single-worker scheduling. It does not ask the Supervisor to create or apply a
-Plan: PlanProposal application and CHANGE replanning remain outside this phase.
+Plan; initial planning and CHANGE replanning remain separate services.
 
 ## Scheduler and Runtime Boundary
 
@@ -44,6 +44,12 @@ in-flight atomic TaskCycle. If startup finds `current_task_id` pointing to an
 IN_PROGRESS Task, the runtime does not replay it because the previous Codex
 session is not persisted; it records `project.execution_recovery_required` and
 fails closed to HUMAN_REQUIRED.
+
+When CHANGE arrives during an owned Task, TaskCycle reloads ProjectState after
+the Worker returns so the persisted ChangeRequest is not overwritten by a
+pre-Worker snapshot. The current Task may finish and clear `current_task_id`,
+but the project loop observes CHANGE_REQUESTED before selecting another Task.
+Phase 10 may then replan from that Safe Point.
 
 ## Verification Paths
 

@@ -8,7 +8,7 @@ text, spinner state, percentages, renderer state, or display messages.
 ## Event Architecture
 
 ```text
-ProjectExecution / TaskCycle / Codex app-server client
+Planning / Replanning / ProjectExecution / TaskCycle / Codex app-server client
   → ProgressEvent
   → ProgressSink
   ├── ConsoleProgressRenderer
@@ -64,11 +64,12 @@ thread, preserving readable durable logs.
 
 ## Manual Runtime Integration
 
-The three manual DeepSeek scripts construct the renderer at the composition
-root. Task-cycle and project scripts share the same sink with ProjectExecution,
-TaskCycle, and Codex Worker clients, so Worker activity and outstanding
-Supervisor calls remain visible. This does not change authentication, model,
-transport, retry, token, structured-output, or Human Gate policy.
+The manual DeepSeek scripts construct the renderer at the composition root.
+Task-cycle, project, planning, and replanning scripts share the same sink, so
+Worker activity and outstanding Supervisor calls remain visible. CHANGE adds
+truthful `change.requested`, Impact Analysis, Plan materialization, and resumed
+execution events. This does not change authentication, model, transport,
+retry, token, structured-output, or Human Gate policy.
 
 ## Future Presentation Surfaces
 

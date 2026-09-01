@@ -1,8 +1,8 @@
 # Autonomous Project Planning
 
 Phase 9 turns a Boss objective into a materialized initial Plan while keeping
-reasoning separate from deterministic control. It supports initial planning
-only; CHANGE replanning remains future work.
+reasoning separate from deterministic control. Initial planning remains a
+separate service from Phase 10 CHANGE replanning.
 
 ## Planning Boundary
 
@@ -54,10 +54,10 @@ ProjectState remains the Source of Truth. Planning progress events are
 ephemeral presentation facts and never control validation, persistence,
 scheduling, or execution.
 
-Persisted state schema v2 adds `Task.requirement_ids`. Loading schema v1 uses a
-deterministic migration that preserves all historical ordering and assigns
-`requirement_ids=()` to historical Tasks. New Phase 9 Tasks must always have at
-least one Requirement.
+Persisted state schema v3 adds explicit Requirement replacement linkage and
+rich ImpactAnalysis metadata. Loading schemas v1 and v2 uses deterministic
+migrations; v1 Tasks receive `requirement_ids=()` and v2 Requirements receive
+`supersedes_id=None`. New Tasks must always have at least one Requirement.
 
 ## Failure Handling
 

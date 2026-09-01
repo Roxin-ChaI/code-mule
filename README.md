@@ -135,26 +135,41 @@ asks the Supervisor for a structured planning proposal, validates its complete
 identity/dependency/traceability graph deterministically, and atomically
 materializes versioned Requirements, Milestones, Tasks, and an active Plan.
 `AutonomousProjectService` can then hand the RUNNING Project to the existing
-single-worker execution runtime. This is initial project bootstrap; CHANGE
-replanning is not implemented.
+single-worker execution runtime. Initial bootstrap remains separate from
+CHANGE replanning.
 
 See [Autonomous Project Planning](docs/project-planning.md) for proposal rules,
-state schema v2 migration, failure handling, local fake-PLAN verification, and
+state schema migration, failure handling, local fake-PLAN verification, and
 the Boss-only real DeepSeek + Codex autonomous-project E2E command.
+
+## Boss CHANGE Replanning
+
+Phase 10 accepts a persisted Boss CHANGE while a project is RUNNING, stops at
+the next Task Safe Point, requests one structured Impact/Replan proposal, and
+validates the complete replacement graph deterministically. It supersedes the
+old Plan, preserves completed work by default, materializes Plan vN+1 in one
+save, and resumes the existing sequential execution service only after that
+save succeeds. Invalid proposals and provider failures fail closed without
+repair or retry.
+
+See [Boss CHANGE and Replanning](docs/change-replanning.md) for lifecycle,
+versioning, progress, failure behavior, the real local Codex smoke, and the
+Boss-only real DeepSeek manual E2E.
 
 ## Status
 
 Early development.
 
 The DeepSeek Supervisor provider, local Codex Worker, deterministic task cycle,
-bounded multi-task execution, and natural-language initial project planning are
+bounded multi-task execution, natural-language initial project planning, and
+deterministic CHANGE replanning are
 in v0.1.0 development. The
 Supervisor uses the official `openai` Python SDK only as an OpenAI-compatible
 client for the DeepSeek endpoint, while the Worker uses the local Codex
 app-server process. ProjectState remains the Source of Truth. Automated tests
 do not call real model APIs, and the real DeepSeek + Codex multi-task E2E
-remains a Boss-only manual gate. Initial Plan materialization is available;
-CHANGE replanning,
-parallel/multi-project execution, and production readiness are not yet
+remains a Boss-only manual gate. Versioned Plan materialization and CHANGE
+replanning are available; parallel/multi-project execution and production
+readiness are not yet
 available. Real-time progress and console observability are available for the
 current runtime and manual verification paths.
