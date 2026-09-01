@@ -178,6 +178,43 @@ class ChangeReplanValidatorTests(unittest.TestCase):
     def test_valid_addition_preserves_completed_task_and_traceability(self):
         self.validator.validate(self.state, self.change, valid_proposal())
 
+    def test_existing_task_may_be_an_affected_reference(self):
+        proposal = replace(
+            valid_proposal(),
+            affected_task_ids=("T2",),
+            affected_pending_tasks=("T2",),
+        )
+        self.validator.validate(self.state, self.change, proposal)
+
+    def test_new_task_belongs_only_in_tasks_to_add(self):
+        self.validator.validate(self.state, self.change, valid_proposal())
+
+    def test_new_task_cannot_also_be_an_affected_reference(self):
+        proposal = replace(
+            valid_proposal(),
+            affected_task_ids=("T3",),
+            affected_pending_tasks=("T3",),
+        )
+        with self.assertRaises(UnknownReplanReference):
+            self.validator.validate(self.state, self.change, proposal)
+
+    def test_unknown_task_cannot_be_an_affected_reference(self):
+        proposal = replace(
+            valid_proposal(),
+            affected_task_ids=("TASK-UNKNOWN",),
+            affected_pending_tasks=("TASK-UNKNOWN",),
+        )
+        with self.assertRaises(UnknownReplanReference):
+            self.validator.validate(self.state, self.change, proposal)
+
+    def test_new_requirement_cannot_be_an_affected_reference(self):
+        proposal = replace(
+            valid_proposal(),
+            affected_requirement_ids=("REQ-MULTIPLY",),
+        )
+        with self.assertRaises(UnknownReplanReference):
+            self.validator.validate(self.state, self.change, proposal)
+
     def test_existing_milestone_is_reused_by_reference(self):
         proposal = replace(
             valid_proposal(),

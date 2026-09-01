@@ -33,6 +33,12 @@ Requirement and Task bodies are typed nested proposals. Requirement updates
 create a new entity with `supersedes_id`; they never overwrite historical
 content.
 
+Affected references and additions are distinct. `affected_requirement_ids`
+may reference only Requirements in the active Plan, and
+`affected_task_ids` may reference only Tasks in the active Plan. New entities
+belong only in `requirements_to_add` or `tasks_to_add`; a new proposal ID in an
+`affected_*_ids` field is rejected rather than moved or repaired.
+
 Milestone identity is explicit: `milestone_ids_reused` references still-valid
 historical Milestones, while `milestones` contains only genuinely new proposals
 whose IDs must not collide with any ProjectState history. Reuse never silently

@@ -278,6 +278,7 @@ def build_impact_analysis_prompt(
         None,
     )
     active_milestone_ids = () if active_plan is None else active_plan.milestone_ids
+    active_requirement_ids = () if active_plan is None else active_plan.requirement_ids
     active_task_ids = tuple(
         task_id
         for milestone_id in active_milestone_ids
@@ -293,14 +294,25 @@ def build_impact_analysis_prompt(
         f"{_render_change_request(request.change_request)}\n"
         f"Existing Requirement IDs: "
         f"{_string_list(tuple(item.id for item in state.requirements))}\n"
+        f"Active Plan Requirement IDs: {_string_list(active_requirement_ids)}\n"
         f"Existing Milestone IDs: "
         f"{_string_list(tuple(item.id for item in state.milestones))}\n"
         f"Existing Task IDs: "
         f"{_string_list(tuple(item.id for item in state.tasks))}\n"
         f"Active Plan Task IDs: {_string_list(active_task_ids)}\n"
-        "Every affected, reopen, cancel, supersedes, dependency-change, and "
-        "milestone task reference must use an exact ID from the snapshot or an "
-        "exact new ID declared in this proposal. Never put titles, explanations, "
+        "affected_requirement_ids may contain only existing Requirement IDs "
+        "from the active Plan; put new Requirement proposals only in "
+        "requirements_to_add. affected_task_ids may contain only existing Task "
+        "IDs from the active Plan; put new Task proposals only in tasks_to_add. "
+        "A new entity ID must not appear in any affected_*_ids field. Example — "
+        "correct: affected_task_ids = [\"TASK-1\"] and tasks_to_add = "
+        "[{\"id\": \"TASK-4\", ...}]. Incorrect when TASK-4 is new: "
+        "affected_task_ids = [\"TASK-4\"]. "
+        "Every affected, reopen, cancel, supersedes, and dependency-change "
+        "target must use an exact ID from the active Plan snapshot. "
+        "Dependency and milestone task references must use either an exact "
+        "existing ID from the snapshot or an exact new ID declared in this "
+        "proposal. Never put titles, explanations, "
         "or other natural language in ID fields. Historical Requirement, "
         "Milestone, and Task IDs may be used only in reference, reuse, or update-"
         "target fields. Every *_to_add item and every new entity proposal must "
