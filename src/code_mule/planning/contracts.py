@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from code_mule.domain.enums import ProjectStatus
+from code_mule.runtime.contracts import ProjectExecutionOutcome
 
 
 def _require_non_empty(value: str, field_name: str) -> None:
@@ -32,4 +33,16 @@ class ProjectPlanningOutcome:
     ready_for_execution: bool
 
 
-__all__ = ["ProjectPlanningOutcome", "ProjectPlanningRequest"]
+@dataclass(frozen=True)
+class AutonomousProjectOutcome:
+    planning: ProjectPlanningOutcome
+    execution: ProjectExecutionOutcome | None
+    final_project_status: ProjectStatus
+    human_action_required: bool
+
+
+__all__ = [
+    "AutonomousProjectOutcome",
+    "ProjectPlanningOutcome",
+    "ProjectPlanningRequest",
+]

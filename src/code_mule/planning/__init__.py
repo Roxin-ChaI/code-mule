@@ -1,6 +1,11 @@
 """Deterministic initial project planning and materialization."""
 
-from .contracts import ProjectPlanningOutcome, ProjectPlanningRequest
+from .autonomous import AutonomousProjectService
+from .contracts import (
+    AutonomousProjectOutcome,
+    ProjectPlanningOutcome,
+    ProjectPlanningRequest,
+)
 from .errors import (
     DuplicateProposalId,
     InvalidPlanProposal,
@@ -18,6 +23,8 @@ from .validation import PlanProposalValidator
 
 __all__ = [
     "DuplicateProposalId",
+    "AutonomousProjectOutcome",
+    "AutonomousProjectService",
     "InvalidPlanProposal",
     "InvalidProposalDependency",
     "PlanMaterializationError",

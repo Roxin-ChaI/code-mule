@@ -128,17 +128,33 @@ See [Runtime Progress and Observability](docs/progress-observability.md) for the
 event boundary, truthful Codex activity projection, deterministic percentage,
 privacy rules, and renderer lifecycle.
 
+## Autonomous Project Planning
+
+Phase 9 accepts a natural-language Boss objective for an empty IDLE Project,
+asks the Supervisor for a structured planning proposal, validates its complete
+identity/dependency/traceability graph deterministically, and atomically
+materializes versioned Requirements, Milestones, Tasks, and an active Plan.
+`AutonomousProjectService` can then hand the RUNNING Project to the existing
+single-worker execution runtime. This is initial project bootstrap; CHANGE
+replanning is not implemented.
+
+See [Autonomous Project Planning](docs/project-planning.md) for proposal rules,
+state schema v2 migration, failure handling, local fake-PLAN verification, and
+the Boss-only real DeepSeek + Codex autonomous-project E2E command.
+
 ## Status
 
 Early development.
 
 The DeepSeek Supervisor provider, local Codex Worker, deterministic task cycle,
-and bounded multi-task active-Plan execution are in v0.1.0 development. The
+bounded multi-task execution, and natural-language initial project planning are
+in v0.1.0 development. The
 Supervisor uses the official `openai` Python SDK only as an OpenAI-compatible
 client for the DeepSeek endpoint, while the Worker uses the local Codex
 app-server process. ProjectState remains the Source of Truth. Automated tests
 do not call real model APIs, and the real DeepSeek + Codex multi-task E2E
-remains a Boss-only manual gate. Plan application, CHANGE replanning,
+remains a Boss-only manual gate. Initial Plan materialization is available;
+CHANGE replanning,
 parallel/multi-project execution, and production readiness are not yet
 available. Real-time progress and console observability are available for the
 current runtime and manual verification paths.
