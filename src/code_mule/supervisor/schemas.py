@@ -154,6 +154,7 @@ def impact_analysis_response_schema() -> dict[str, object]:
             },
             "tasks_to_reopen": _string_array(),
             "tasks_to_cancel": _string_array(),
+            "milestone_ids_reused": _string_array(),
             "milestones": {
                 "type": "array",
                 "items": _milestone_proposal_schema(),
@@ -181,6 +182,7 @@ def impact_analysis_response_schema() -> dict[str, object]:
             "tasks_to_add",
             "tasks_to_reopen",
             "tasks_to_cancel",
+            "milestone_ids_reused",
             "milestones",
             "dependency_changes",
             "risks",

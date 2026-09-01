@@ -33,6 +33,11 @@ Requirement and Task bodies are typed nested proposals. Requirement updates
 create a new entity with `supersedes_id`; they never overwrite historical
 content.
 
+Milestone identity is explicit: `milestone_ids_reused` references still-valid
+historical Milestones, while `milestones` contains only genuinely new proposals
+whose IDs must not collide with any ProjectState history. Reuse never silently
+converts a colliding new proposal; a historical ID in `milestones` is rejected.
+
 Validation rejects unknown IDs, historical ID collisions, duplicate or
 conflicting reopen/cancel operations, invalid status classifications, missing
 traceability, unavailable or duplicate dependencies, self-dependencies,

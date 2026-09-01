@@ -85,6 +85,7 @@ def impact_payload():
         "tasks_to_add": [task_payload()],
         "tasks_to_reopen": ["task-0"],
         "tasks_to_cancel": ["task-old"],
+        "milestone_ids_reused": ["milestone-1"],
         "milestones": [
             {"id": "milestone-v2", "title": "Changed plan", "task_ids": ["task-0", "task-1"]}
         ],
@@ -132,6 +133,11 @@ class SchemaTests(unittest.TestCase):
         task = plan["properties"]["tasks"]["items"]
         self.assertFalse(requirement["additionalProperties"])
         self.assertEqual(task["properties"]["requirement_ids"]["minItems"], 1)
+        impact = impact_analysis_response_schema()
+        self.assertIn("milestone_ids_reused", impact["required"])
+        self.assertFalse(
+            impact["properties"]["milestones"]["items"]["additionalProperties"]
+        )
 
 
 class ParsingTests(unittest.TestCase):
@@ -173,6 +179,7 @@ class ParsingTests(unittest.TestCase):
             impact.requirements_to_update[0].supersedes_id, "req-2"
         )
         self.assertEqual(impact.milestones[0].id, "milestone-v2")
+        self.assertEqual(impact.milestone_ids_reused, ("milestone-1",))
         self.assertEqual(impact.dependency_changes[0].task_id, "task-1")
         self.assertEqual(progress.completed, ("task-0",))
         self.assertIsNone(progress.quality_summary)

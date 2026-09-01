@@ -111,11 +111,17 @@ class SupervisorPromptTests(unittest.TestCase):
         )
 
         self.assertIn('Existing Requirement IDs: ["req-2", "req-1"]', prompt)
+        self.assertIn('Existing Milestone IDs: ["milestone-1"]', prompt)
+        self.assertIn('Existing Task IDs: ["task-1"]', prompt)
         self.assertIn('Active Plan Task IDs: ["task-1"]', prompt)
         self.assertIn("must use an exact ID", prompt)
         self.assertIn("Never put titles, explanations", prompt)
         self.assertIn("Preserve completed work", prompt)
         self.assertIn("requirements_to_update", prompt)
+        self.assertIn("milestone_ids_reused", prompt)
+        self.assertIn("milestones field contains only", prompt)
+        self.assertIn("incorrect new milestone id: M1", prompt)
+        self.assertIn("fresh ID such as M2", prompt)
 
     def test_history_bounds_and_original_order_are_preserved(self):
         state = make_project_state()

@@ -120,9 +120,15 @@ class ChangeReplanMaterializer:
         active_task_ids = tuple(
             item.id for item in graph.tasks if item.id not in cancelled
         ) + tuple(item.id for item in proposal.tasks_to_add)
+        reused_milestones = tuple(
+            item
+            for milestone_id in proposal.milestone_ids_reused
+            for item in state.milestones
+            if item.id == milestone_id
+        )
         task_milestones = {
             task_id: milestone.id
-            for milestone in proposal.milestones
+            for milestone in reused_milestones + proposal.milestones
             for task_id in milestone.task_ids
         }
         dependency_changes = {
@@ -176,7 +182,7 @@ class ChangeReplanMaterializer:
         tasks_by_id = {item.id: item for item in tasks}
 
         plan_version = max(item.version for item in state.plans) + 1
-        milestones = tuple(
+        new_milestones = tuple(
             Milestone(
                 id=item.id,
                 plan_id=plan_id,
@@ -193,6 +199,24 @@ class ChangeReplanMaterializer:
             )
             for item in proposal.milestones
         )
+        reused_ids = set(proposal.milestone_ids_reused)
+        milestones = tuple(
+            replace(
+                item,
+                plan_id=plan_id,
+                status=(
+                    "completed"
+                    if all(
+                        tasks_by_id[task_id].status is TaskStatus.COMPLETED
+                        for task_id in item.task_ids
+                    )
+                    else "pending"
+                ),
+            )
+            if item.id in reused_ids
+            else item
+            for item in state.milestones
+        ) + new_milestones
         old_requirement_ids = tuple(
             item
             for item in graph.plan.requirement_ids
@@ -211,7 +235,10 @@ class ChangeReplanMaterializer:
                     for item in proposal.requirements_to_update
                 )
             ),
-            milestone_ids=tuple(item.id for item in milestones),
+            milestone_ids=(
+                proposal.milestone_ids_reused
+                + tuple(item.id for item in new_milestones)
+            ),
             created_at=operation_time,
         )
         plans = tuple(
@@ -252,7 +279,7 @@ class ChangeReplanMaterializer:
             ),
             requirements=requirements,
             plans=plans,
-            milestones=state.milestones + milestones,
+            milestones=milestones,
             tasks=tasks,
             change_requests=tuple(
                 applied_change if item.id == applied_change.id else item
@@ -314,7 +341,10 @@ class ChangeReplanMaterializer:
                 f"{item.supersedes_id}->{item.requirement.id}"
                 for item in proposal.requirements_to_update
             ),
-            milestone_ids=tuple(item.id for item in proposal.milestones),
+            milestone_ids=(
+                proposal.milestone_ids_reused
+                + tuple(item.id for item in proposal.milestones)
+            ),
             dependency_changes=tuple(
                 f"{item.task_id}:{','.join(item.dependencies)}"
                 for item in proposal.dependency_changes

@@ -157,6 +157,7 @@ class _FakeChangeSupervisor:
             ),
             tasks_to_reopen=(),
             tasks_to_cancel=(),
+            milestone_ids_reused=(),
             milestones=(
                 MilestoneProposal(
                     "M-CHANGED",

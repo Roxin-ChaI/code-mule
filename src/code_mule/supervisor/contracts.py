@@ -169,6 +169,7 @@ class ImpactAnalysisResult:
     tasks_to_add: tuple[TaskProposal, ...]
     tasks_to_reopen: tuple[str, ...]
     tasks_to_cancel: tuple[str, ...]
+    milestone_ids_reused: tuple[str, ...]
     milestones: tuple[MilestoneProposal, ...]
     dependency_changes: tuple[TaskDependencyChange, ...]
     risks: tuple[str, ...]

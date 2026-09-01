@@ -1,7 +1,7 @@
 """Deterministic validation of untrusted Supervisor change proposals."""
 
 from code_mule.domain.enums import RequirementStatus, TaskStatus
-from code_mule.domain.models import ChangeRequest, Task
+from code_mule.domain.models import ChangeRequest, Milestone, Task
 from code_mule.scheduler import SchedulerError
 from code_mule.scheduler.selection import resolve_active_plan_graph
 from code_mule.state.models import ProjectState
@@ -43,6 +43,7 @@ class ChangeReplanValidator:
         existing_tasks = {item.id: item for item in graph.tasks}
         active_task_ids = tuple(item.id for item in graph.tasks)
         active_tasks = set(active_task_ids)
+        existing_milestones = {item.id: item for item in state.milestones}
 
         self._known(
             proposal.affected_requirement_ids,
@@ -208,7 +209,15 @@ class ChangeReplanValidator:
             )
 
         self._acyclic(replacement_task_ids, dependencies)
-        self._validate_milestones(proposal, replacement_tasks)
+        self._unique(proposal.milestone_ids_reused, "reused Milestone")
+        self._known(
+            proposal.milestone_ids_reused,
+            set(existing_milestones),
+            "reused Milestone",
+        )
+        self._validate_milestones(
+            proposal, replacement_tasks, existing_milestones
+        )
         covered = {
             requirement_id
             for requirement_ids in requirement_references.values()
@@ -278,13 +287,32 @@ class ChangeReplanValidator:
                 )
 
     def _validate_milestones(
-        self, proposal: ImpactAnalysisResult, replacement_tasks: set[str]
+        self,
+        proposal: ImpactAnalysisResult,
+        replacement_tasks: set[str],
+        existing_milestones: dict[str, Milestone],
     ) -> None:
-        if not proposal.milestones:
+        if not proposal.milestone_ids_reused and not proposal.milestones:
             raise InvalidReplanProposal(
                 "replacement Plan must contain a Milestone"
             )
         membership: dict[str, int] = {task_id: 0 for task_id in replacement_tasks}
+        for milestone_id in proposal.milestone_ids_reused:
+            milestone = existing_milestones[milestone_id]
+            if not milestone.task_ids:
+                raise InvalidReplanProposal(
+                    f"reused Milestone must contain a Task: {milestone_id}"
+                )
+            self._unique(
+                milestone.task_ids, f"reused Milestone {milestone_id} Task"
+            )
+            for task_id in milestone.task_ids:
+                if task_id not in replacement_tasks:
+                    raise UnknownReplanReference(
+                        f"reused Milestone {milestone_id} references unavailable "
+                        f"Task: {task_id}"
+                    )
+                membership[task_id] += 1
         for milestone in proposal.milestones:
             if not milestone.task_ids:
                 raise InvalidReplanProposal(

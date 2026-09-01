@@ -158,6 +158,7 @@ def valid_proposal() -> ImpactAnalysisResult:
         ),
         tasks_to_reopen=(),
         tasks_to_cancel=(),
+        milestone_ids_reused=(),
         milestones=(
             MilestoneProposal("M2", "Changed calculator", ("T1", "T2", "T3")),
         ),
@@ -176,6 +177,24 @@ class ChangeReplanValidatorTests(unittest.TestCase):
 
     def test_valid_addition_preserves_completed_task_and_traceability(self):
         self.validator.validate(self.state, self.change, valid_proposal())
+
+    def test_existing_milestone_is_reused_by_reference(self):
+        proposal = replace(
+            valid_proposal(),
+            milestone_ids_reused=("M1",),
+            milestones=(MilestoneProposal("M2", "Multiply", ("T3",)),),
+        )
+        self.validator.validate(self.state, self.change, proposal)
+
+    def test_historical_milestone_id_cannot_be_redeclared_as_new(self):
+        proposal = replace(
+            valid_proposal(),
+            milestones=(
+                MilestoneProposal("M1", "Redeclared", ("T1", "T2", "T3")),
+            ),
+        )
+        with self.assertRaises(ReplanIdCollision):
+            self.validator.validate(self.state, self.change, proposal)
 
     def test_completed_task_can_only_change_through_explicit_reopen(self):
         proposal = replace(
@@ -232,12 +251,26 @@ class ChangeReplanValidatorTests(unittest.TestCase):
         with self.assertRaises(UnknownReplanReference):
             self.validator.validate(self.state, self.change, unknown)
 
-        collision = replace(
-            valid_proposal(),
-            tasks_to_add=(replace(valid_proposal().tasks_to_add[0], id="T2"),),
+        collisions = (
+            replace(
+                valid_proposal(),
+                tasks_to_add=(
+                    replace(valid_proposal().tasks_to_add[0], id="T2"),
+                ),
+            ),
+            replace(
+                valid_proposal(),
+                requirements_to_add=(
+                    replace(
+                        valid_proposal().requirements_to_add[0], id="REQ-BASE"
+                    ),
+                ),
+            ),
         )
-        with self.assertRaises(ReplanIdCollision):
-            self.validator.validate(self.state, self.change, collision)
+        for collision in collisions:
+            with self.subTest(collision=collision):
+                with self.assertRaises(ReplanIdCollision):
+                    self.validator.validate(self.state, self.change, collision)
 
     def test_conflicting_reopen_cancel_is_rejected(self):
         proposal = replace(

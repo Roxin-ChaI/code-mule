@@ -88,6 +88,26 @@ class ChangeReplanMaterializerTests(unittest.TestCase):
         self.assertIs(tasks["T1"].status, TaskStatus.REOPENED)
         self.assertIs(tasks["T2"].status, TaskStatus.PENDING)
 
+    def test_reused_milestone_identity_is_not_duplicated(self):
+        proposal = replace(
+            valid_proposal(),
+            milestone_ids_reused=("M1",),
+            milestones=(MilestoneProposal("M2", "Multiply", ("T3",)),),
+        )
+        result = self.materializer.materialize(
+            self.state,
+            self.change,
+            proposal,
+            plan_id="PLAN-2",
+            operation_time=NOW,
+        )
+
+        self.assertEqual(result.plans[-1].milestone_ids, ("M1", "M2"))
+        self.assertEqual(
+            tuple(item.id for item in result.milestones), ("M1", "M2")
+        )
+        self.assertEqual(result.milestones[0].plan_id, "PLAN-2")
+
     def test_requirement_update_preserves_old_and_links_replacement(self):
         proposal = replace(
             valid_proposal(),

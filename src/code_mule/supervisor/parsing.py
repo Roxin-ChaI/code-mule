@@ -255,6 +255,7 @@ def parse_impact_analysis_response(
                 "tasks_to_add",
                 "tasks_to_reopen",
                 "tasks_to_cancel",
+                "milestone_ids_reused",
                 "milestones",
                 "dependency_changes",
                 "risks",
@@ -319,6 +320,9 @@ def parse_impact_analysis_response(
             ),
             tasks_to_cancel=_string_tuple(
                 root["tasks_to_cancel"], "tasks_to_cancel"
+            ),
+            milestone_ids_reused=_string_tuple(
+                root["milestone_ids_reused"], "milestone_ids_reused"
             ),
             milestones=tuple(
                 _milestone_proposal(item, f"milestones[{index}]")
