@@ -104,6 +104,19 @@ class SupervisorPromptTests(unittest.TestCase):
                 self.assertIn(context, user_prompt)
                 self.assertIn(SUPERVISOR_SYSTEM_POLICY, system_prompt)
 
+    def test_impact_prompt_exposes_exact_control_ids(self):
+        state = make_project_state()
+        _, prompt = build_impact_analysis_prompt(
+            ImpactAnalysisRequest(state, state.change_requests[0])
+        )
+
+        self.assertIn('Existing Requirement IDs: ["req-2", "req-1"]', prompt)
+        self.assertIn('Active Plan Task IDs: ["task-1"]', prompt)
+        self.assertIn("must use an exact ID", prompt)
+        self.assertIn("Never put titles, explanations", prompt)
+        self.assertIn("Preserve completed work", prompt)
+        self.assertIn("requirements_to_update", prompt)
+
     def test_history_bounds_and_original_order_are_preserved(self):
         state = make_project_state()
         base_decision = state.decisions[0]

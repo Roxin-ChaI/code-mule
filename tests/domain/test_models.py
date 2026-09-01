@@ -78,6 +78,7 @@ class ModelContractTests(unittest.TestCase):
         event = ProjectEvent("event-1", "project-1", "task.completed", "task-1", CREATED, {"source": "test"})
 
         self.assertEqual(requirement.acceptance_criteria, ("criteria-a", "criteria-b"))
+        self.assertIsNone(requirement.supersedes_id)
         self.assertEqual(task.dependencies, ("task-0",))
         self.assertEqual(task.acceptance_criteria, ("tests pass",))
         self.assertEqual(task.requirement_ids, ("req-1",))

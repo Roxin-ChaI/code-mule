@@ -9,9 +9,11 @@ from code_mule.supervisor.contracts import (
     PlanRequest,
     ProgressReportRequest,
     RequirementProposal,
+    RequirementUpdateProposal,
     ReviewRequest,
     ReviewResult,
     SupervisorOperation,
+    TaskDependencyChange,
     TaskProposal,
 )
 
@@ -103,24 +105,48 @@ class SupervisorContractTests(unittest.TestCase):
 
     def test_impact_result_requires_recommendation_and_rationale(self):
         fields = {
+            "change_request_id": "change-1",
+            "summary": "Apply change",
             "architecture_impact": "none",
             "affected_components": (),
+            "affected_requirement_ids": (),
+            "affected_task_ids": (),
             "affected_completed_tasks": (),
             "affected_in_progress_tasks": (),
             "affected_pending_tasks": (),
+            "requirements_to_add": (),
+            "requirements_to_update": (),
             "tasks_to_add": (),
             "tasks_to_reopen": (),
             "tasks_to_cancel": (),
+            "milestones": (),
+            "dependency_changes": (),
+            "risks": (),
             "recommendation": "replan",
             "rationale": "requirement changed",
         }
         ImpactAnalysisResult(**fields)
-        for field in ("recommendation", "rationale"):
+        for field in (
+            "change_request_id",
+            "summary",
+            "recommendation",
+            "rationale",
+        ):
             invalid = dict(fields)
             invalid[field] = ""
             with self.subTest(field=field):
                 with self.assertRaises(ValueError):
                     ImpactAnalysisResult(**invalid)
+
+        update = RequirementUpdateProposal(
+            "req-old",
+            RequirementProposal(
+                "req-new", "Replacement", "Changed", "high", ("verified",)
+            ),
+        )
+        dependency = TaskDependencyChange("task-1", ("task-0",))
+        self.assertEqual(update.supersedes_id, "req-old")
+        self.assertEqual(dependency.dependencies, ("task-0",))
 
 
 if __name__ == "__main__":

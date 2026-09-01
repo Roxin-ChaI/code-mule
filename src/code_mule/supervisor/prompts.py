@@ -272,13 +272,37 @@ def build_review_prompt(request: ReviewRequest) -> tuple[str, str]:
 def build_impact_analysis_prompt(
     request: ImpactAnalysisRequest,
 ) -> tuple[str, str]:
+    state = request.project_state
+    active_plan = next(
+        (item for item in state.plans if item.id == state.project.active_plan_id),
+        None,
+    )
+    active_milestone_ids = () if active_plan is None else active_plan.milestone_ids
+    active_task_ids = tuple(
+        task_id
+        for milestone_id in active_milestone_ids
+        for milestone in state.milestones
+        if milestone.id == milestone_id
+        for task_id in milestone.task_ids
+    )
     user_prompt = (
-        f"{_render_project_state(request.project_state)}\n\n"
+        f"{_render_project_state(state)}\n\n"
         "Current operation context:\n"
         "Operation: IMPACT_ANALYSIS\n"
         "Change request under analysis:\n"
         f"{_render_change_request(request.change_request)}\n"
-        "Return an impact proposal only; do not modify requirements, tasks, or plans."
+        f"Existing Requirement IDs: "
+        f"{_string_list(tuple(item.id for item in state.requirements))}\n"
+        f"Active Plan Task IDs: {_string_list(active_task_ids)}\n"
+        "Every affected, reopen, cancel, supersedes, dependency-change, and "
+        "milestone task reference must use an exact ID from the snapshot or an "
+        "exact new ID declared in this proposal. Never put titles, explanations, "
+        "or other natural language in ID fields. Preserve completed work unless "
+        "tasks_to_reopen explicitly names its Task ID. Put added Requirements in "
+        "requirements_to_add and replacements in requirements_to_update. The "
+        "milestones array must place every Task retained by the replacement Plan "
+        "exactly once. Return an impact and replan proposal only; do not modify "
+        "requirements, tasks, milestones, or plans."
     )
     return _system_prompt(SupervisorOperation.IMPACT_ANALYSIS), user_prompt
 

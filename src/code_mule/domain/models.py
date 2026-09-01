@@ -30,6 +30,7 @@ class Requirement:
     introduced_by: str
     created_at: datetime
     updated_at: datetime
+    supersedes_id: str | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty(self.id, "id")
@@ -121,6 +122,15 @@ class ImpactAnalysis:
     tasks_to_reopen: tuple[str, ...]
     tasks_to_cancel: tuple[str, ...]
     recommendation: str
+    summary: str = ""
+    affected_requirement_ids: tuple[str, ...] = ()
+    affected_task_ids: tuple[str, ...] = ()
+    requirements_to_add: tuple[str, ...] = ()
+    requirements_to_update: tuple[str, ...] = ()
+    milestone_ids: tuple[str, ...] = ()
+    dependency_changes: tuple[str, ...] = ()
+    risks: tuple[str, ...] = ()
+    rationale: str = ""
 
 
 @dataclass

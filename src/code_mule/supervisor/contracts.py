@@ -70,6 +70,15 @@ class RequirementProposal:
 
 
 @dataclass(frozen=True)
+class RequirementUpdateProposal:
+    supersedes_id: str
+    requirement: RequirementProposal
+
+    def __post_init__(self) -> None:
+        _require_non_empty(self.supersedes_id, "supersedes_id")
+
+
+@dataclass(frozen=True)
 class TaskProposal:
     id: str
     title: str
@@ -97,6 +106,15 @@ class MilestoneProposal:
     def __post_init__(self) -> None:
         _require_non_empty(self.id, "id")
         _require_non_empty(self.title, "title")
+
+
+@dataclass(frozen=True)
+class TaskDependencyChange:
+    task_id: str
+    dependencies: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _require_non_empty(self.task_id, "task_id")
 
 
 @dataclass(frozen=True)
@@ -137,18 +155,29 @@ class ReviewResult:
 
 @dataclass(frozen=True)
 class ImpactAnalysisResult:
+    change_request_id: str
+    summary: str
     architecture_impact: str
     affected_components: tuple[str, ...]
+    affected_requirement_ids: tuple[str, ...]
+    affected_task_ids: tuple[str, ...]
     affected_completed_tasks: tuple[str, ...]
     affected_in_progress_tasks: tuple[str, ...]
     affected_pending_tasks: tuple[str, ...]
+    requirements_to_add: tuple[RequirementProposal, ...]
+    requirements_to_update: tuple[RequirementUpdateProposal, ...]
     tasks_to_add: tuple[TaskProposal, ...]
     tasks_to_reopen: tuple[str, ...]
     tasks_to_cancel: tuple[str, ...]
+    milestones: tuple[MilestoneProposal, ...]
+    dependency_changes: tuple[TaskDependencyChange, ...]
+    risks: tuple[str, ...]
     recommendation: str
     rationale: str
 
     def __post_init__(self) -> None:
+        _require_non_empty(self.change_request_id, "change_request_id")
+        _require_non_empty(self.summary, "summary")
         _require_non_empty(self.recommendation, "recommendation")
         _require_non_empty(self.rationale, "rationale")
 
@@ -174,8 +203,10 @@ __all__ = [
     "ProgressReport",
     "ProgressReportRequest",
     "RequirementProposal",
+    "RequirementUpdateProposal",
     "ReviewRequest",
     "ReviewResult",
     "SupervisorOperation",
     "TaskProposal",
+    "TaskDependencyChange",
 ]

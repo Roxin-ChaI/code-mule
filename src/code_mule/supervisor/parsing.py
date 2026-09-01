@@ -11,7 +11,9 @@ from .contracts import (
     PlanProposal,
     ProgressReport,
     RequirementProposal,
+    RequirementUpdateProposal,
     ReviewResult,
+    TaskDependencyChange,
     TaskProposal,
 )
 
@@ -130,6 +132,32 @@ def _milestone_proposal(value: object, context: str) -> MilestoneProposal:
     )
 
 
+def _requirement_update_proposal(
+    value: object, context: str
+) -> RequirementUpdateProposal:
+    payload = _object(value, context)
+    _exact_fields(payload, {"supersedes_id", "requirement"}, context)
+    return RequirementUpdateProposal(
+        supersedes_id=_string(
+            payload["supersedes_id"], f"{context}.supersedes_id"
+        ),
+        requirement=_requirement_proposal(
+            payload["requirement"], f"{context}.requirement"
+        ),
+    )
+
+
+def _dependency_change(value: object, context: str) -> TaskDependencyChange:
+    payload = _object(value, context)
+    _exact_fields(payload, {"task_id", "dependencies"}, context)
+    return TaskDependencyChange(
+        task_id=_string(payload["task_id"], f"{context}.task_id"),
+        dependencies=_string_tuple(
+            payload["dependencies"], f"{context}.dependencies"
+        ),
+    )
+
+
 def _parse(parse_operation: Callable[[], _R]) -> _R:
     try:
         return parse_operation()
@@ -213,14 +241,23 @@ def parse_impact_analysis_response(
         _exact_fields(
             root,
             {
+                "change_request_id",
+                "summary",
                 "architecture_impact",
                 "affected_components",
+                "affected_requirement_ids",
+                "affected_task_ids",
                 "affected_completed_tasks",
                 "affected_in_progress_tasks",
                 "affected_pending_tasks",
+                "requirements_to_add",
+                "requirements_to_update",
                 "tasks_to_add",
                 "tasks_to_reopen",
                 "tasks_to_cancel",
+                "milestones",
+                "dependency_changes",
+                "risks",
                 "recommendation",
                 "rationale",
             },
@@ -233,11 +270,21 @@ def parse_impact_analysis_response(
             )
         )
         return ImpactAnalysisResult(
+            change_request_id=_string(
+                root["change_request_id"], "change_request_id"
+            ),
+            summary=_string(root["summary"], "summary"),
             architecture_impact=_string(
                 root["architecture_impact"], "architecture_impact"
             ),
             affected_components=_string_tuple(
                 root["affected_components"], "affected_components"
+            ),
+            affected_requirement_ids=_string_tuple(
+                root["affected_requirement_ids"], "affected_requirement_ids"
+            ),
+            affected_task_ids=_string_tuple(
+                root["affected_task_ids"], "affected_task_ids"
             ),
             affected_completed_tasks=_string_tuple(
                 root["affected_completed_tasks"], "affected_completed_tasks"
@@ -249,6 +296,23 @@ def parse_impact_analysis_response(
             affected_pending_tasks=_string_tuple(
                 root["affected_pending_tasks"], "affected_pending_tasks"
             ),
+            requirements_to_add=tuple(
+                _requirement_proposal(item, f"requirements_to_add[{index}]")
+                for index, item in enumerate(
+                    _array(root["requirements_to_add"], "requirements_to_add")
+                )
+            ),
+            requirements_to_update=tuple(
+                _requirement_update_proposal(
+                    item, f"requirements_to_update[{index}]"
+                )
+                for index, item in enumerate(
+                    _array(
+                        root["requirements_to_update"],
+                        "requirements_to_update",
+                    )
+                )
+            ),
             tasks_to_add=tasks_to_add,
             tasks_to_reopen=_string_tuple(
                 root["tasks_to_reopen"], "tasks_to_reopen"
@@ -256,6 +320,19 @@ def parse_impact_analysis_response(
             tasks_to_cancel=_string_tuple(
                 root["tasks_to_cancel"], "tasks_to_cancel"
             ),
+            milestones=tuple(
+                _milestone_proposal(item, f"milestones[{index}]")
+                for index, item in enumerate(
+                    _array(root["milestones"], "milestones")
+                )
+            ),
+            dependency_changes=tuple(
+                _dependency_change(item, f"dependency_changes[{index}]")
+                for index, item in enumerate(
+                    _array(root["dependency_changes"], "dependency_changes")
+                )
+            ),
+            risks=_string_tuple(root["risks"], "risks"),
             recommendation=_string(root["recommendation"], "recommendation"),
             rationale=_string(root["rationale"], "rationale"),
         )

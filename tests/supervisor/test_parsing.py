@@ -52,14 +52,46 @@ def plan_payload():
 
 def impact_payload():
     return {
+        "change_request_id": "change-1",
+        "summary": "Apply the requested boundary change",
         "architecture_impact": "boundary change",
         "affected_components": ["supervisor"],
+        "affected_requirement_ids": ["req-2"],
+        "affected_task_ids": ["task-0", "task-1", "task-2"],
         "affected_completed_tasks": ["task-0"],
         "affected_in_progress_tasks": ["task-1"],
         "affected_pending_tasks": ["task-2"],
+        "requirements_to_add": [
+            {
+                "id": "req-new",
+                "title": "New requirement",
+                "description": "Deliver new behavior",
+                "priority": "high",
+                "acceptance_criteria": ["behavior is verified"],
+            }
+        ],
+        "requirements_to_update": [
+            {
+                "supersedes_id": "req-2",
+                "requirement": {
+                    "id": "req-2-v2",
+                    "title": "Updated requirement",
+                    "description": "Replace old behavior",
+                    "priority": "high",
+                    "acceptance_criteria": ["replacement is verified"],
+                },
+            }
+        ],
         "tasks_to_add": [task_payload()],
         "tasks_to_reopen": ["task-0"],
         "tasks_to_cancel": ["task-old"],
+        "milestones": [
+            {"id": "milestone-v2", "title": "Changed plan", "task_ids": ["task-0", "task-1"]}
+        ],
+        "dependency_changes": [
+            {"task_id": "task-1", "dependencies": ["task-0"]}
+        ],
+        "risks": ["integration risk"],
         "recommendation": "replan",
         "rationale": "scope changed",
     }
@@ -137,6 +169,11 @@ class ParsingTests(unittest.TestCase):
         progress = parse_progress_report_response(progress_payload())
         self.assertEqual(impact.tasks_to_add[0].id, "task-1")
         self.assertEqual(impact.tasks_to_reopen, ("task-0",))
+        self.assertEqual(
+            impact.requirements_to_update[0].supersedes_id, "req-2"
+        )
+        self.assertEqual(impact.milestones[0].id, "milestone-v2")
+        self.assertEqual(impact.dependency_changes[0].task_id, "task-1")
         self.assertEqual(progress.completed, ("task-0",))
         self.assertIsNone(progress.quality_summary)
 

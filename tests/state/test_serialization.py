@@ -31,6 +31,7 @@ class ProjectStateSerializationTests(unittest.TestCase):
         self.assertIsInstance(requirements, list)
         self.assertEqual([item["id"] for item in requirements], ["req-2", "req-1"])
         self.assertIsInstance(requirements[0]["acceptance_criteria"], list)
+        self.assertEqual(requirements[0]["supersedes_id"], "req-1")
         tasks = payload["tasks"]
         self.assertEqual(tasks[0]["status"], TaskStatus.IN_PROGRESS.value)
         self.assertEqual(tasks[0]["requirement_ids"], ["req-2"])
@@ -41,6 +42,7 @@ class ProjectStateSerializationTests(unittest.TestCase):
 
         self.assertIsInstance(restored.requirements, tuple)
         self.assertIsInstance(restored.requirements[0].acceptance_criteria, tuple)
+        self.assertEqual(restored.requirements[0].supersedes_id, "req-1")
         self.assertIs(restored.project.status, ProjectStatus.RUNNING)
         self.assertIs(restored.tasks[0].status, TaskStatus.IN_PROGRESS)
         self.assertEqual(restored.tasks[0].requirement_ids, ("req-2",))
@@ -68,7 +70,7 @@ class InvalidProjectStateTests(unittest.TestCase):
             deserialize_project_state(self.payload)
 
     def test_unsupported_schema_version_is_rejected(self):
-        self.payload["schema_version"] = 3
+        self.payload["schema_version"] = 4
         with self.assertRaises(UnsupportedStateSchema):
             deserialize_project_state(self.payload)
 
@@ -123,7 +125,34 @@ class InvalidProjectStateTests(unittest.TestCase):
             ("req-2", "req-1"),
         )
 
-    def test_v2_task_requirement_ids_are_required_and_typed(self):
+    def test_v2_state_migrates_replacement_metadata(self):
+        payload = copy.deepcopy(self.payload)
+        payload["schema_version"] = 2
+        for requirement in payload["requirements"]:
+            requirement.pop("supersedes_id")
+        new_impact_fields = (
+            "summary",
+            "affected_requirement_ids",
+            "affected_task_ids",
+            "requirements_to_add",
+            "requirements_to_update",
+            "milestone_ids",
+            "dependency_changes",
+            "risks",
+            "rationale",
+        )
+        for impact in payload["impact_analyses"]:
+            for field in new_impact_fields:
+                impact.pop(field)
+
+        restored = deserialize_project_state(payload)
+
+        self.assertTrue(
+            all(item.supersedes_id is None for item in restored.requirements)
+        )
+        self.assertEqual(restored.impact_analyses[0].affected_task_ids, ())
+
+    def test_v3_task_requirement_ids_are_required_and_typed(self):
         missing = copy.deepcopy(self.payload)
         missing["tasks"][0].pop("requirement_ids")
         with self.assertRaises(InvalidProjectState):

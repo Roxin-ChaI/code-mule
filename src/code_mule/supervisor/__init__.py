@@ -10,9 +10,11 @@ from .contracts import (
     ProgressReport,
     ProgressReportRequest,
     RequirementProposal,
+    RequirementUpdateProposal,
     ReviewRequest,
     ReviewResult,
     SupervisorOperation,
+    TaskDependencyChange,
     TaskProposal,
 )
 from .parsing import (
@@ -47,6 +49,7 @@ __all__ = [
     "ProgressReport",
     "ProgressReportRequest",
     "RequirementProposal",
+    "RequirementUpdateProposal",
     "ReviewRequest",
     "ReviewResult",
     "SupervisorModelClient",
@@ -54,6 +57,7 @@ __all__ = [
     "SupervisorService",
     "SUPERVISOR_SYSTEM_POLICY",
     "TaskProposal",
+    "TaskDependencyChange",
     "build_impact_analysis_prompt",
     "build_plan_prompt",
     "build_progress_report_prompt",

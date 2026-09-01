@@ -66,6 +66,7 @@ def make_project_state(
                 "boss",
                 CREATED,
                 UPDATED,
+                "req-1",
             ),
             Requirement(
                 "req-1",

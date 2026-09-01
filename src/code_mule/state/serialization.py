@@ -29,7 +29,7 @@ from code_mule.domain.models import (
 from .models import ProjectState
 
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 class UnsupportedStateSchema(ValueError):
@@ -129,6 +129,7 @@ def _requirement_to_payload(requirement: Requirement) -> dict[str, object]:
         "introduced_by": requirement.introduced_by,
         "created_at": requirement.created_at.isoformat(),
         "updated_at": requirement.updated_at.isoformat(),
+        "supersedes_id": requirement.supersedes_id,
     }
 
 
@@ -194,6 +195,15 @@ def _impact_analysis_to_payload(impact: ImpactAnalysis) -> dict[str, object]:
         "tasks_to_reopen": list(impact.tasks_to_reopen),
         "tasks_to_cancel": list(impact.tasks_to_cancel),
         "recommendation": impact.recommendation,
+        "summary": impact.summary,
+        "affected_requirement_ids": list(impact.affected_requirement_ids),
+        "affected_task_ids": list(impact.affected_task_ids),
+        "requirements_to_add": list(impact.requirements_to_add),
+        "requirements_to_update": list(impact.requirements_to_update),
+        "milestone_ids": list(impact.milestone_ids),
+        "dependency_changes": list(impact.dependency_changes),
+        "risks": list(impact.risks),
+        "rationale": impact.rationale,
     }
 
 
@@ -332,6 +342,10 @@ def _requirement_from_payload(value: object) -> Requirement:
         updated_at=_datetime(
             _field(payload, "updated_at", "requirement"), "requirement.updated_at"
         ),
+        supersedes_id=_expect_optional_str(
+            _field(payload, "supersedes_id", "requirement"),
+            "requirement.supersedes_id",
+        ),
     )
 
 
@@ -424,8 +438,46 @@ def _migrate_v1_to_v2(root: dict[str, object]) -> dict[str, object]:
         task["requirement_ids"] = []
         migrated_tasks.append(task)
     migrated = dict(root)
-    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
+    migrated["schema_version"] = 2
     migrated["tasks"] = migrated_tasks
+    return migrated
+
+
+def _migrate_v2_to_v3(root: dict[str, object]) -> dict[str, object]:
+    """Add explicit Requirement replacement and rich Impact metadata."""
+
+    migrated_requirements: list[dict[str, object]] = []
+    for item in _expect_list(
+        _field(root, "requirements", "project state"), "requirements"
+    ):
+        requirement = dict(_expect_object(item, "requirement"))
+        requirement["supersedes_id"] = None
+        migrated_requirements.append(requirement)
+
+    migrated_impacts: list[dict[str, object]] = []
+    for item in _expect_list(
+        _field(root, "impact_analyses", "project state"), "impact_analyses"
+    ):
+        impact = dict(_expect_object(item, "impact_analysis"))
+        impact.update(
+            {
+                "summary": "",
+                "affected_requirement_ids": [],
+                "affected_task_ids": [],
+                "requirements_to_add": [],
+                "requirements_to_update": [],
+                "milestone_ids": [],
+                "dependency_changes": [],
+                "risks": [],
+                "rationale": "",
+            }
+        )
+        migrated_impacts.append(impact)
+
+    migrated = dict(root)
+    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
+    migrated["requirements"] = migrated_requirements
+    migrated["impact_analyses"] = migrated_impacts
     return migrated
 
 
@@ -504,6 +556,42 @@ def _impact_analysis_from_payload(value: object) -> ImpactAnalysis:
         recommendation=_expect_str(
             _field(payload, "recommendation", "impact_analysis"),
             "impact_analysis.recommendation",
+        ),
+        summary=_expect_str(
+            _field(payload, "summary", "impact_analysis"),
+            "impact_analysis.summary",
+        ),
+        affected_requirement_ids=_strings(
+            _field(payload, "affected_requirement_ids", "impact_analysis"),
+            "impact_analysis.affected_requirement_ids",
+        ),
+        affected_task_ids=_strings(
+            _field(payload, "affected_task_ids", "impact_analysis"),
+            "impact_analysis.affected_task_ids",
+        ),
+        requirements_to_add=_strings(
+            _field(payload, "requirements_to_add", "impact_analysis"),
+            "impact_analysis.requirements_to_add",
+        ),
+        requirements_to_update=_strings(
+            _field(payload, "requirements_to_update", "impact_analysis"),
+            "impact_analysis.requirements_to_update",
+        ),
+        milestone_ids=_strings(
+            _field(payload, "milestone_ids", "impact_analysis"),
+            "impact_analysis.milestone_ids",
+        ),
+        dependency_changes=_strings(
+            _field(payload, "dependency_changes", "impact_analysis"),
+            "impact_analysis.dependency_changes",
+        ),
+        risks=_strings(
+            _field(payload, "risks", "impact_analysis"),
+            "impact_analysis.risks",
+        ),
+        rationale=_expect_str(
+            _field(payload, "rationale", "impact_analysis"),
+            "impact_analysis.rationale",
         ),
     )
 
@@ -636,12 +724,15 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     schema_version = root["schema_version"]
     if type(schema_version) is not int:
         raise UnsupportedStateSchema("schema_version must be an integer")
-    if schema_version not in {1, CURRENT_SCHEMA_VERSION}:
+    if schema_version not in {1, 2, CURRENT_SCHEMA_VERSION}:
         raise UnsupportedStateSchema(
             f"unsupported schema_version: {schema_version!r}"
         )
     if schema_version == 1:
         root = _migrate_v1_to_v2(root)
+        schema_version = 2
+    if schema_version == 2:
+        root = _migrate_v2_to_v3(root)
 
     try:
         quality_value = _field(root, "quality_status", "project state")
