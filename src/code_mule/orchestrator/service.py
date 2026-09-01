@@ -12,6 +12,12 @@ from code_mule.domain.enums import (
 )
 from code_mule.domain.models import ChangeRequest, ProjectEvent
 from code_mule.domain.state_machine import validate_transition
+from code_mule.progress import (
+    ProgressEvent,
+    ProgressEventType,
+    ProgressSink,
+    resilient_progress_sink,
+)
 from code_mule.state.models import ProjectState
 
 from .commands import ChangeCommand, PauseCommand, QueryCommand, ResumeCommand
@@ -45,10 +51,16 @@ class OrchestratorService:
         *,
         clock: Callable[[], datetime],
         event_id_factory: Callable[[], str],
+        progress_sink: ProgressSink | None = None,
     ):
         self._store = store
         self._clock = clock
         self._event_id_factory = event_id_factory
+        self._progress = resilient_progress_sink(progress_sink)
+
+    @property
+    def progress_errors(self) -> tuple[BaseException, ...]:
+        return self._progress.errors
 
     def query(self, command: QueryCommand) -> ProjectStatusView:
         state = self._store.load()
@@ -164,6 +176,22 @@ class OrchestratorService:
             events=state.events + (event,),
         )
         self._store.save(new_state)
+        message = (
+            "Change requested; finishing current task..."
+            if state.project.current_task_id is not None
+            else "Change requested"
+        )
+        self._progress.emit(
+            ProgressEvent(
+                type=ProgressEventType.CHANGE_REQUESTED,
+                timestamp=operation_time,
+                project_id=state.project.id,
+                task_id=state.project.current_task_id,
+                attempt=None,
+                message=message,
+                metadata={"change_request_id": change_request.id},
+            )
+        )
         return ChangeResult(
             project_id=state.project.id,
             change_request_id=change_request.id,

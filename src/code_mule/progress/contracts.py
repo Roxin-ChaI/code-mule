@@ -6,6 +6,13 @@ from enum import StrEnum
 
 
 class ProgressEventType(StrEnum):
+    CHANGE_REQUESTED = "change.requested"
+    REPLANNING_STARTED = "replanning.started"
+    SUPERVISOR_IMPACT_STARTED = "supervisor.impact_started"
+    SUPERVISOR_IMPACT_COMPLETED = "supervisor.impact_completed"
+    REPLANNING_MATERIALIZING = "replanning.materializing"
+    REPLANNING_COMPLETED = "replanning.completed"
+    REPLANNING_FAILED = "replanning.failed"
     PLANNING_STARTED = "planning.started"
     SUPERVISOR_PLAN_STARTED = "supervisor.plan_started"
     SUPERVISOR_PLAN_COMPLETED = "supervisor.plan_completed"

@@ -21,6 +21,7 @@ from code_mule.orchestrator.service import (
     OrchestratorService,
     ProjectIdentityMismatch,
 )
+from code_mule.progress import ProgressEventType, RecordingProgressSink
 from code_mule.state.models import ProjectState
 
 from state import CREATED, make_project_state
@@ -51,7 +52,12 @@ def state_with_status(status: ProjectStatus) -> ProjectState:
     return replace(state, project=replace(state.project, status=status))
 
 
-def make_service(state: ProjectState, *, save_error: Exception | None = None):
+def make_service(
+    state: ProjectState,
+    *,
+    save_error: Exception | None = None,
+    progress=None,
+):
     store = InMemoryProjectStateStore(state, save_error=save_error)
     clock = Mock(return_value=OPERATION_TIME)
     event_ids = Mock(return_value="event-new")
@@ -59,6 +65,7 @@ def make_service(state: ProjectState, *, save_error: Exception | None = None):
         store,
         clock=clock,
         event_id_factory=event_ids,
+        progress_sink=progress,
     )
     return service, store, clock, event_ids
 
@@ -140,8 +147,13 @@ class QueryTests(unittest.TestCase):
         clock.assert_not_called()
         event_ids.assert_not_called()
 
-    def test_query_is_allowed_for_paused_and_done_projects(self):
-        for status in (ProjectStatus.PAUSED_BY_BOSS, ProjectStatus.DONE):
+    def test_query_is_allowed_for_non_mutating_project_states(self):
+        for status in (
+            ProjectStatus.CHANGE_REQUESTED,
+            ProjectStatus.REPLANNING,
+            ProjectStatus.PAUSED_BY_BOSS,
+            ProjectStatus.DONE,
+        ):
             with self.subTest(status=status):
                 state = state_with_status(status)
                 service, store, clock, event_ids = make_service(state)
@@ -239,6 +251,21 @@ class ResumeTests(unittest.TestCase):
 
 
 class ChangeTests(unittest.TestCase):
+    def test_change_emits_safe_point_progress_without_touching_worker(self):
+        original = make_project_state()
+        progress = RecordingProgressSink()
+        service, _, _, _ = make_service(original, progress=progress)
+
+        service.change(
+            ChangeCommand("project-1", "Add multiply", "boss", "change-new")
+        )
+
+        self.assertEqual(len(progress.events), 1)
+        event = progress.events[0]
+        self.assertIs(event.type, ProgressEventType.CHANGE_REQUESTED)
+        self.assertEqual(event.task_id, original.project.current_task_id)
+        self.assertIn("finishing current task", event.message)
+
     def test_change_from_running_and_paused_creates_request_and_event(self):
         for source in (ProjectStatus.RUNNING, ProjectStatus.PAUSED_BY_BOSS):
             with self.subTest(source=source):

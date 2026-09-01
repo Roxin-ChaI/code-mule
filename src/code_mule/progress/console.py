@@ -139,6 +139,48 @@ class ConsoleProgressRenderer:
                 project_started_at=event.timestamp,
             )
             self._project_started_mono = self._monotonic()
+        elif event.type is ProgressEventType.CHANGE_REQUESTED:
+            updates.update(
+                project_status="change_requested",
+                supervisor_status="Waiting",
+            )
+        elif event.type is ProgressEventType.REPLANNING_STARTED:
+            updates.update(
+                project_status="replanning",
+                supervisor_status="Waiting",
+                stage_started_at=event.timestamp,
+            )
+            self._stage_started_mono = self._monotonic()
+        elif event.type is ProgressEventType.SUPERVISOR_IMPACT_STARTED:
+            updates.update(
+                supervisor_status="Analyzing impact",
+                stage_started_at=event.timestamp,
+            )
+            self._stage_started_mono = self._monotonic()
+        elif event.type is ProgressEventType.SUPERVISOR_IMPACT_COMPLETED:
+            updates.update(
+                supervisor_status="Impact ready",
+                stage_started_at=event.timestamp,
+            )
+            self._stage_started_mono = None
+        elif event.type is ProgressEventType.REPLANNING_MATERIALIZING:
+            updates.update(
+                supervisor_status="Materializing",
+                stage_started_at=event.timestamp,
+            )
+        elif event.type is ProgressEventType.REPLANNING_COMPLETED:
+            updates.update(
+                project_status="running",
+                supervisor_status="Completed",
+            )
+            self._stage_started_mono = None
+        elif event.type is ProgressEventType.REPLANNING_FAILED:
+            updates.update(
+                project_status="human_required",
+                supervisor_status="FAILED",
+                stage_started_at=event.timestamp,
+            )
+            self._stage_started_mono = None
         elif event.type is ProgressEventType.PLANNING_STARTED:
             updates.update(
                 project_status="planning",
@@ -283,7 +325,12 @@ class ConsoleProgressRenderer:
         supervisor = snapshot.supervisor_status
         if not final and worker == "Working":
             worker = f"{spinner} Working... {stage_elapsed}"
-        if not final and supervisor in {"Reviewing", "Planning"}:
+        if not final and supervisor in {
+            "Reviewing",
+            "Planning",
+            "Analyzing impact",
+            "Materializing",
+        }:
             supervisor = f"{spinner} {supervisor}... {stage_elapsed}"
         task = snapshot.current_task_title or snapshot.current_task_id or "—"
         attempt = str(snapshot.current_attempt or "—")

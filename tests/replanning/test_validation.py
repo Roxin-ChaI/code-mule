@@ -193,6 +193,9 @@ class ChangeReplanValidatorTests(unittest.TestCase):
     def test_requirement_update_uses_new_id_and_explicit_supersedes(self):
         proposal = replace(
             valid_proposal(),
+            affected_requirement_ids=("REQ-BASE",),
+            affected_task_ids=("T2",),
+            affected_pending_tasks=("T2",),
             requirements_to_add=(),
             requirements_to_update=(
                 RequirementUpdateProposal(
@@ -239,6 +242,8 @@ class ChangeReplanValidatorTests(unittest.TestCase):
     def test_conflicting_reopen_cancel_is_rejected(self):
         proposal = replace(
             valid_proposal(),
+            affected_task_ids=("T1",),
+            affected_completed_tasks=("T1",),
             tasks_to_reopen=("T1",),
             tasks_to_cancel=("T1",),
         )
@@ -248,6 +253,8 @@ class ChangeReplanValidatorTests(unittest.TestCase):
     def test_cancelled_task_cannot_satisfy_dependency(self):
         proposal = replace(
             valid_proposal(),
+            affected_task_ids=("T2",),
+            affected_pending_tasks=("T2",),
             tasks_to_cancel=("T2",),
             tasks_to_add=(
                 replace(valid_proposal().tasks_to_add[0], dependencies=("T2",)),
@@ -269,6 +276,8 @@ class ChangeReplanValidatorTests(unittest.TestCase):
 
         cyclic = replace(
             valid_proposal(),
+            affected_task_ids=("T2",),
+            affected_pending_tasks=("T2",),
             tasks_to_add=(
                 replace(valid_proposal().tasks_to_add[0], dependencies=("T2",)),
             ),

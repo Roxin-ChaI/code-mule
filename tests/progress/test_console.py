@@ -188,6 +188,40 @@ class ConsoleProgressRendererTests(unittest.TestCase):
         self.assertEqual(renderer.snapshot.total_tasks, 2)
         self.assertEqual(renderer.snapshot.percentage, 0.0)
 
+    def test_change_replanning_progress_returns_display_to_running(self):
+        renderer = ConsoleProgressRenderer(StringIO(), monotonic=lambda: 1.0)
+        renderer.emit(
+            event(
+                ProgressEventType.CHANGE_REQUESTED,
+                message="Change requested",
+            )
+        )
+        renderer.emit(
+            event(
+                ProgressEventType.REPLANNING_STARTED,
+                second=1,
+                message="Change replanning started",
+            )
+        )
+        renderer.emit(
+            event(
+                ProgressEventType.SUPERVISOR_IMPACT_STARTED,
+                second=2,
+                message="Supervisor analyzing impact...",
+            )
+        )
+        self.assertEqual(renderer.snapshot.project_status, "replanning")
+        self.assertEqual(renderer.snapshot.supervisor_status, "Analyzing impact")
+        renderer.emit(
+            event(
+                ProgressEventType.REPLANNING_COMPLETED,
+                second=3,
+                message="Plan v1 → v2; execution resumed",
+            )
+        )
+        self.assertEqual(renderer.snapshot.project_status, "running")
+        self.assertEqual(renderer.snapshot.supervisor_status, "Completed")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,6 +3,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 from code_mule.domain.enums import (
+    ChangeRequestStatus,
     ProjectStatus,
     SupervisorDecisionType,
     TaskStatus,
@@ -205,6 +206,47 @@ class TaskCycleContractTests(unittest.TestCase):
 
 
 class TaskCycleFlowTests(unittest.TestCase):
+    def test_change_persisted_during_worker_is_preserved_at_safe_point(self):
+        store = FakeStore(cycle_state())
+
+        class ChangeInjectingWorker(FakeWorkerSession):
+            def execute(self, request, *, report_id, created_at):
+                current = store.load()
+                change = replace(
+                    current.change_requests[0],
+                    id="change-safe-point",
+                    status=ChangeRequestStatus.PENDING,
+                )
+                store.current = replace(
+                    current,
+                    project=replace(
+                        current.project,
+                        status=ProjectStatus.CHANGE_REQUESTED,
+                    ),
+                    change_requests=current.change_requests + (change,),
+                )
+                return super().execute(
+                    request, report_id=report_id, created_at=created_at
+                )
+
+        session = ChangeInjectingWorker()
+        service, request, _, _, supervisor, _ = build_cycle(
+            store=store, session=session
+        )
+
+        service.execute(request)
+
+        self.assertIs(store.current.project.status, ProjectStatus.CHANGE_REQUESTED)
+        self.assertIsNone(store.current.project.current_task_id)
+        self.assertIs(store.current.tasks[0].status, TaskStatus.COMPLETED)
+        self.assertEqual(
+            store.current.change_requests[-1].id, "change-safe-point"
+        )
+        self.assertIs(
+            supervisor.requests[0].project_state.project.status,
+            ProjectStatus.CHANGE_REQUESTED,
+        )
+
     def test_rework_progress_exposes_attempts_and_supervisor_decisions(self):
         progress = RecordingProgressSink()
         supervisor = FakeSupervisor(

@@ -17,6 +17,11 @@ class ProgressContractTests(unittest.TestCase):
         self.assertEqual(ProgressEventType.PROJECT_STARTED, "project.started")
         self.assertEqual(ProgressEventType.WORKER_ACTIVITY, "worker.activity")
         self.assertEqual(ProgressEventType.PLANNING_STARTED, "planning.started")
+        self.assertEqual(ProgressEventType.CHANGE_REQUESTED, "change.requested")
+        self.assertEqual(
+            ProgressEventType.REPLANNING_COMPLETED,
+            "replanning.completed",
+        )
         self.assertEqual(
             ProgressEventType.SUPERVISOR_PLAN_STARTED,
             "supervisor.plan_started",

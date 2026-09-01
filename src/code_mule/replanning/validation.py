@@ -57,6 +57,10 @@ class ChangeReplanValidator:
         )
         self._unique(classified, "affected Task classification")
         self._known(classified, set(proposal.affected_task_ids), "classified Task")
+        if set(classified) != set(proposal.affected_task_ids):
+            raise InvalidReplanProposal(
+                "every affected Task must have exactly one status classification"
+            )
         self._validate_classifications(existing_tasks, proposal)
 
         added_requirements = tuple(item.id for item in proposal.requirements_to_add)
@@ -95,6 +99,11 @@ class ChangeReplanValidator:
             active_requirements,
             "superseded Requirement",
         )
+        self._known(
+            superseded_requirements,
+            set(proposal.affected_requirement_ids),
+            "Requirement update target",
+        )
         for requirement_id in superseded_requirements:
             requirement = existing_requirements[requirement_id]
             if requirement.status is not RequirementStatus.ACTIVE:
@@ -103,6 +112,16 @@ class ChangeReplanValidator:
                 )
 
         self._validate_task_changes(existing_tasks, proposal)
+        controlled_tasks = (
+            proposal.tasks_to_reopen
+            + proposal.tasks_to_cancel
+            + tuple(item.task_id for item in proposal.dependency_changes)
+        )
+        self._known(
+            controlled_tasks,
+            set(proposal.affected_task_ids),
+            "Task change target",
+        )
         cancelled = set(proposal.tasks_to_cancel)
         retained_task_ids = tuple(
             task_id for task_id in active_task_ids if task_id not in cancelled

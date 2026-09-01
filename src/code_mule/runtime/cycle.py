@@ -150,6 +150,12 @@ class TaskCycleService:
                     metadata={"status": report.status},
                 )
 
+                # A Boss CHANGE may be persisted while the Worker owns this Task.
+                # Reload at the Safe Point so report persistence preserves that
+                # authoritative status and ChangeRequest instead of overwriting it
+                # with the pre-Worker snapshot.
+                state = self._store.load()
+                task = self._task(state, task.id)
                 state = self._persist_report(state, task, report)
                 reports += (report,)
 
