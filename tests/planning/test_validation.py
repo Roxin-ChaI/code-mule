@@ -109,6 +109,21 @@ def valid_proposal() -> PlanProposal:
     )
 
 
+def existing_requirement() -> Requirement:
+    return Requirement(
+        "REQ-001",
+        "project-1",
+        "Calculator operations",
+        "Boss supplied calculator requirement.",
+        RequirementStatus.ACTIVE,
+        "high",
+        ("calculator operations are verified",),
+        "boss",
+        NOW,
+        NOW,
+    )
+
+
 class PlanProposalValidatorTests(unittest.TestCase):
     def setUp(self):
         self.validator = PlanProposalValidator()
@@ -142,6 +157,37 @@ class PlanProposalValidatorTests(unittest.TestCase):
         self.validator.validate(
             replace(self.state, requirements=(existing,)), proposal
         )
+
+    def test_no_existing_requirement_requires_empty_considered_ids(self):
+        proposal = valid_proposal()
+        self.assertEqual(proposal.requirements_considered, ())
+        self.validator.validate(self.state, proposal)
+
+        explanatory = replace(
+            proposal,
+            requirements_considered=(
+                "No existing requirements are recorded in the project snapshot.",
+            ),
+        )
+        with self.assertRaises(UnknownProposalReference):
+            self.validator.validate(self.state, explanatory)
+
+    def test_existing_requirement_accepts_only_its_id_not_title(self):
+        requirement = existing_requirement()
+        state = replace(self.state, requirements=(requirement,))
+        proposal = replace(
+            valid_proposal(),
+            requirements=(),
+            requirements_considered=(requirement.id,),
+        )
+        self.validator.validate(state, proposal)
+
+        title_reference = replace(
+            proposal,
+            requirements_considered=(requirement.title,),
+        )
+        with self.assertRaises(UnknownProposalReference):
+            self.validator.validate(state, title_reference)
 
     def test_empty_plan_collections_fail_closed(self):
         proposal = valid_proposal()

@@ -40,10 +40,37 @@ class SupervisorPromptTests(unittest.TestCase):
         self.assertIn("one Codex execution cycle", user_prompt)
         self.assertIn("Every task must reference", user_prompt)
         self.assertIn("do not add deployment or release", user_prompt)
+        self.assertIn(
+            'Existing Requirement IDs: ["req-2", "req-1"]', user_prompt
+        )
+        self.assertIn(
+            "requirements_considered may contain only IDs", user_prompt
+        )
         self.assertLess(user_prompt.index('id="req-2"'), user_prompt.index('id="req-1"'))
         self.assertNotIn("ProjectState(", user_prompt)
         self.assertNotIn("Requirement(", user_prompt)
         self.assertNotIn("Project(", user_prompt)
+
+    def test_plan_prompt_requires_empty_considered_ids_when_none_exist(self):
+        state = replace(make_project_state(), requirements=())
+        _, user_prompt = build_plan_prompt(PlanRequest(state, "Create calculator"))
+
+        self.assertIn("Existing Requirement IDs: []", user_prompt)
+        self.assertIn(
+            'exactly "requirements_considered": []', user_prompt
+        )
+        self.assertIn(
+            'Correct: "requirements_considered": []', user_prompt
+        )
+        self.assertIn(
+            'Incorrect: "requirements_considered": '
+            '["No existing requirements exist"]',
+            user_prompt,
+        )
+        self.assertIn(
+            "Put new requirements in requirements, not in requirements_considered",
+            user_prompt,
+        )
 
     def test_operation_builders_include_explicit_current_context(self):
         state = make_project_state()

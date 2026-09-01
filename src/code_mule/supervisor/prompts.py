@@ -229,11 +229,22 @@ def _system_prompt(operation: SupervisorOperation) -> str:
 
 
 def build_plan_prompt(request: PlanRequest) -> tuple[str, str]:
+    existing_requirement_ids = tuple(
+        item.id for item in request.project_state.requirements
+    )
     user_prompt = (
         f"{_render_project_state(request.project_state)}\n\n"
         "Current operation context:\n"
         "Operation: PLAN\n"
         f"Objective: {_text(request.objective)}\n"
+        f"Existing Requirement IDs: {_string_list(existing_requirement_ids)}\n"
+        "requirements_considered may contain only IDs from Existing Requirement "
+        "IDs; never put explanations, notes, titles, or other natural language "
+        "in that field. Put new requirements in requirements, not in "
+        "requirements_considered. If there are no existing Requirements, return "
+        'exactly "requirements_considered": []. Example — Existing requirements: '
+        'none. Correct: "requirements_considered": []. Incorrect: '
+        '"requirements_considered": ["No existing requirements exist"].\n'
         "Decompose the objective into the smallest deliverable requirements with "
         "verifiable acceptance criteria, milestones, and independently reviewable "
         "tasks sized for one Codex execution cycle. Every task must reference at "
