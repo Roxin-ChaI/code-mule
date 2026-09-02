@@ -115,6 +115,10 @@ class ProjectExecutionService:
     def run(self) -> ProjectExecutionOutcome:
         initial = self._store.load()
         completed, total = self._progress_counts(initial)
+        active_plan = next(
+            (plan for plan in initial.plans if plan.id == initial.project.active_plan_id),
+            None,
+        )
         self._emit_progress(
             initial,
             ProgressEventType.PROJECT_STARTED,
@@ -124,6 +128,7 @@ class ProjectExecutionService:
                 "project_status": initial.project.status.value,
                 "completed_tasks": str(completed),
                 "total_tasks": str(total),
+                "plan_version": "" if active_plan is None else str(active_plan.version),
             },
         )
         try:

@@ -76,6 +76,9 @@ class ProgressSnapshot:
     task_started_at: datetime | None
     stage_started_at: datetime | None
     recent_events: tuple[ProgressEvent, ...]
+    project_name: str | None = None
+    plan_version: int | None = None
+    worker_activity: str | None = None
 
     @property
     def percentage(self) -> float:

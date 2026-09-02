@@ -148,9 +148,7 @@ class ConsoleProgressRendererTests(unittest.TestCase):
                 )
             )
         self.assertEqual(renderer.snapshot.project_status, "human_required")
-        self.assertIn(
-            "PROJECT PAUSED — HUMAN ACTION REQUIRED", stream.getvalue()
-        )
+        self.assertIn("! ACTION REQUIRED", stream.getvalue())
 
     def test_planning_has_no_fake_percentage_and_materialization_sets_task_total(self):
         stream = FakeTTY()
@@ -183,7 +181,7 @@ class ConsoleProgressRendererTests(unittest.TestCase):
                 )
             )
         output = stream.getvalue()
-        self.assertIn("Progress     Planning", output)
+        self.assertIn("Progress    Planning", output)
         self.assertEqual(renderer.snapshot.project_status, "running")
         self.assertEqual(renderer.snapshot.total_tasks, 2)
         self.assertEqual(renderer.snapshot.percentage, 0.0)

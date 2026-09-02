@@ -6,9 +6,12 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
 import sys
+import shutil
 import threading
 import time
 from typing import TextIO
+
+from code_mule.presentation.dashboard import render_dashboard
 
 from .contracts import ProgressEvent, ProgressEventType, ProgressSnapshot
 
@@ -26,12 +29,20 @@ class ConsoleProgressRenderer:
         *,
         refresh_interval: float = 0.15,
         monotonic: Callable[[], float] = time.monotonic,
+        terminal_width: Callable[[], int] | None = None,
+        ascii_only: bool | None = None,
     ) -> None:
         if refresh_interval < 0.05:
             raise ValueError("refresh_interval must be at least 0.05 seconds")
         self._stream = stream or sys.stdout
         self._refresh_interval = refresh_interval
         self._monotonic = monotonic
+        self._terminal_width = terminal_width or (
+            lambda: shutil.get_terminal_size((80, 24)).columns
+        )
+        self._ascii_only = (
+            _needs_ascii(self._stream) if ascii_only is None else ascii_only
+        )
         self._tty = bool(self._stream.isatty())
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -133,10 +144,12 @@ class ConsoleProgressRenderer:
 
         if event.type is ProgressEventType.PROJECT_STARTED:
             updates.update(
+                project_name=event.metadata.get("project_name"),
                 project_status=event.metadata.get("project_status", "running"),
                 completed_tasks=_count(event, "completed_tasks", 0),
                 total_tasks=_count(event, "total_tasks", 0),
                 project_started_at=event.timestamp,
+                plan_version=_optional_count(event, "plan_version"),
             )
             self._project_started_mono = self._monotonic()
         elif event.type is ProgressEventType.CHANGE_REQUESTED:
@@ -172,6 +185,7 @@ class ConsoleProgressRenderer:
             updates.update(
                 project_status="running",
                 supervisor_status="Completed",
+                plan_version=_optional_count(event, "plan_version"),
             )
             self._stage_started_mono = None
         elif event.type is ProgressEventType.REPLANNING_FAILED:
@@ -214,6 +228,7 @@ class ConsoleProgressRenderer:
                 completed_tasks=0,
                 total_tasks=_count(event, "total_tasks", 0),
                 supervisor_status="Completed",
+                plan_version=_optional_count(event, "plan_version"),
             )
             self._stage_started_mono = None
         elif event.type is ProgressEventType.PLANNING_FAILED:
@@ -249,13 +264,18 @@ class ConsoleProgressRenderer:
             updates.update(
                 worker_status="Working",
                 stage_started_at=event.timestamp,
+                worker_activity=event.message,
             )
             if event.task_id is not None:
                 updates["current_task_id"] = event.task_id
             if snapshot.worker_status != "Working":
                 self._stage_started_mono = self._monotonic()
         elif event.type is ProgressEventType.WORKER_COMPLETED:
-            updates.update(worker_status="Completed", stage_started_at=event.timestamp)
+            updates.update(
+                worker_status="Completed",
+                worker_activity=event.message,
+                stage_started_at=event.timestamp,
+            )
             self._stage_started_mono = None
         elif event.type is ProgressEventType.WORKER_FAILED:
             updates.update(worker_status="FAILED", stage_started_at=event.timestamp)
@@ -267,7 +287,7 @@ class ConsoleProgressRenderer:
             )
             self._stage_started_mono = self._monotonic()
         elif event.type is ProgressEventType.SUPERVISOR_REVIEW_COMPLETED:
-            decision = event.metadata.get("decision", "completed").upper()
+            decision = event.metadata.get("decision", "completed")
             updates.update(supervisor_status=decision, stage_started_at=event.timestamp)
             self._stage_started_mono = None
         elif event.type is ProgressEventType.SUPERVISOR_FAILED:
@@ -314,58 +334,19 @@ class ConsoleProgressRenderer:
     def _dashboard_lines(self, *, final: bool) -> list[str]:
         snapshot = self._snapshot
         spinner = _SPINNER[self._frame % len(_SPINNER)]
-        width = 20
-        filled = int(snapshot.percentage / 100 * width)
-        bar = "#" * filled + "-" * (width - filled)
         project_elapsed = _elapsed(
             self._monotonic(), self._project_started_mono
         )
         stage_elapsed = _elapsed(self._monotonic(), self._stage_started_mono)
-        worker = snapshot.worker_status
-        supervisor = snapshot.supervisor_status
-        if not final and worker == "Working":
-            worker = f"{spinner} Working... {stage_elapsed}"
-        if not final and supervisor in {
-            "Reviewing",
-            "Planning",
-            "Analyzing impact",
-            "Materializing",
-        }:
-            supervisor = f"{spinner} {supervisor}... {stage_elapsed}"
-        task = snapshot.current_task_title or snapshot.current_task_id or "—"
-        attempt = str(snapshot.current_attempt or "—")
-        progress = (
-            "Planning"
-            if snapshot.project_status == "planning" and snapshot.total_tasks == 0
-            else (
-                f"[{bar}] {snapshot.completed_tasks} / "
-                f"{snapshot.total_tasks} ({snapshot.percentage:.0f}%)"
-            )
+        return render_dashboard(
+            snapshot,
+            project_elapsed=project_elapsed,
+            stage_elapsed=stage_elapsed,
+            spinner=spinner,
+            final=final,
+            width=self._terminal_width(),
+            ascii_only=self._ascii_only,
         )
-        lines = [
-            "Code Mule",
-            "Powered by prompts. Paid in tokens.",
-            "",
-            f"Project      {snapshot.project_id or '—'}",
-            f"Status       {(snapshot.project_status or 'waiting').upper()}",
-            f"Progress     {progress}",
-            "",
-            f"Current Task {task}",
-            f"Attempt      {attempt}",
-            "",
-            f"Codex        {worker}",
-            f"Supervisor   {supervisor}",
-            f"Elapsed      {project_elapsed}",
-            "",
-            "Recent Activity",
-        ]
-        lines.extend(
-            f"{event.timestamp:%H:%M:%S} {event.message or event.type.value}"
-            for event in snapshot.recent_events
-        )
-        if snapshot.project_status == "human_required":
-            lines.append("PROJECT PAUSED — HUMAN ACTION REQUIRED")
-        return lines
 
 
 def _count(event: ProgressEvent, field: str, fallback: int) -> int:
@@ -377,6 +358,26 @@ def _count(event: ProgressEvent, field: str, fallback: int) -> int:
     except ValueError:
         return fallback
     return parsed if parsed >= 0 else fallback
+
+
+def _optional_count(event: ProgressEvent, field: str) -> int | None:
+    value = event.metadata.get(field)
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    return parsed if parsed >= 1 else None
+
+
+def _needs_ascii(stream: TextIO) -> bool:
+    encoding = getattr(stream, "encoding", None) or "utf-8"
+    try:
+        "✓→█░─·—".encode(encoding)
+    except (LookupError, UnicodeEncodeError):
+        return True
+    return False
 
 
 def _elapsed(now: float, started: float | None) -> str:
