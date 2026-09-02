@@ -28,6 +28,10 @@ class InvalidCliProjectState(CliError):
     exit_code = CliExitCode.INVALID_PROJECT_STATE
 
 
+class CliUsageError(CliError):
+    exit_code = CliExitCode.INVALID_USAGE
+
+
 class CliHumanActionRequired(CliError):
     exit_code = CliExitCode.HUMAN_ACTION_REQUIRED
 
@@ -48,5 +52,6 @@ __all__ = [
     "CliExecutionFailure",
     "CliExitCode",
     "CliHumanActionRequired",
+    "CliUsageError",
     "InvalidCliProjectState",
 ]

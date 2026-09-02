@@ -6,9 +6,11 @@ from .contracts import (
     CliExecutionFailure,
     CliExitCode,
     CliHumanActionRequired,
+    CliUsageError,
     InvalidCliProjectState,
 )
 from .parser import DEFAULT_STATE_FILE, build_parser
+from .app import main
 
 __all__ = [
     "CliCommandResult",
@@ -16,7 +18,9 @@ __all__ = [
     "CliExecutionFailure",
     "CliExitCode",
     "CliHumanActionRequired",
+    "CliUsageError",
     "DEFAULT_STATE_FILE",
     "InvalidCliProjectState",
     "build_parser",
+    "main",
 ]
