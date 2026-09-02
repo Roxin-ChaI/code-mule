@@ -9,11 +9,14 @@ import unittest
 from code_mule.cli import CliCommandResult, CliExitCode, main
 from code_mule.cli.composition import ProductionCliComposition, RuntimeComposition
 from code_mule.domain.enums import (
+    HumanActionCategory,
+    HumanActionStatus,
     PlanStatus,
     ProjectStatus,
     TaskStatus,
 )
 from code_mule.domain.models import Milestone, Plan, Task
+from code_mule.human import request_human_action
 from code_mule.progress import ConsoleProgressRenderer
 from code_mule.runtime import ProjectExecutionStopReason
 from code_mule.state.store import JsonProjectStateStore
@@ -39,6 +42,10 @@ class _FakeCommands:
     def apply_change(self): return self._call("apply_change")
     def pause(self): return self._call("pause")
     def resume(self): return self._call("resume")
+    def inspect(self, *values): return self._call("inspect", *values)
+    def approve(self, *values): return self._call("approve", *values)
+    def reject(self, *values): return self._call("reject", *values)
+    def resolve(self, *values): return self._call("resolve", *values)
 
 
 class _FakePlanning:
@@ -178,6 +185,63 @@ class ProductionCommandTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "DEEPSEEK_API_KEY"):
             composition.run("Build it")
 
+    def test_inspect_is_read_only_and_approval_is_action_scoped(self):
+        composition = self.init()
+        store = JsonProjectStateStore(self.state_file)
+        state = store.load()
+        ids = iter(("source", "requested"))
+        gated = request_human_action(
+            replace(state, project=replace(state.project, status=ProjectStatus.RUNNING)),
+            category=HumanActionCategory.WORKER_APPROVAL,
+            summary="Approve one Worker operation",
+            requested_action="Review the operation",
+            risk="External side effect",
+            task_id=None,
+            operation_time=datetime.now(UTC),
+            action_id="action-123",
+            event_id_factory=lambda: next(ids),
+            source_event_types=("task.human_required",),
+        )
+        store.save(gated)
+        before = self.state_file.read_bytes()
+        inspected = composition.inspect(verbose=True)
+        self.assertIn("ACTION REQUIRED", inspected.output)
+        self.assertIn("action_id: action-123", inspected.output)
+        self.assertEqual(self.state_file.read_bytes(), before)
+        with self.assertRaisesRegex(Exception, "unknown"):
+            composition.approve("future-action")
+        approved = composition.approve("action-123")
+        self.assertIn("status: approved", approved.output)
+        self.assertIs(
+            store.load().human_actions[0].status, HumanActionStatus.APPROVED
+        )
+        with self.assertRaisesRegex(Exception, "already closed"):
+            composition.approve("action-123")
+
+    def test_reject_never_resumes_project(self):
+        composition = self.init()
+        store = JsonProjectStateStore(self.state_file)
+        state = store.load()
+        ids = iter(("source", "requested"))
+        store.save(
+            request_human_action(
+                replace(state, project=replace(state.project, status=ProjectStatus.RUNNING)),
+                category=HumanActionCategory.EXTERNAL_SIDE_EFFECT,
+                summary="Push requested",
+                requested_action="Review push",
+                risk="Remote mutation",
+                task_id=None,
+                operation_time=datetime.now(UTC),
+                action_id="action-reject",
+                event_id_factory=lambda: next(ids),
+                source_event_types=("task.human_required",),
+            )
+        )
+        composition.reject("action-reject")
+        updated = store.load()
+        self.assertIs(updated.project.status, ProjectStatus.HUMAN_REQUIRED)
+        self.assertIs(updated.human_actions[0].status, HumanActionStatus.REJECTED)
+
 
 class CliProcessBoundaryTests(unittest.TestCase):
     def invoke(self, argv, commands, environment=None):
@@ -198,6 +262,20 @@ class CliProcessBoundaryTests(unittest.TestCase):
         self.assertEqual(output, "ok\n")
         self.assertEqual(errors, "")
         self.assertEqual(commands.calls, [("status", ())])
+
+    def test_dispatches_human_resolution_commands(self):
+        cases = (
+            (["inspect", "--verbose"], "inspect"),
+            (["approve", "action-1"], "approve"),
+            (["reject", "action-1"], "reject"),
+            (["resolve", "action-1", "--strategy", "acknowledge"], "resolve"),
+        )
+        for argv, expected in cases:
+            with self.subTest(argv=argv):
+                commands = _FakeCommands()
+                code, _, _ = self.invoke(argv, commands)
+                self.assertEqual(code, 0)
+                self.assertEqual(commands.calls[0][0], expected)
 
     def test_invalid_change_shape_uses_usage_exit_code(self):
         code, _, errors = self.invoke(["change"], _FakeCommands())

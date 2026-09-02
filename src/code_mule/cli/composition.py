@@ -10,8 +10,18 @@ from uuid import uuid4
 
 from openai import DefaultHttpx2Client, OpenAI
 
-from code_mule.domain.enums import ChangeRequestStatus, ProjectStatus, TaskStatus
+from code_mule.domain.enums import (
+    ChangeRequestStatus,
+    HumanResolutionStrategy,
+    ProjectStatus,
+    TaskStatus,
+)
 from code_mule.domain.models import Project
+from code_mule.human import (
+    HumanResolutionError,
+    HumanResolutionService,
+    pending_action,
+)
 from code_mule.orchestrator import (
     ChangeCommand,
     InvalidBossCommand,
@@ -278,6 +288,111 @@ class ProductionCliComposition:
         except InvalidBossCommand as error:
             raise InvalidCliProjectState("resume is invalid for current state") from error
         return CliCommandResult(CliExitCode.SUCCESS, (result.message,))
+
+    def inspect(self, verbose: bool = False) -> CliCommandResult:
+        state = self._load()
+        try:
+            action = pending_action(state)
+        except ValueError as error:
+            raise InvalidCliProjectState("human action state is ambiguous") from error
+        if action is None:
+            raise InvalidCliProjectState("no pending HumanAction")
+        task = action.task_id or "-"
+        lines = (
+            "ACTION REQUIRED",
+            f"Category   {action.category.value.replace('_', ' ').title()}",
+            f"Project    {action.project_id}",
+            f"Task       {task}",
+            f"Summary    {action.summary}",
+            f"Request    {action.requested_action}",
+            f"Risk       {action.risk}",
+            f"Created    {action.created_at.isoformat()}",
+            "",
+            "No action has been executed.",
+        )
+        if action.category.value in {"worker_approval", "external_side_effect"}:
+            lines += (
+                "",
+                "Approve:",
+                f"  code-mule approve {action.id}",
+                "Reject:",
+                f"  code-mule reject {action.id}",
+            )
+        else:
+            lines += (
+                "",
+                "Resolve:",
+                f"  code-mule resolve {action.id} --strategy <strategy>",
+            )
+        if verbose:
+            lines += (
+                "",
+                f"action_id: {action.id}",
+                f"status: {action.status.value}",
+                f"task_id: {action.task_id or '-'}",
+            )
+        return CliCommandResult(CliExitCode.SUCCESS, lines)
+
+    def approve(self, action_id: str) -> CliCommandResult:
+        try:
+            state = self._human_resolution().approve(action_id)
+        except HumanResolutionError as error:
+            raise InvalidCliProjectState(str(error)) from error
+        action = self._action(state, action_id)
+        return CliCommandResult(
+            CliExitCode.SUCCESS,
+            (
+                f"action_id: {action.id}",
+                f"status: {action.status.value}",
+                "handoff: approved; Worker session recovery is not available",
+                "project_status: human_required",
+            ),
+        )
+
+    def reject(self, action_id: str) -> CliCommandResult:
+        try:
+            state = self._human_resolution().reject(action_id)
+        except HumanResolutionError as error:
+            raise InvalidCliProjectState(str(error)) from error
+        action = self._action(state, action_id)
+        return CliCommandResult(
+            CliExitCode.SUCCESS,
+            (
+                f"action_id: {action.id}",
+                f"status: {action.status.value}",
+                "project_status: human_required",
+            ),
+        )
+
+    def resolve(
+        self, action_id: str, strategy: HumanResolutionStrategy
+    ) -> CliCommandResult:
+        try:
+            state = self._human_resolution().resolve(action_id, strategy)
+        except HumanResolutionError as error:
+            raise InvalidCliProjectState(str(error)) from error
+        action = self._action(state, action_id)
+        return CliCommandResult(
+            CliExitCode.SUCCESS,
+            (
+                f"action_id: {action.id}",
+                f"status: {action.status.value}",
+                f"strategy: {strategy.value}",
+                f"project_status: {state.project.status.value}",
+            ),
+        )
+
+    def _human_resolution(self) -> HumanResolutionService:
+        return HumanResolutionService(
+            self._store,
+            clock=lambda: datetime.now(UTC),
+            event_id_factory=lambda: _id("human-event"),
+            resolution_id_factory=lambda: _id("resolution"),
+        )
+
+    @staticmethod
+    def _action(state: ProjectState, action_id: str):
+        return next(action for action in state.human_actions if action.id == action_id)
 
     def _runtime(self, state: ProjectState) -> RuntimeComposition:
         self._workspace(state)

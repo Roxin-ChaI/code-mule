@@ -83,7 +83,9 @@ export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
 ```
 
 The formal Boss CLI also provides `ask`, `change`, `change --apply`, `pause`,
-and `resume`. See [Boss CLI](docs/cli.md) for state behavior, Human Gates,
+`resume`, `inspect`, `approve`, `reject`, and `resolve`. See
+[Boss CLI](docs/cli.md) and [Human Resolution](docs/human-resolution.md) for
+action-scoped approval, state behavior, Human Gates,
 environment variables, exit codes, and the manual real E2E.
 
 ## Manual DeepSeek E2E

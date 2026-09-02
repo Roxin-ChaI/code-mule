@@ -3,6 +3,8 @@
 import argparse
 from pathlib import Path
 
+from code_mule.domain.enums import HumanResolutionStrategy
+
 
 DEFAULT_STATE_FILE = Path(".code-mule/project-state.json")
 
@@ -52,6 +54,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     resume = commands.add_parser("resume", help="resume a Boss-paused project")
     _state_file(resume)
+
+    inspect = commands.add_parser("inspect", help="inspect the pending human action")
+    inspect.add_argument("--verbose", action="store_true")
+    _state_file(inspect)
+
+    approve = commands.add_parser("approve", help="approve one specific pending action")
+    approve.add_argument("action_id")
+    _state_file(approve)
+
+    reject = commands.add_parser("reject", help="reject one specific pending action")
+    reject.add_argument("action_id")
+    _state_file(reject)
+
+    resolve = commands.add_parser("resolve", help="resolve a non-approval action")
+    resolve.add_argument("action_id")
+    resolve.add_argument(
+        "--strategy",
+        required=True,
+        choices=(
+            HumanResolutionStrategy.RETRY_TASK.value,
+            HumanResolutionStrategy.FAIL_PROJECT.value,
+            HumanResolutionStrategy.ACKNOWLEDGE.value,
+        ),
+    )
+    _state_file(resolve)
     return parser
 
 

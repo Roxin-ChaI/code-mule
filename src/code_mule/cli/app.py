@@ -7,6 +7,8 @@ import sys
 import traceback
 from typing import Protocol, TextIO
 
+from code_mule.domain.enums import HumanResolutionStrategy
+
 from .contracts import CliCommandResult, CliError, CliExitCode, CliUsageError
 from .parser import build_parser
 
@@ -20,6 +22,10 @@ class BossCliCommands(Protocol):
     def apply_change(self) -> CliCommandResult: ...
     def pause(self) -> CliCommandResult: ...
     def resume(self) -> CliCommandResult: ...
+    def inspect(self, verbose: bool) -> CliCommandResult: ...
+    def approve(self, action_id: str) -> CliCommandResult: ...
+    def reject(self, action_id: str) -> CliCommandResult: ...
+    def resolve(self, action_id: str, strategy: HumanResolutionStrategy) -> CliCommandResult: ...
 
 
 CompositionFactory = Callable[[Path, Mapping[str, str], TextIO, TextIO], BossCliCommands]
@@ -67,6 +73,17 @@ def _dispatch(commands: BossCliCommands, arguments: object) -> CliCommandResult:
         return commands.pause()
     if command == "resume":
         return commands.resume()
+    if command == "inspect":
+        return commands.inspect(getattr(arguments, "verbose"))
+    if command == "approve":
+        return commands.approve(getattr(arguments, "action_id"))
+    if command == "reject":
+        return commands.reject(getattr(arguments, "action_id"))
+    if command == "resolve":
+        return commands.resolve(
+            getattr(arguments, "action_id"),
+            HumanResolutionStrategy(getattr(arguments, "strategy")),
+        )
     raise CliUsageError("unsupported command")
 
 

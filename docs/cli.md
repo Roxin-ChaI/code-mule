@@ -43,6 +43,12 @@ overwrites an existing state file and persists an absolute Worker workspace.
 - `pause`: applies the existing Boss PAUSE transition.
 - `resume`: resumes only PAUSED_BY_BOSS after workspace, Plan, and task ownership
   recovery checks. It never bypasses HUMAN_REQUIRED.
+- `inspect`: reads the unique pending typed HumanAction and shows its request,
+  risk, scope, and action-specific next command. `--verbose` adds internal IDs.
+- `approve ACTION_ID` / `reject ACTION_ID`: closes one exact approval action;
+  approval cannot be reused and rejection never executes the operation.
+- `resolve ACTION_ID --strategy STRATEGY`: handles non-approval gates with an
+  explicit `acknowledge`, `fail_project`, or permitted `retry_task` strategy.
 
 `run` and `change --apply` render live progress. Other commands use concise
 structured text. Errors go to stderr. `--debug` before the command adds a
@@ -63,8 +69,10 @@ submission, `pause`, and `resume` do not require an API key.
 - `4`: human action required
 - `5`: provider or Worker failure
 
-HUMAN_REQUIRED is a fail-closed Human Gate. Inspect `status` and persisted
-events; neither `run` nor `resume` silently clears it.
+HUMAN_REQUIRED is a fail-closed Human Gate. Use `inspect` and an action-scoped
+decision; neither `run` nor `resume` silently clears it. See
+[Human Resolution and Approval](human-resolution.md) for categories, audit
+events, strategy restrictions, and the Worker session recovery limitation.
 
 ## Real manual E2E
 

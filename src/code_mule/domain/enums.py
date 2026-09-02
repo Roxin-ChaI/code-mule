@@ -76,6 +76,8 @@ class HumanActionStatus(StrEnum):
 
 
 class HumanResolutionStrategy(StrEnum):
+    APPROVE = "approve"
+    REJECT = "reject"
     RETRY_TASK = "retry_task"
     FAIL_PROJECT = "fail_project"
     ACKNOWLEDGE = "acknowledge"

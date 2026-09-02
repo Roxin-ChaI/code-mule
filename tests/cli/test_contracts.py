@@ -38,6 +38,10 @@ class CliContractTests(unittest.TestCase):
             (["change", "--apply"], "change"),
             (["pause"], "pause"),
             (["resume"], "resume"),
+            (["inspect"], "inspect"),
+            (["approve", "action-1"], "approve"),
+            (["reject", "action-1"], "reject"),
+            (["resolve", "action-1", "--strategy", "acknowledge"], "resolve"),
         )
         for arguments, expected in cases:
             with self.subTest(arguments=arguments):
