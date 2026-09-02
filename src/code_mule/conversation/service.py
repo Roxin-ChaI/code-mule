@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Callable, Protocol
 
-from code_mule.cli.contracts import CliCommandResult, CliError
+from code_mule.cli.contracts import CliCommandResult, CliError, CliExitCode
 from code_mule.domain.enums import (
     HumanActionStatus,
     HumanResolutionStrategy,
@@ -96,17 +96,7 @@ class BossConversationService:
         if intent is BossIntent.QUERY_GENERAL:
             return self._command_reply(intent, lambda: self._commands.ask(routed.normalized_request))
         if intent is BossIntent.CHANGE:
-            reply = self._command_reply(
-                intent, lambda: self._commands.change(routed.normalized_request)
-            )
-            latest = self._state_loader()
-            change_id = latest.change_requests[-1].id if latest.change_requests else None
-            return ConversationReply(
-                intent,
-                reply.lines
-                + ("", "Change recorded. Apply impact analysis explicitly when ready."),
-                referenced_change_id=change_id,
-            )
+            return self._change_reply(state, routed.normalized_request)
         if intent is BossIntent.PAUSE:
             return self._command_reply(intent, self._commands.pause)
         if intent is BossIntent.RESUME:
@@ -157,6 +147,53 @@ class BossConversationService:
                 ),
             )
         return ConversationReply(intent, result.output or ("Done.",))
+
+    def _change_reply(
+        self, state: ProjectState, request: str
+    ) -> ConversationReply:
+        existing_ids = {change.id for change in state.change_requests}
+        try:
+            result = self._commands.change(request)
+        except CliError as error:
+            return ConversationReply(
+                BossIntent.CHANGE,
+                (
+                    "That change request is not valid in the current project state.",
+                    error.public_message,
+                    "No project state was changed.",
+                ),
+            )
+        if result.exit_code is not CliExitCode.SUCCESS:
+            return ConversationReply(
+                BossIntent.CHANGE,
+                (
+                    "The change command did not report a successful typed outcome.",
+                    "No change success was accepted.",
+                ),
+            )
+        latest = self._state_loader()
+        added = tuple(
+            change
+            for change in latest.change_requests
+            if change.id not in existing_ids
+        )
+        if (
+            latest.project.status is not ProjectStatus.CHANGE_REQUESTED
+            or len(added) != 1
+        ):
+            return ConversationReply(
+                BossIntent.CHANGE,
+                (
+                    "The change command did not produce a valid CHANGE_REQUESTED outcome.",
+                    "No change success was accepted.",
+                ),
+            )
+        return ConversationReply(
+            BossIntent.CHANGE,
+            result.output
+            + ("", "Change recorded. Apply impact analysis explicitly when ready."),
+            referenced_change_id=added[0].id,
+        )
 
     def _inspect_reply(self, state: ProjectState) -> ConversationReply:
         pending = self._pending_actions(state)

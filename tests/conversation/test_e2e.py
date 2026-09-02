@@ -6,7 +6,13 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from code_mule.cli.composition import ProductionCliComposition
-from code_mule.conversation import BossIntent, RoutedIntent
+from code_mule.conversation import (
+    BossConversationService,
+    BossIntent,
+    BossSession,
+    DeterministicBossIntentRouter,
+    RoutedIntent,
+)
 from code_mule.domain import Milestone, Plan, PlanStatus, ProjectStatus, Task, TaskStatus
 from code_mule.state.store import JsonProjectStateStore
 
@@ -26,6 +32,11 @@ class ScriptedRouter:
             "先暂停": RoutedIntent(BossIntent.PAUSE, "pause"),
         }
         return routes[message]
+
+
+class FixedChangeRouter:
+    def route(self, message, session):
+        return RoutedIntent(BossIntent.CHANGE, message)
 
 
 class LocalBossChatE2E(unittest.TestCase):
@@ -102,6 +113,115 @@ class LocalBossChatE2E(unittest.TestCase):
             self.assertEqual(len(final.change_requests), 1)
             self.assertEqual(final.change_requests[0].description, "增加 multiply")
             self.assertNotIn("project_status: change_requested", rendered)
+
+
+class ChangeResponseConsistencyE2E(unittest.TestCase):
+    def setUp(self):
+        self.temporary = TemporaryDirectory()
+        root = Path(self.temporary.name)
+        self.workspace = root / "workspace"
+        self.workspace.mkdir()
+        self.state_file = root / "project-state.json"
+        self.composition = ProductionCliComposition(
+            self.state_file,
+            environment={},
+            stdout=StringIO(),
+            stderr=StringIO(),
+        )
+        self.composition.init_project(
+            "change-chat", "Change Chat", self.workspace
+        )
+        self.store = JsonProjectStateStore(self.state_file)
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def conversation(self, router):
+        state = self.store.load()
+        return BossConversationService(
+            state_loader=self.store.load,
+            commands=self.composition,
+            router=router,
+            session=BossSession(state.project.id),
+        )
+
+    def test_running_change_reports_success_only_after_persisted_transition(self):
+        state = self.store.load()
+        self.store.save(
+            replace(
+                state,
+                project=replace(state.project, status=ProjectStatus.RUNNING),
+            )
+        )
+
+        reply = self.conversation(FixedChangeRouter()).handle(
+            "再加一个导出 JSON 的功能"
+        )
+
+        final = self.store.load()
+        rendered = "\n".join(reply.lines)
+        self.assertEqual(final.project.status, ProjectStatus.CHANGE_REQUESTED)
+        self.assertEqual(len(final.change_requests), 1)
+        self.assertIn("Change recorded", rendered)
+        self.assertIn("Apply impact analysis", rendered)
+        self.assertEqual(reply.referenced_change_id, final.change_requests[0].id)
+
+    def test_done_change_reports_only_failure_and_keeps_state_unchanged(self):
+        state = self.store.load()
+        self.store.save(
+            replace(state, project=replace(state.project, status=ProjectStatus.DONE))
+        )
+        before = self.store.load()
+
+        reply = self.conversation(FixedChangeRouter()).handle(
+            "再加一个导出 JSON 的功能"
+        )
+
+        rendered = "\n".join(reply.lines)
+        self.assertEqual(self.store.load(), before)
+        self.assertIn("not valid in the current project state", rendered)
+        self.assertIn("No project state was changed", rendered)
+        self.assertNotIn("Change recorded", rendered)
+        self.assertNotIn("impact analysis", rendered)
+        self.assertIsNone(reply.referenced_change_id)
+
+    def test_human_required_change_has_no_success_text(self):
+        state = self.store.load()
+        self.store.save(
+            replace(
+                state,
+                project=replace(
+                    state.project, status=ProjectStatus.HUMAN_REQUIRED
+                ),
+            )
+        )
+        before = self.store.load()
+
+        reply = self.conversation(FixedChangeRouter()).handle("增加导出 JSON")
+
+        rendered = "\n".join(reply.lines)
+        self.assertEqual(self.store.load(), before)
+        self.assertNotIn("Change recorded", rendered)
+        self.assertNotIn("impact analysis", rendered)
+        self.assertIsNone(reply.referenced_change_id)
+
+    def test_ambiguous_change_language_is_unknown_and_read_only(self):
+        state = self.store.load()
+        self.store.save(
+            replace(
+                state,
+                project=replace(state.project, status=ProjectStatus.RUNNING),
+            )
+        )
+        before = self.store.load()
+
+        reply = self.conversation(DeterministicBossIntentRouter()).handle(
+            "也许可以考虑一个导出功能"
+        )
+
+        self.assertIs(reply.intent, BossIntent.UNKNOWN)
+        self.assertEqual(self.store.load(), before)
+        self.assertNotIn("Change recorded", "\n".join(reply.lines))
 
 
 if __name__ == "__main__":
