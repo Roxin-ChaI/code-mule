@@ -29,6 +29,14 @@ from code_mule.human import (
     HumanResolutionService,
     pending_action,
 )
+from code_mule.execution import (
+    ExecutionAlreadyOwned,
+    ExecutionRecoveryRequired,
+)
+from code_mule.execution.service import (
+    ExecutionOwnershipHandle,
+    ExecutionOwnershipService,
+)
 from code_mule.orchestrator import (
     ChangeCommand,
     InvalidBossCommand,
@@ -78,6 +86,8 @@ from .contracts import (
     CliExecutionFailure,
     CliExitCode,
     CliHumanActionRequired,
+    CliProjectAlreadyRunning,
+    CliRecoveryRequired,
     InvalidCliProjectState,
 )
 
@@ -185,12 +195,21 @@ class ProductionCliComposition:
                 raise InvalidCliProjectState(
                     "IDLE project requires run --objective"
                 )
-            runtime = self._runtime(state)
-            with runtime.renderer:
-                planning = runtime.planning.plan(
-                    ProjectPlanningRequest(state.project.id, objective)
-                )
-                outcome = runtime.execution.run() if planning.ready_for_execution else None
+            try:
+                with self._acquire_execution(verbose) as ownership:
+                    runtime = self._runtime(self._load(), ownership)
+                    with runtime.renderer:
+                        planning = runtime.planning.plan(
+                            ProjectPlanningRequest(state.project.id, objective)
+                        )
+                        ownership.heartbeat()
+                        outcome = (
+                            runtime.execution.run()
+                            if planning.ready_for_execution
+                            else None
+                        )
+            except KeyboardInterrupt:
+                self._raise_interrupted()
             final = self._load()
             return self._execution_result(final, outcome, verbose=verbose)
         if status is ProjectStatus.RUNNING:
@@ -198,9 +217,13 @@ class ProductionCliComposition:
                 raise InvalidCliProjectState(
                     "--objective is only valid for an IDLE project"
                 )
-            runtime = self._runtime(state)
-            with runtime.renderer:
-                outcome = runtime.execution.run()
+            try:
+                with self._acquire_execution(verbose) as ownership:
+                    runtime = self._runtime(self._load(), ownership)
+                    with runtime.renderer:
+                        outcome = runtime.execution.run()
+            except KeyboardInterrupt:
+                self._raise_interrupted()
             return self._execution_result(self._load(), outcome, verbose=verbose)
         if status is ProjectStatus.CHANGE_REQUESTED:
             raise InvalidCliProjectState(
@@ -264,11 +287,15 @@ class ProductionCliComposition:
             raise InvalidCliProjectState(
                 "change --apply requires exactly one pending ChangeRequest"
             )
-        runtime = self._runtime(state)
-        with runtime.renderer:
-            outcome = runtime.change_execution.apply_and_resume(
-                ChangeReplanningRequest(state.project.id, pending[0].id)
-            )
+        try:
+            with self._acquire_execution(verbose) as ownership:
+                runtime = self._runtime(self._load(), ownership)
+                with runtime.renderer:
+                    outcome = runtime.change_execution.apply_and_resume(
+                        ChangeReplanningRequest(state.project.id, pending[0].id)
+                    )
+        except KeyboardInterrupt:
+            self._raise_interrupted()
         final = self._load()
         stop_reason = getattr(getattr(outcome, "execution", None), "stop_reason", None)
         stop_value = None if stop_reason is None else stop_reason.value
@@ -310,7 +337,10 @@ class ProductionCliComposition:
             )
         self._validate_resume_state(state)
         try:
-            result = self._orchestrator().resume(ResumeCommand(state.project.id))
+            with self._acquire_execution(verbose):
+                result = self._orchestrator().resume(
+                    ResumeCommand(state.project.id)
+                )
         except InvalidBossCommand as error:
             raise InvalidCliProjectState("resume is invalid for current state") from error
         return CliCommandResult(
@@ -444,7 +474,11 @@ class ProductionCliComposition:
     def _action(state: ProjectState, action_id: str):
         return next(action for action in state.human_actions if action.id == action_id)
 
-    def _runtime(self, state: ProjectState) -> RuntimeComposition:
+    def _runtime(
+        self,
+        state: ProjectState,
+        ownership: ExecutionOwnershipHandle | None = None,
+    ) -> RuntimeComposition:
         self._workspace(state)
         if self._runtime_factory is not None:
             return self._runtime_factory(state)
@@ -467,10 +501,13 @@ class ProductionCliComposition:
                 DeepSeekSupervisorConfig(model=model, max_output_tokens=None),
             )
         )
-        return self._compose_runtime(state, supervisor)
+        return self._compose_runtime(state, supervisor, ownership)
 
     def _compose_runtime(
-        self, state: ProjectState, supervisor: SupervisorService
+        self,
+        state: ProjectState,
+        supervisor: SupervisorService,
+        ownership: ExecutionOwnershipHandle | None = None,
     ) -> RuntimeComposition:
         workspace = self._workspace(state)
         clock = lambda: datetime.now(UTC)
@@ -499,6 +536,16 @@ class ProductionCliComposition:
                 event_id_factory=lambda: _id("task-event"),
                 config=TaskCycleConfig(max_attempts=2),
                 progress_sink=renderer,
+                worker_identity_started=(
+                    None
+                    if ownership is None
+                    else ownership.record_worker_identity
+                ),
+                worker_identity_cleared=(
+                    None
+                    if ownership is None
+                    else ownership.clear_worker_identity
+                ),
             )
 
         execution = ProjectExecutionService(
@@ -548,6 +595,67 @@ class ProductionCliComposition:
             ) from error
         except InvalidProjectState as error:
             raise InvalidCliProjectState("project state is invalid") from error
+
+    def _ownership(self) -> ExecutionOwnershipService:
+        return ExecutionOwnershipService(
+            store=self._store,
+            lock_path=self._state_file.parent / "execution.lock",
+            clock=lambda: datetime.now(UTC),
+            lease_id_factory=lambda: _id("lease"),
+            owner_id_factory=lambda: _id("owner"),
+            event_id_factory=lambda: _id("execution-event"),
+        )
+
+    def _acquire_execution(
+        self, verbose: bool
+    ) -> ExecutionOwnershipHandle:
+        try:
+            return self._ownership().acquire()
+        except ExecutionAlreadyOwned as error:
+            lease = error.lease
+            state = self._load()
+            current = next(
+                (
+                    task
+                    for task in state.tasks
+                    if task.id == state.project.current_task_id
+                ),
+                None,
+            )
+            lines = [
+                "Another execution owner is active.",
+                f"Started     {lease.acquired_at.isoformat()}",
+                f"Current     {current.title if current is not None else 'Task boundary'}",
+                "No Worker was started by this command.",
+            ]
+            if verbose:
+                lines.extend(
+                    (
+                        f"owner_id: {lease.owner_id}",
+                        f"lease_id: {lease.id}",
+                        f"pid: {lease.pid}",
+                        f"codex_thread_id: {lease.codex_thread_id or '-'}",
+                    )
+                )
+            raise CliProjectAlreadyRunning("\n".join(lines)) from error
+        except ExecutionRecoveryRequired as error:
+            raise CliRecoveryRequired(
+                "Previous execution ended unexpectedly.\n"
+                "The current Task cannot be safely assumed complete.\n"
+                f"Recovery classification: {error.decision.classification.value}\n"
+                "Inspect and resolve the pending Human Action before continuing."
+            ) from error
+
+    def _raise_interrupted(self) -> None:
+        state = self._load()
+        if state.project.status is ProjectStatus.HUMAN_REQUIRED:
+            raise CliRecoveryRequired(
+                "Execution was interrupted during an active Task.\n"
+                "Repository and Worker side effects require human inspection."
+            )
+        raise InvalidCliProjectState(
+            "execution interrupted at a safe boundary; ownership was released"
+        )
 
     def _orchestrator(self) -> OrchestratorService:
         return OrchestratorService(

@@ -44,6 +44,9 @@ class ProjectStateStore(Protocol):
 
 
 class WorkerSession(Protocol):
+    @property
+    def thread_id(self) -> str | None: ...
+
     def start(self) -> None: ...
 
     def execute(
@@ -76,6 +79,8 @@ class TaskCycleService:
         event_id_factory: Callable[[], str],
         config: TaskCycleConfig,
         progress_sink: ProgressSink | None = None,
+        worker_identity_started: Callable[[str, str, int], None] | None = None,
+        worker_identity_cleared: Callable[[str], None] | None = None,
     ) -> None:
         self._worker_session_factory = worker_session_factory
         self._supervisor = supervisor
@@ -86,6 +91,8 @@ class TaskCycleService:
         self._event_id_factory = event_id_factory
         self._config = config
         self._progress = resilient_progress_sink(progress_sink)
+        self._worker_identity_started = worker_identity_started
+        self._worker_identity_cleared = worker_identity_cleared
 
     @property
     def progress_errors(self) -> tuple[BaseException, ...]:
@@ -124,6 +131,18 @@ class TaskCycleService:
                 task = self._task(state, request.task.id)
                 state = self._record_execution_started(state, task)
                 attempt = task.execution_attempts + 1
+                if self._worker_identity_started is not None:
+                    thread_id = session.thread_id
+                    if thread_id in (None, ""):
+                        raise InvalidTaskCycleState(
+                            "started Worker session must expose a Codex thread ID"
+                        )
+                    self._worker_identity_started(task.id, thread_id, attempt)
+                    # The ownership callback persists Codex recovery identity in
+                    # ProjectState. Continue from that latest snapshot so a
+                    # pre-report Worker failure cannot overwrite the identity.
+                    state = self._store.load()
+                    task = self._task(state, task.id)
                 self._emit_progress(
                     state,
                     task,
@@ -233,6 +252,7 @@ class TaskCycleService:
 
                 if review.decision is SupervisorDecisionType.CONTINUE:
                     self._complete_task(state, persisted_task, review.decision)
+                    self._clear_worker_identity(task.id)
                     self._emit_progress(
                         state,
                         persisted_task,
@@ -253,6 +273,7 @@ class TaskCycleService:
 
                 if review.decision is SupervisorDecisionType.DONE:
                     self._complete_task(state, persisted_task, review.decision)
+                    self._clear_worker_identity(task.id)
                     self._emit_progress(
                         state,
                         persisted_task,
@@ -337,6 +358,10 @@ class TaskCycleService:
                     )
         finally:
             session.close()
+
+    def _clear_worker_identity(self, task_id: str) -> None:
+        if self._worker_identity_cleared is not None:
+            self._worker_identity_cleared(task_id)
 
     def _emit_worker_failure(
         self, state: ProjectState, task: Task, error: CodexWorkerError

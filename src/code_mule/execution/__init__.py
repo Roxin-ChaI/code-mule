@@ -9,6 +9,7 @@ from .contracts import (
     RecoveryClassification,
     RecoveryDecision,
 )
+from .lock import LocalExecutionLock, LocalExecutionLockBusy
 
 __all__ = [
     "ExecutionAlreadyOwned",
@@ -18,4 +19,6 @@ __all__ = [
     "ExecutionRecoveryRequired",
     "RecoveryClassification",
     "RecoveryDecision",
+    "LocalExecutionLock",
+    "LocalExecutionLockBusy",
 ]

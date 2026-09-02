@@ -9,6 +9,7 @@ import unittest
 from code_mule.cli import (
     CliCommandResult,
     CliExitCode,
+    CliProjectAlreadyRunning,
     InvalidCliProjectState,
     main,
 )
@@ -75,6 +76,23 @@ class _FakeExecution:
         plans = tuple(replace(plan, status=PlanStatus.COMPLETED) for plan in state.plans)
         self.store.save(replace(state, project=replace(state.project, status=ProjectStatus.DONE, current_task_id=None), tasks=tasks, plans=plans))
         return SimpleNamespace(stop_reason=ProjectExecutionStopReason.PLAN_COMPLETED, human_action_required=False)
+
+
+class _InterruptingExecution:
+    def __init__(self, store):
+        self.store = store
+
+    def run(self):
+        state = self.store.load()
+        task = replace(state.tasks[0], status=TaskStatus.IN_PROGRESS)
+        self.store.save(
+            replace(
+                state,
+                project=replace(state.project, current_task_id=task.id),
+                tasks=(task,),
+            )
+        )
+        raise KeyboardInterrupt
 
 
 class _FakeChangeExecution:
@@ -148,6 +166,133 @@ class ProductionCommandTests(unittest.TestCase):
         result = composition.run(None)
         self.assertEqual(result.exit_code, CliExitCode.SUCCESS)
         self.assertEqual(store.load().project.status, ProjectStatus.DONE)
+
+    def test_live_owner_blocks_execution_but_allows_status_and_change(self):
+        runtime_calls = []
+
+        def runtime_factory(state):
+            runtime_calls.append(state.project.id)
+            return self.runtime_factory(state)
+
+        composition = self.composition(runtime_factory)
+        self.init(composition)
+        store = JsonProjectStateStore(self.state_file)
+        state = store.load()
+        now = datetime.now(UTC)
+        plan = Plan(
+            "P1",
+            state.project.id,
+            1,
+            PlanStatus.ACTIVE,
+            (),
+            ("M1",),
+            now,
+        )
+        milestone = Milestone("M1", plan.id, "M", "active", ("T1",))
+        task = Task(
+            "T1",
+            "M1",
+            "T",
+            "D",
+            TaskStatus.PENDING,
+            (),
+            ("done",),
+            0,
+            now,
+            now,
+        )
+        store.save(
+            replace(
+                state,
+                project=replace(
+                    state.project,
+                    status=ProjectStatus.RUNNING,
+                    active_plan_id=plan.id,
+                ),
+                plans=(plan,),
+                milestones=(milestone,),
+                tasks=(task,),
+            )
+        )
+        owner = composition._ownership().acquire()
+        try:
+            self.assertEqual(composition.status().exit_code, CliExitCode.SUCCESS)
+            self.assertEqual(
+                composition.change("Add export").exit_code,
+                CliExitCode.SUCCESS,
+            )
+            with self.assertRaises(CliProjectAlreadyRunning):
+                composition.apply_change()
+            self.assertEqual(runtime_calls, [])
+        finally:
+            owner.close()
+
+    def test_live_owner_allows_boss_pause_without_starting_runtime(self):
+        composition = self.init()
+        store = JsonProjectStateStore(self.state_file)
+        state = store.load()
+        now = datetime.now(UTC)
+        plan = Plan(
+            "P1", state.project.id, 1, PlanStatus.ACTIVE, (), ("M1",), now
+        )
+        milestone = Milestone("M1", plan.id, "M", "active", ("T1",))
+        task = Task(
+            "T1", "M1", "T", "D", TaskStatus.PENDING, (), ("done",), 0,
+            now, now,
+        )
+        store.save(
+            replace(
+                state,
+                project=replace(
+                    state.project,
+                    status=ProjectStatus.RUNNING,
+                    active_plan_id=plan.id,
+                ),
+                plans=(plan,),
+                milestones=(milestone,),
+                tasks=(task,),
+            )
+        )
+        owner = composition._ownership().acquire()
+        try:
+            self.assertEqual(composition.pause().exit_code, CliExitCode.SUCCESS)
+            self.assertIs(
+                store.load().project.status,
+                ProjectStatus.PAUSED_BY_BOSS,
+            )
+            with self.assertRaises(CliProjectAlreadyRunning):
+                composition.resume()
+            self.assertIs(
+                store.load().project.status,
+                ProjectStatus.PAUSED_BY_BOSS,
+            )
+        finally:
+            owner.close()
+
+    def test_keyboard_interrupt_releases_owner_and_requires_safe_recovery(self):
+        def runtime_factory(state):
+            store = JsonProjectStateStore(self.state_file)
+            return RuntimeComposition(
+                supervisor=object(),
+                worker_service=object(),
+                planning=_FakePlanning(store),
+                execution=_InterruptingExecution(store),
+                change_execution=_FakeChangeExecution(store),
+                renderer=ConsoleProgressRenderer(self.stderr),
+            )
+
+        composition = self.composition(runtime_factory)
+        self.init(composition)
+        with self.assertRaisesRegex(Exception, "interrupted during an active Task"):
+            composition.run("Build it")
+
+        final = JsonProjectStateStore(self.state_file).load()
+        self.assertIs(final.project.status, ProjectStatus.HUMAN_REQUIRED)
+        self.assertEqual(final.execution_leases[-1].status.value, "released")
+        self.assertEqual(
+            final.human_actions[-1].category,
+            HumanActionCategory.RECOVERY_UNCERTAIN,
+        )
 
     def test_status_and_ask_are_read_only_without_api_key(self):
         composition = self.init()
@@ -336,6 +481,15 @@ class CliProcessBoundaryTests(unittest.TestCase):
         self.assertIn("planning state is not recoverable", errors)
         self.assertIn("Next:\n  code-mule status", errors)
         self.assertNotIn("Traceback", errors)
+
+    def test_live_owner_error_has_typed_exit_and_safe_message(self):
+        commands = _FakeCommands(
+            error=CliProjectAlreadyRunning("Another execution owner is active.")
+        )
+        code, _, errors = self.invoke(["run"], commands)
+        self.assertEqual(code, 3)
+        self.assertIn("PROJECT ALREADY RUNNING", errors)
+        self.assertIn("code-mule status", errors)
 
 
 if __name__ == "__main__":

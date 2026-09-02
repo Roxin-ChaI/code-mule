@@ -40,6 +40,14 @@ class CliExecutionFailure(CliError):
     exit_code = CliExitCode.PROVIDER_OR_WORKER_FAILURE
 
 
+class CliProjectAlreadyRunning(InvalidCliProjectState):
+    """Raised before side effects when another local owner holds execution."""
+
+
+class CliRecoveryRequired(CliHumanActionRequired):
+    """Raised when a stale execution cannot be resumed safely."""
+
+
 @dataclass(frozen=True)
 class CliCommandResult:
     exit_code: CliExitCode
@@ -52,6 +60,8 @@ __all__ = [
     "CliExecutionFailure",
     "CliExitCode",
     "CliHumanActionRequired",
+    "CliProjectAlreadyRunning",
+    "CliRecoveryRequired",
     "CliUsageError",
     "InvalidCliProjectState",
 ]

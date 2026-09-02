@@ -15,6 +15,8 @@ from .contracts import (
     CliExecutionFailure,
     CliExitCode,
     CliHumanActionRequired,
+    CliProjectAlreadyRunning,
+    CliRecoveryRequired,
     CliUsageError,
     InvalidCliProjectState,
 )
@@ -103,7 +105,13 @@ def _dispatch(
 
 
 def _print_error(error: CliError, stream: TextIO) -> None:
-    if isinstance(error, CliHumanActionRequired):
+    if isinstance(error, CliProjectAlreadyRunning):
+        title = "PROJECT ALREADY RUNNING"
+        next_command = "code-mule status"
+    elif isinstance(error, CliRecoveryRequired):
+        title = "RECOVERY REQUIRED"
+        next_command = "code-mule inspect"
+    elif isinstance(error, CliHumanActionRequired):
         title = "ACTION REQUIRED"
         next_command = "code-mule inspect"
     elif isinstance(error, CliExecutionFailure):

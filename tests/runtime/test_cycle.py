@@ -9,6 +9,7 @@ from code_mule.domain.enums import (
     TaskStatus,
 )
 from code_mule.domain.models import ExecutionReport
+from code_mule.execution import ExecutionLease, ExecutionLeaseStatus
 from code_mule.orchestrator import (
     ChangeCommand,
     OrchestratorService,
@@ -81,6 +82,10 @@ class FakeWorkerSession:
         self.requests = []
         self.thread_marker = object()
 
+    @property
+    def thread_id(self):
+        return "thread-1"
+
     def start(self):
         self.started += 1
 
@@ -146,6 +151,8 @@ def build_cycle(
     supervisor=None,
     max_attempts=3,
     progress_sink=None,
+    worker_identity_started=None,
+    worker_identity_cleared=None,
 ):
     store = store or FakeStore(cycle_state())
     session = session or FakeWorkerSession()
@@ -168,6 +175,8 @@ def build_cycle(
         event_id_factory=IdFactory("event"),
         config=TaskCycleConfig(max_attempts),
         progress_sink=progress_sink,
+        worker_identity_started=worker_identity_started,
+        worker_identity_cleared=worker_identity_cleared,
     )
     request_task = (
         store.current.tasks[0]
@@ -544,6 +553,56 @@ class TaskCycleFlowTests(unittest.TestCase):
 
 
 class TaskCycleFailureTests(unittest.TestCase):
+    def test_worker_failure_preserves_persisted_recovery_identity(self):
+        base = cycle_state()
+        lease = ExecutionLease(
+            "lease-1",
+            base.project.id,
+            "owner-1",
+            1234,
+            NOW,
+            NOW,
+            ExecutionLeaseStatus.ACTIVE,
+        )
+        store = FakeStore(replace(base, execution_leases=(lease,)))
+
+        def record_identity(task_id, thread_id, attempt):
+            latest = store.load()
+            active = latest.execution_leases[0]
+            store.save(
+                replace(
+                    latest,
+                    execution_leases=(
+                        replace(
+                            active,
+                            current_task_id=task_id,
+                            codex_thread_id=thread_id,
+                            attempt=attempt,
+                        ),
+                    ),
+                )
+            )
+
+        session = FakeWorkerSession([InvalidWorkerReport("malformed JSON")])
+        service, request, _, _, _, _ = build_cycle(
+            store=store,
+            session=session,
+            supervisor=FakeSupervisor([]),
+            worker_identity_started=record_identity,
+        )
+
+        service.execute(request)
+
+        persisted = store.current.execution_leases[0]
+        self.assertEqual(
+            (
+                persisted.current_task_id,
+                persisted.codex_thread_id,
+                persisted.attempt,
+            ),
+            (request.task.id, "thread-1", 1),
+        )
+
     def test_structured_worker_human_gate_is_persisted_without_supervisor(self):
         session = FakeWorkerSession(human_action_required=True)
         supervisor = FakeSupervisor([])
