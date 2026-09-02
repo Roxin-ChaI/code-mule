@@ -6,12 +6,14 @@ from datetime import datetime
 from typing import Protocol
 
 from code_mule.domain.enums import (
+    HumanActionCategory,
     ProjectStatus,
     SupervisorDecisionType,
     TaskStatus,
 )
 from code_mule.domain.models import Decision, ExecutionReport, ProjectEvent, Task
 from code_mule.domain.state_machine import validate_transition
+from code_mule.human import request_human_action
 from code_mule.progress import (
     ProgressEvent,
     ProgressEventType,
@@ -20,7 +22,12 @@ from code_mule.progress import (
 )
 from code_mule.state.models import ProjectState
 from code_mule.supervisor.contracts import ReviewRequest, ReviewResult
-from code_mule.worker.contracts import CodexWorkerError, WorkerTaskRequest
+from code_mule.worker.contracts import (
+    CodexApprovalRequired,
+    CodexUserInputRequired,
+    CodexWorkerError,
+    WorkerTaskRequest,
+)
 
 from .contracts import (
     InvalidTaskCycleState,
@@ -165,6 +172,10 @@ class TaskCycleService:
                         self._task(state, task.id),
                         event_types=("task.human_required",),
                         metadata={"source": "worker_report"},
+                        category=HumanActionCategory.EXTERNAL_SIDE_EFFECT,
+                        summary="Worker reported an operation requiring human review",
+                        requested_action="Inspect and explicitly approve or reject the specific operation",
+                        risk="The operation may have an irreversible external side effect",
                     )
                     self._emit_human_gate(
                         state,
@@ -197,6 +208,16 @@ class TaskCycleService:
                         "Supervisor review failed",
                         attempt=report.attempt,
                         metadata={"error_type": type(error).__name__},
+                    )
+                    self._transition_human_required(
+                        persisted,
+                        persisted_task,
+                        event_types=("supervisor.review_failed", "task.human_required"),
+                        metadata={"error_type": type(error).__name__},
+                        category=HumanActionCategory.SUPERVISOR_FAILURE,
+                        summary="Supervisor review failed",
+                        requested_action="Inspect the failure and choose an explicit resolution",
+                        risk="Execution cannot continue without a trustworthy Supervisor decision",
                     )
                     raise
                 self._emit_progress(
@@ -256,6 +277,10 @@ class TaskCycleService:
                         persisted_task,
                         event_types=("task.human_required",),
                         metadata={"source": "supervisor"},
+                        category=HumanActionCategory.SUPERVISOR_FAILURE,
+                        summary="Supervisor requested human judgment",
+                        requested_action="Inspect the task outcome and choose an explicit resolution",
+                        risk="Continuing without human judgment may violate project constraints",
                     )
                     self._emit_human_gate(
                         state,
@@ -293,6 +318,10 @@ class TaskCycleService:
                             "task.human_required",
                         ),
                         metadata={"max_attempts": str(self._config.max_attempts)},
+                        category=HumanActionCategory.ATTEMPT_LIMIT,
+                        summary="Task reached its configured attempt limit",
+                        requested_action="Choose whether to retry the task or stop the project",
+                        risk="Retrying may repeat work performed by an earlier attempt",
                     )
                     self._emit_human_gate(
                         state,
@@ -562,11 +591,39 @@ class TaskCycleService:
     def _record_worker_failure(
         self, state: ProjectState, task: Task, error: CodexWorkerError
     ) -> ProjectState:
+        category, summary, requested_action, risk = self._worker_failure_action(error)
         return self._transition_human_required(
             state,
             task,
             event_types=("task.execution_failed", "task.human_required"),
             metadata={"error_type": type(error).__name__},
+            category=category,
+            summary=summary,
+            requested_action=requested_action,
+            risk=risk,
+        )
+
+    @staticmethod
+    def _worker_failure_action(error: CodexWorkerError):
+        if isinstance(error, CodexApprovalRequired):
+            return (
+                HumanActionCategory.WORKER_APPROVAL,
+                "Codex Worker requested approval",
+                "Review and approve or reject this specific Worker request",
+                "Approval may authorize an external or destructive operation",
+            )
+        if isinstance(error, CodexUserInputRequired):
+            return (
+                HumanActionCategory.WORKER_INPUT,
+                "Codex Worker requires human input",
+                "Provide the required input, then choose an explicit resolution",
+                "The original Worker session cannot be resumed automatically",
+            )
+        return (
+            HumanActionCategory.RECOVERY_UNCERTAIN,
+            "Codex Worker stopped with uncertain execution ownership",
+            "Inspect repository state before choosing an explicit resolution",
+            "Retrying may duplicate an operation whose outcome is uncertain",
         )
 
     def _transition_human_required(
@@ -576,21 +633,24 @@ class TaskCycleService:
         *,
         event_types: tuple[str, ...],
         metadata: dict[str, str],
+        category: HumanActionCategory,
+        summary: str,
+        requested_action: str,
+        risk: str,
     ) -> ProjectState:
-        validate_transition(state.project.status, ProjectStatus.HUMAN_REQUIRED)
         operation_time = self._clock()
-        events = tuple(
-            self._event(state, task, event_type, operation_time, metadata)
-            for event_type in event_types
-        )
-        new_state = replace(
+        new_state = request_human_action(
             state,
-            project=replace(
-                state.project,
-                status=ProjectStatus.HUMAN_REQUIRED,
-                updated_at=operation_time,
-            ),
-            events=state.events + events,
+            category=category,
+            summary=summary,
+            requested_action=requested_action,
+            risk=risk,
+            task_id=task.id,
+            operation_time=operation_time,
+            action_id=f"action-{self._event_id_factory()}",
+            event_id_factory=self._event_id_factory,
+            source_event_types=event_types,
+            source_metadata=metadata,
         )
         self._store.save(new_state)
         return new_state

@@ -6,6 +6,9 @@ from typing import TypeVar, cast
 
 from code_mule.domain.enums import (
     ChangeRequestStatus,
+    HumanActionCategory,
+    HumanActionStatus,
+    HumanResolutionStrategy,
     PlanStatus,
     ProjectStatus,
     RequirementStatus,
@@ -17,6 +20,8 @@ from code_mule.domain.models import (
     Decision,
     ExecutionReport,
     ImpactAnalysis,
+    HumanAction,
+    HumanResolution,
     Milestone,
     Plan,
     Project,
@@ -29,7 +34,7 @@ from code_mule.domain.models import (
 from .models import ProjectState
 
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 
 class UnsupportedStateSchema(ValueError):
@@ -256,6 +261,34 @@ def _event_to_payload(event: ProjectEvent) -> dict[str, object]:
     }
 
 
+def _human_action_to_payload(action: HumanAction) -> dict[str, object]:
+    return {
+        "id": action.id,
+        "project_id": action.project_id,
+        "task_id": action.task_id,
+        "category": action.category.value,
+        "summary": action.summary,
+        "requested_action": action.requested_action,
+        "risk": action.risk,
+        "status": action.status.value,
+        "created_at": action.created_at.isoformat(),
+        "resolved_at": (
+            None if action.resolved_at is None else action.resolved_at.isoformat()
+        ),
+    }
+
+
+def _human_resolution_to_payload(resolution: HumanResolution) -> dict[str, object]:
+    return {
+        "id": resolution.id,
+        "action_id": resolution.action_id,
+        "project_id": resolution.project_id,
+        "strategy": resolution.strategy.value,
+        "summary": resolution.summary,
+        "created_at": resolution.created_at.isoformat(),
+    }
+
+
 def serialize_project_state(state: ProjectState) -> dict[str, object]:
     """Convert a complete snapshot to a JSON-compatible object."""
 
@@ -282,6 +315,12 @@ def serialize_project_state(state: ProjectState) -> dict[str, object]:
             else _quality_status_to_payload(state.quality_status)
         ),
         "events": [_event_to_payload(item) for item in state.events],
+        "human_actions": [
+            _human_action_to_payload(item) for item in state.human_actions
+        ],
+        "human_resolutions": [
+            _human_resolution_to_payload(item) for item in state.human_resolutions
+        ],
     }
 
 
@@ -493,8 +532,18 @@ def _migrate_v3_to_v4(root: dict[str, object]) -> dict[str, object]:
     )
     project["workspace"] = None
     migrated = dict(root)
-    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
+    migrated["schema_version"] = 4
     migrated["project"] = project
+    return migrated
+
+
+def _migrate_v4_to_v5(root: dict[str, object]) -> dict[str, object]:
+    """Add durable typed HumanAction and HumanResolution collections."""
+
+    migrated = dict(root)
+    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
+    migrated["human_actions"] = []
+    migrated["human_resolutions"] = []
     return migrated
 
 
@@ -732,6 +781,82 @@ def _event_from_payload(value: object) -> ProjectEvent:
     )
 
 
+def _human_action_from_payload(value: object) -> HumanAction:
+    payload = _expect_object(value, "human_action")
+    resolved_value = _field(payload, "resolved_at", "human_action")
+    return HumanAction(
+        id=_expect_str(_field(payload, "id", "human_action"), "human_action.id"),
+        project_id=_expect_str(
+            _field(payload, "project_id", "human_action"),
+            "human_action.project_id",
+        ),
+        task_id=_expect_optional_str(
+            _field(payload, "task_id", "human_action"), "human_action.task_id"
+        ),
+        category=HumanActionCategory(
+            _expect_str(
+                _field(payload, "category", "human_action"),
+                "human_action.category",
+            )
+        ),
+        summary=_expect_str(
+            _field(payload, "summary", "human_action"), "human_action.summary"
+        ),
+        requested_action=_expect_str(
+            _field(payload, "requested_action", "human_action"),
+            "human_action.requested_action",
+        ),
+        risk=_expect_str(
+            _field(payload, "risk", "human_action"), "human_action.risk"
+        ),
+        status=HumanActionStatus(
+            _expect_str(
+                _field(payload, "status", "human_action"), "human_action.status"
+            )
+        ),
+        created_at=_datetime(
+            _field(payload, "created_at", "human_action"),
+            "human_action.created_at",
+        ),
+        resolved_at=(
+            None
+            if resolved_value is None
+            else _datetime(resolved_value, "human_action.resolved_at")
+        ),
+    )
+
+
+def _human_resolution_from_payload(value: object) -> HumanResolution:
+    payload = _expect_object(value, "human_resolution")
+    return HumanResolution(
+        id=_expect_str(
+            _field(payload, "id", "human_resolution"), "human_resolution.id"
+        ),
+        action_id=_expect_str(
+            _field(payload, "action_id", "human_resolution"),
+            "human_resolution.action_id",
+        ),
+        project_id=_expect_str(
+            _field(payload, "project_id", "human_resolution"),
+            "human_resolution.project_id",
+        ),
+        strategy=HumanResolutionStrategy(
+            _expect_str(
+                _field(payload, "strategy", "human_resolution"),
+                "human_resolution.strategy",
+            )
+        ),
+        summary=_expect_str(
+            _field(payload, "summary", "human_resolution"),
+            "human_resolution.summary",
+        ),
+        created_at=_datetime(
+            _field(payload, "created_at", "human_resolution"),
+            "human_resolution.created_at",
+        ),
+    )
+
+
 def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     """Restore a complete snapshot, rejecting unknown or corrupt payloads."""
 
@@ -741,7 +866,7 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     schema_version = root["schema_version"]
     if type(schema_version) is not int:
         raise UnsupportedStateSchema("schema_version must be an integer")
-    if schema_version not in {1, 2, 3, CURRENT_SCHEMA_VERSION}:
+    if schema_version not in {1, 2, 3, 4, CURRENT_SCHEMA_VERSION}:
         raise UnsupportedStateSchema(
             f"unsupported schema_version: {schema_version!r}"
         )
@@ -753,6 +878,9 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
         schema_version = 3
     if schema_version == 3:
         root = _migrate_v3_to_v4(root)
+        schema_version = 4
+    if schema_version == 4:
+        root = _migrate_v4_to_v5(root)
 
     try:
         quality_value = _field(root, "quality_status", "project state")
@@ -810,6 +938,16 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
                 _field(root, "events", "project state"),
                 "events",
                 _event_from_payload,
+            ),
+            human_actions=_tuple_of(
+                _field(root, "human_actions", "project state"),
+                "human_actions",
+                _human_action_from_payload,
+            ),
+            human_resolutions=_tuple_of(
+                _field(root, "human_resolutions", "project state"),
+                "human_resolutions",
+                _human_resolution_from_payload,
             ),
         )
     except InvalidProjectState:

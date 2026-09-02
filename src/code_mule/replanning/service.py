@@ -7,11 +7,13 @@ from typing import Protocol
 
 from code_mule.domain.enums import (
     ChangeRequestStatus,
+    HumanActionCategory,
     PlanStatus,
     ProjectStatus,
 )
 from code_mule.domain.models import ChangeRequest, Plan, ProjectEvent
 from code_mule.domain.state_machine import validate_transition
+from code_mule.human import request_human_action
 from code_mule.progress import (
     ProgressEvent,
     ProgressEventType,
@@ -301,32 +303,29 @@ class ChangeReplanningService:
         event_type: str,
         error_type: str,
     ) -> ProjectState:
-        validate_transition(state.project.status, ProjectStatus.HUMAN_REQUIRED)
         operation_time = self._clock()
         rejected = replace(
             change_request, status=ChangeRequestStatus.REJECTED
         )
-        failed = replace(
+        rejected_state = replace(
             state,
-            project=replace(
-                state.project,
-                status=ProjectStatus.HUMAN_REQUIRED,
-                updated_at=operation_time,
-            ),
             change_requests=tuple(
                 rejected if item.id == rejected.id else item
                 for item in state.change_requests
             ),
-            events=state.events
-            + (
-                self._event(
-                    state,
-                    event_type,
-                    change_request.id,
-                    operation_time,
-                    {"error_type": error_type},
-                ),
-            ),
+        )
+        failed = request_human_action(
+            rejected_state,
+            category=HumanActionCategory.SUPERVISOR_FAILURE,
+            summary="Supervisor change replanning failed validation or execution",
+            requested_action="Inspect the replanning failure and choose an explicit resolution",
+            risk="The requested change has no trustworthy replacement Plan",
+            task_id=None,
+            operation_time=operation_time,
+            action_id=f"action-{self._event_id_factory()}",
+            event_id_factory=self._event_id_factory,
+            source_event_types=(event_type,),
+            source_metadata={"error_type": error_type},
         )
         self._store.save(failed)
         self._emit(

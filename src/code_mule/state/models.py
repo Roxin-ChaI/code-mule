@@ -7,6 +7,8 @@ from code_mule.domain.models import (
     Decision,
     ExecutionReport,
     ImpactAnalysis,
+    HumanAction,
+    HumanResolution,
     Milestone,
     Plan,
     Project,
@@ -30,6 +32,8 @@ class ProjectState:
     execution_reports: tuple[ExecutionReport, ...]
     quality_status: QualityStatus | None
     events: tuple[ProjectEvent, ...]
+    human_actions: tuple[HumanAction, ...] = ()
+    human_resolutions: tuple[HumanResolution, ...] = ()
 
 
 __all__ = ["ProjectState"]

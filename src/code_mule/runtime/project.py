@@ -5,9 +5,15 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Protocol
 
-from code_mule.domain.enums import PlanStatus, ProjectStatus, TaskStatus
+from code_mule.domain.enums import (
+    HumanActionCategory,
+    PlanStatus,
+    ProjectStatus,
+    TaskStatus,
+)
 from code_mule.domain.models import Milestone, ProjectEvent, Task
 from code_mule.domain.state_machine import validate_transition
+from code_mule.human import pending_action, request_human_action
 from code_mule.progress import (
     ProgressEvent,
     ProgressEventType,
@@ -183,6 +189,10 @@ class ProjectExecutionService:
                     state,
                     "project.execution_limit_reached",
                     {"max_tasks": str(self._config.max_tasks_per_run)},
+                    category=HumanActionCategory.ATTEMPT_LIMIT,
+                    summary="Project run reached its configured task limit",
+                    requested_action="Inspect progress and choose an explicit resolution",
+                    risk="Continuing may exceed the bounded execution window",
                 )
                 self._emit_stopped(
                     stopped, ProjectExecutionStopReason.TASK_LIMIT_REACHED
@@ -199,7 +209,13 @@ class ProjectExecutionService:
             task = self._scheduler.select_next(state)
             if task is None:
                 stopped = self._stop_for_human(
-                    state, "project.no_runnable_task", {}
+                    state,
+                    "project.no_runnable_task",
+                    {},
+                    category=HumanActionCategory.DEPENDENCY_BLOCK,
+                    summary="No task is runnable in the active Plan",
+                    requested_action="Inspect task dependencies and choose an explicit resolution",
+                    risk="Changing dependency state incorrectly could violate Plan ordering",
                 )
                 self._emit_stopped(
                     stopped, ProjectExecutionStopReason.NO_RUNNABLE_TASK
@@ -350,6 +366,10 @@ class ProjectExecutionService:
             "project.execution_recovery_required",
             {"reason": "execution_ownership_uncertain"},
             entity_id=current.id,
+            category=HumanActionCategory.RECOVERY_UNCERTAIN,
+            summary="Task execution ownership is uncertain",
+            requested_action="Inspect repository and task state before resolving",
+            risk="Retrying may duplicate an operation from an interrupted Worker session",
         )
         self._emit_stopped(stopped, ProjectExecutionStopReason.HUMAN_REQUIRED)
         return self._outcome(
@@ -457,7 +477,18 @@ class ProjectExecutionService:
         self, state: ProjectState, task_id: str
     ) -> ProjectState:
         if state.project.status is ProjectStatus.HUMAN_REQUIRED:
-            return state
+            if pending_action(state) is not None:
+                return state
+            return self._stop_for_human(
+                state,
+                "project.task_cycle_stopped",
+                {"reason": "missing_typed_human_action"},
+                entity_id=task_id,
+                category=HumanActionCategory.UNKNOWN,
+                summary="Task execution stopped for an unclassified human decision",
+                requested_action="Inspect persisted task state and choose an explicit resolution",
+                risk="The safe continuation path is unknown",
+            )
         if state.project.status is not ProjectStatus.RUNNING:
             raise InvalidProjectExecutionState(
                 "TaskCycle human outcome left an incompatible project status"
@@ -467,6 +498,10 @@ class ProjectExecutionService:
             "project.task_cycle_stopped",
             {"reason": "task_cycle_human_required"},
             entity_id=task_id,
+            category=HumanActionCategory.UNKNOWN,
+            summary="Task execution requires human intervention",
+            requested_action="Inspect persisted task state and choose an explicit resolution",
+            risk="The safe continuation path is unknown",
         )
 
     def _stop_for_human(
@@ -476,24 +511,24 @@ class ProjectExecutionService:
         metadata: dict[str, str],
         *,
         entity_id: str | None = None,
+        category: HumanActionCategory,
+        summary: str,
+        requested_action: str,
+        risk: str,
     ) -> ProjectState:
-        validate_transition(state.project.status, ProjectStatus.HUMAN_REQUIRED)
         operation_time = self._clock()
-        event = self._event(
+        updated = request_human_action(
             state,
-            event_type,
-            entity_id or state.project.id,
-            operation_time,
-            metadata,
-        )
-        updated = replace(
-            state,
-            project=replace(
-                state.project,
-                status=ProjectStatus.HUMAN_REQUIRED,
-                updated_at=operation_time,
-            ),
-            events=state.events + (event,),
+            category=category,
+            summary=summary,
+            requested_action=requested_action,
+            risk=risk,
+            task_id=entity_id,
+            operation_time=operation_time,
+            action_id=f"action-{self._event_id_factory()}",
+            event_id_factory=self._event_id_factory,
+            source_event_types=(event_type,),
+            source_metadata=metadata,
         )
         self._store.save(updated)
         return updated

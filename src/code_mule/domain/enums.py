@@ -57,9 +57,36 @@ class ChangeRequestStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class HumanActionCategory(StrEnum):
+    WORKER_APPROVAL = "worker_approval"
+    WORKER_INPUT = "worker_input"
+    ATTEMPT_LIMIT = "attempt_limit"
+    SUPERVISOR_FAILURE = "supervisor_failure"
+    DEPENDENCY_BLOCK = "dependency_block"
+    RECOVERY_UNCERTAIN = "recovery_uncertain"
+    EXTERNAL_SIDE_EFFECT = "external_side_effect"
+    UNKNOWN = "unknown"
+
+
+class HumanActionStatus(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    RESOLVED = "resolved"
+
+
+class HumanResolutionStrategy(StrEnum):
+    RETRY_TASK = "retry_task"
+    FAIL_PROJECT = "fail_project"
+    ACKNOWLEDGE = "acknowledge"
+
+
 __all__ = [
     "BossCommandType",
     "ChangeRequestStatus",
+    "HumanActionCategory",
+    "HumanActionStatus",
+    "HumanResolutionStrategy",
     "PlanStatus",
     "ProjectStatus",
     "RequirementStatus",

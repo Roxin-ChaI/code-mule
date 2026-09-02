@@ -1,0 +1,1 @@
+"""Human resolution contract tests."""

@@ -5,6 +5,9 @@ from datetime import datetime
 
 from .enums import (
     ChangeRequestStatus,
+    HumanActionCategory,
+    HumanActionStatus,
+    HumanResolutionStrategy,
     PlanStatus,
     ProjectStatus,
     RequirementStatus,
@@ -180,11 +183,54 @@ class ProjectEvent:
     metadata: dict[str, str]
 
 
+@dataclass
+class HumanAction:
+    id: str
+    project_id: str
+    task_id: str | None
+    category: HumanActionCategory
+    summary: str
+    requested_action: str
+    risk: str
+    status: HumanActionStatus
+    created_at: datetime
+    resolved_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        _require_non_empty(self.id, "id")
+        _require_non_empty(self.project_id, "project_id")
+        _require_non_empty(self.summary, "summary")
+        _require_non_empty(self.requested_action, "requested_action")
+        _require_non_empty(self.risk, "risk")
+        if self.status is HumanActionStatus.PENDING and self.resolved_at is not None:
+            raise ValueError("pending HumanAction cannot have resolved_at")
+        if self.status is not HumanActionStatus.PENDING and self.resolved_at is None:
+            raise ValueError("closed HumanAction requires resolved_at")
+
+
+@dataclass
+class HumanResolution:
+    id: str
+    action_id: str
+    project_id: str
+    strategy: HumanResolutionStrategy
+    summary: str
+    created_at: datetime
+
+    def __post_init__(self) -> None:
+        _require_non_empty(self.id, "id")
+        _require_non_empty(self.action_id, "action_id")
+        _require_non_empty(self.project_id, "project_id")
+        _require_non_empty(self.summary, "summary")
+
+
 __all__ = [
     "ChangeRequest",
     "Decision",
     "ExecutionReport",
     "ImpactAnalysis",
+    "HumanAction",
+    "HumanResolution",
     "Milestone",
     "Plan",
     "Project",

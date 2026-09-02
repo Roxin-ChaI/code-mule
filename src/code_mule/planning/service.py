@@ -5,9 +5,10 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Protocol
 
-from code_mule.domain.enums import PlanStatus, ProjectStatus
+from code_mule.domain.enums import HumanActionCategory, PlanStatus, ProjectStatus
 from code_mule.domain.models import ProjectEvent
 from code_mule.domain.state_machine import validate_transition
+from code_mule.human import request_human_action
 from code_mule.progress import (
     ProgressEvent,
     ProgressEventType,
@@ -223,25 +224,19 @@ class ProjectPlanningService:
         event_type: str,
         error_type: str,
     ) -> ProjectState:
-        validate_transition(state.project.status, ProjectStatus.HUMAN_REQUIRED)
         operation_time = self._clock()
-        failed = replace(
+        failed = request_human_action(
             state,
-            project=replace(
-                state.project,
-                status=ProjectStatus.HUMAN_REQUIRED,
-                updated_at=operation_time,
-            ),
-            events=state.events
-            + (
-                self._event(
-                    state,
-                    event_type,
-                    state.project.id,
-                    operation_time,
-                    {"error_type": error_type},
-                ),
-            ),
+            category=HumanActionCategory.SUPERVISOR_FAILURE,
+            summary="Supervisor planning failed validation or execution",
+            requested_action="Inspect the planning failure and choose an explicit resolution",
+            risk="No active Plan can be trusted until the failure is resolved",
+            task_id=None,
+            operation_time=operation_time,
+            action_id=f"action-{self._event_id_factory()}",
+            event_id_factory=self._event_id_factory,
+            source_event_types=(event_type,),
+            source_metadata={"error_type": error_type},
         )
         self._store.save(failed)
         self._emit(
