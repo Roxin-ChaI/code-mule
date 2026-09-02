@@ -43,10 +43,17 @@ class BossRoutingTests(unittest.TestCase):
             "批准": BossIntent.APPROVE,
             "拒绝": BossIntent.REJECT,
             "重试": BossIntent.RESOLVE,
+            "approve action-123": BossIntent.APPROVE,
+            "拒绝 action-123": BossIntent.REJECT,
         }
         for message, expected in cases.items():
             with self.subTest(message=message):
                 self.assertIs(router.route(message, self.session).intent, expected)
+
+        self.assertEqual(
+            router.route("approve action-123", self.session).normalized_request,
+            "action-123",
+        )
 
     def test_ambiguous_request_without_model_is_unknown(self):
         routed = CompositeBossIntentRouter().route("也许可以调整一下", self.session)

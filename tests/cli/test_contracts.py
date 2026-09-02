@@ -42,6 +42,8 @@ class CliContractTests(unittest.TestCase):
             (["approve", "action-1"], "approve"),
             (["reject", "action-1"], "reject"),
             (["resolve", "action-1", "--strategy", "acknowledge"], "resolve"),
+            (["chat"], "chat"),
+            (["chat", "--verbose"], "chat"),
         )
         for arguments, expected in cases:
             with self.subTest(arguments=arguments):

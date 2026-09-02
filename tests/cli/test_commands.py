@@ -51,6 +51,7 @@ class _FakeCommands:
     def approve(self, *values): return self._call("approve", *values)
     def reject(self, *values): return self._call("reject", *values)
     def resolve(self, *values): return self._call("resolve", *values)
+    def chat(self, *values): return self._call("chat", *values)
 
 
 class _FakePlanning:
@@ -263,7 +264,7 @@ class ProductionCommandTests(unittest.TestCase):
 
 
 class CliProcessBoundaryTests(unittest.TestCase):
-    def invoke(self, argv, commands, environment=None):
+    def invoke(self, argv, commands, environment=None, stdin=None):
         output = StringIO(); errors = StringIO()
         code = main(
             argv,
@@ -271,6 +272,7 @@ class CliProcessBoundaryTests(unittest.TestCase):
             environment={} if environment is None else environment,
             stdout=output,
             stderr=errors,
+            stdin=stdin,
         )
         return code, output.getvalue(), errors.getvalue()
 
@@ -295,6 +297,17 @@ class CliProcessBoundaryTests(unittest.TestCase):
                 code, _, _ = self.invoke(argv, commands)
                 self.assertEqual(code, 0)
                 self.assertEqual(commands.calls[0][0], expected)
+
+    def test_dispatches_chat_with_one_persistent_input_stream(self):
+        commands = _FakeCommands()
+        input_stream = StringIO("状态\n")
+        code, _, _ = self.invoke(
+            ["chat", "--verbose"],
+            commands,
+            stdin=input_stream,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(commands.calls, [("chat", (input_stream, True))])
 
     def test_invalid_change_shape_uses_usage_exit_code(self):
         code, _, errors = self.invoke(["change"], _FakeCommands())
