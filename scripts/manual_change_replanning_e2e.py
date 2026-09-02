@@ -1,6 +1,7 @@
 """Boss-only real DeepSeek + Codex CHANGE replanning E2E."""
 
 from datetime import UTC, datetime
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -26,12 +27,17 @@ from code_mule.replanning import (  # noqa: E402
 )
 from code_mule.runtime import (  # noqa: E402
     ProjectExecutionConfig,
+    ProjectExecutionStopReason,
     ProjectExecutionService,
     TaskCycleConfig,
     TaskCycleService,
     TaskPromptBuilder,
 )
-from code_mule.scheduler import TaskScheduler  # noqa: E402
+from code_mule.scheduler import (  # noqa: E402
+    TaskScheduler,
+    resolve_active_plan_graph,
+)
+from code_mule.state.models import ProjectState  # noqa: E402
 from code_mule.state.store import JsonProjectStateStore  # noqa: E402
 from code_mule.supervisor.providers.deepseek import (  # noqa: E402
     DeepSeekSupervisorConfig,
@@ -50,6 +56,135 @@ from scripts.local_codex_change_replanning_smoke import (  # noqa: E402
 
 
 MANUAL_CHANGE = "Also add multiply support and unit tests."
+
+
+class _ObservedReplanningService:
+    def __init__(self, service, store) -> None:
+        self._service = service
+        self._store = store
+        self.materialized_state: ProjectState | None = None
+
+    def replan(self, request):
+        outcome = self._service.replan(request)
+        self.materialized_state = self._store.load()
+        return outcome
+
+
+def _replacement_plan_diagnostics(state: ProjectState) -> dict[str, object]:
+    scheduler = TaskScheduler()
+    scheduler.validate(state)
+    graph = resolve_active_plan_graph(state)
+    requirement_ids = set(graph.plan.requirement_ids)
+    traceability_valid = all(
+        set(task.requirement_ids) <= requirement_ids for task in graph.tasks
+    )
+    plan_complete = scheduler.is_plan_complete(state)
+    ready = None if plan_complete else scheduler.select_next(state)
+    return {
+        "replacement_project_status": state.project.status.value,
+        "replacement_active_plan_id": state.project.active_plan_id,
+        "replacement_current_task_id": state.project.current_task_id,
+        "replacement_plan_status": graph.plan.status.value,
+        "replacement_plan_active": graph.plan.status.value == "active",
+        "replacement_plan_version": graph.plan.version,
+        "replacement_task_ids": [task.id for task in graph.tasks],
+        "replacement_task_statuses": {
+            task.id: task.status.value for task in graph.tasks
+        },
+        "replacement_tasks": [
+            {
+                "id": task.id,
+                "status": task.status.value,
+                "dependencies": list(task.dependencies),
+                "requirement_ids": list(task.requirement_ids),
+            }
+            for task in graph.tasks
+        ],
+        "dependencies_valid": True,
+        "traceability_valid": traceability_valid,
+        "plan_complete_before_resume": plan_complete,
+        "ready_task_id_before_resume": None if ready is None else ready.id,
+        "ready_task_available": plan_complete or ready is not None,
+    }
+
+
+def _human_required_diagnostics(execution, state: ProjectState) -> dict[str, object]:
+    if execution is None:
+        return {
+            "human_required_reason": "replanning_not_ready",
+            "human_required_task_id": state.project.current_task_id,
+            "human_required_attempt": None,
+            "human_required_final_decision": None,
+            "human_required_failure_category": "replanning",
+            "human_required_error_type": None,
+        }
+    if not execution.human_action_required:
+        return {
+            "human_required_reason": None,
+            "human_required_task_id": None,
+            "human_required_attempt": None,
+            "human_required_final_decision": None,
+            "human_required_failure_category": None,
+            "human_required_error_type": None,
+        }
+
+    task_id = state.project.current_task_id
+    if task_id is None and execution.task_ids:
+        task_id = execution.task_ids[-1]
+    reports = tuple(
+        report for report in state.execution_reports if report.task_id == task_id
+    )
+    decisions = tuple(
+        decision for decision in state.decisions if decision.task_id == task_id
+    )
+    attempt = None if not reports else reports[-1].attempt
+    final_decision = None if not decisions else decisions[-1].type.value
+    reason = execution.stop_reason.value
+    category = reason
+    error_type = None
+    if execution.stop_reason is ProjectExecutionStopReason.HUMAN_REQUIRED:
+        reason = "human_required_unspecified"
+        category = "task_cycle"
+        for event in reversed(state.events):
+            if (
+                event.event_type.startswith("task.")
+                and task_id is not None
+                and event.entity_id != task_id
+            ):
+                continue
+            if event.event_type == "task.cycle_limit_reached":
+                reason = "task_cycle_limit"
+                category = "task_cycle_limit"
+                break
+            if event.event_type == "task.human_required":
+                source = event.metadata.get("source")
+                if source in {"worker_report", "supervisor"}:
+                    reason = source
+                    category = source
+                elif "error_type" in event.metadata:
+                    reason = "worker_failure"
+                    category = "worker_failure"
+                    error_type = event.metadata["error_type"]
+                else:
+                    reason = "task_human_required"
+                    continue
+                break
+            if event.event_type == "project.execution_recovery_required":
+                reason = "execution_recovery_required"
+                category = "project_execution"
+                break
+            if event.event_type == "project.task_cycle_stopped":
+                reason = "task_cycle_stopped"
+                category = "task_cycle"
+                break
+    return {
+        "human_required_reason": reason,
+        "human_required_task_id": task_id,
+        "human_required_attempt": attempt,
+        "human_required_final_decision": final_decision,
+        "human_required_failure_category": category,
+        "human_required_error_type": error_type,
+    }
 
 
 def _build_compatibility_client(deepseek_api_key: str) -> OpenAI:
@@ -160,8 +295,9 @@ def _run(supervisor: SupervisorService) -> int:
             event_id_factory=_IdFactory("manual-replanning-event"),
             progress_sink=renderer,
         )
+        observed_replanning = _ObservedReplanningService(replanning, store)
         changed_execution = ChangeExecutionService(
-            replanning_service=replanning,
+            replanning_service=observed_replanning,
             execution_service=execution,
         )
 
@@ -174,18 +310,37 @@ def _run(supervisor: SupervisorService) -> int:
                 ChangeReplanningRequest("autonomous-local", "manual-change-1")
             )
         final = store.load()
-        print(
-            {
-                "objective": OBJECTIVE,
-                "change": MANUAL_CHANGE,
-                "initial_plan_id": planning_outcome.plan_id,
-                "safe_point_task_ids": safe_point.task_ids,
-                "replacement_plan_id": changed.replanning.plan_id,
-                "replacement_plan_version": changed.replanning.plan_version,
-                "project_status": final.project.status.value,
-                "human_action_required": changed.human_action_required,
-            }
-        )
+        replacement_state = observed_replanning.materialized_state
+        if replacement_state is None:
+            raise RuntimeError("replacement Plan state was not observed")
+        replacement = _replacement_plan_diagnostics(replacement_state)
+        resumed = changed.execution
+        resumed_task_ids = () if resumed is None else resumed.task_ids
+        diagnostics = {
+            "objective": OBJECTIVE,
+            "change": MANUAL_CHANGE,
+            "initial_plan_id": planning_outcome.plan_id,
+            "safe_point_task_ids": list(safe_point.task_ids),
+            "replacement_plan_id": changed.replanning.plan_id,
+            **replacement,
+            "replacement_plan_version_matches_outcome": (
+                replacement["replacement_plan_version"]
+                == changed.replanning.plan_version
+            ),
+            "tasks_started": None if resumed is None else resumed.tasks_started,
+            "tasks_completed": None if resumed is None else resumed.tasks_completed,
+            "execution_stop_reason": (
+                None if resumed is None else resumed.stop_reason.value
+            ),
+            "final_project_status": final.project.status.value,
+            "human_action_required": changed.human_action_required,
+            "current_task_id": final.project.current_task_id,
+            "completed_safe_point_task_redispatched": bool(
+                set(safe_point.task_ids) & set(resumed_task_ids)
+            ),
+            **_human_required_diagnostics(resumed, final),
+        }
+        print(json.dumps(diagnostics, ensure_ascii=False, sort_keys=True))
     return 0
 
 
