@@ -110,6 +110,38 @@ class SupervisorPromptTests(unittest.TestCase):
                 self.assertIn(context, user_prompt)
                 self.assertIn(SUPERVISOR_SYSTEM_POLICY, system_prompt)
 
+    def test_review_prompt_enforces_decision_prompt_combinations(self):
+        state = make_project_state()
+        _, prompt = build_review_prompt(
+            ReviewRequest(state, state.tasks[0], state.execution_reports[0])
+        )
+
+        self.assertIn(
+            "HUMAN_REQUIRED and DONE require next_task_prompt=null",
+            prompt,
+        )
+        self.assertIn(
+            "REWORK requires a non-empty next_task_prompt",
+            prompt,
+        )
+        self.assertIn(
+            "CONTINUE may use null or a string under its existing semantics",
+            prompt,
+        )
+        self.assertIn("Do not use an empty string instead of null", prompt)
+        self.assertIn(
+            "never generate a Worker instruction for HUMAN_REQUIRED",
+            prompt,
+        )
+        self.assertIn(
+            'Incorrect: decision=HUMAN_REQUIRED, next_task_prompt="..."',
+            prompt,
+        )
+        self.assertIn(
+            "Correct: decision=HUMAN_REQUIRED, next_task_prompt=null",
+            prompt,
+        )
+
     def test_impact_prompt_exposes_exact_control_ids(self):
         state = make_project_state()
         _, prompt = build_impact_analysis_prompt(

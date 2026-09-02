@@ -269,6 +269,14 @@ def build_review_prompt(request: ReviewRequest) -> tuple[str, str]:
         f"Task under review:\n{_render_task(request.task)}\n"
         "Execution report under review:\n"
         f"{_render_execution_report(request.execution_report)}\n"
+        "The decision and next_task_prompt fields must satisfy the review "
+        "contract: HUMAN_REQUIRED and DONE require next_task_prompt=null; "
+        "REWORK requires a non-empty next_task_prompt; CONTINUE may use null "
+        "or a string under its existing semantics. Do not use an empty string "
+        "instead of null. Put the human-action reason in rationale and issues; "
+        "never generate a Worker instruction for HUMAN_REQUIRED. Incorrect: "
+        'decision=HUMAN_REQUIRED, next_task_prompt="...". Correct: '
+        "decision=HUMAN_REQUIRED, next_task_prompt=null.\n"
         "Return a review decision based only on recorded evidence."
     )
     return _system_prompt(SupervisorOperation.REVIEW), user_prompt
