@@ -13,6 +13,10 @@ class CliE2EHarnessTests(unittest.TestCase):
         self.assertIn('(\"codex\", \"app-server\")', source)
         self.assertNotIn("DEEPSEEK_API_KEY", source)
         self.assertIn('final.project.status is ProjectStatus.DONE', source)
+        self.assertIn('"default_output_readable"', source)
+        self.assertIn('"verbose_output_auditable"', source)
+        self.assertIn('"human_inspect_readable"', source)
+        self.assertIn('"renderers_closed"', source)
 
     def test_manual_harness_uses_disposable_repo_and_explicit_change(self):
         source = inspect.getsource(manual_cli_e2e)

@@ -52,11 +52,18 @@ the percentage. A zero-task presentation reports 0% rather than guessing.
 ## Console Modes
 
 On an ANSI-capable TTY, `ConsoleProgressRenderer` maintains a compact live
-dashboard with project/task state, progress bar, Codex and Supervisor stages,
-elapsed time, spinner, and the five most recent activities. Its lightweight
+dashboard with distinct Project, current Task, Worker, Supervisor, and Recent
+Activity sections. It shows the active Plan version, deterministic progress,
+latest safely projected Worker activity, stage/project elapsed time, and the
+five most recent real activities. Human-readable status/decision labels come
+from the read-only presentation layer; raw enums never drive control. Its lightweight
 daemon thread uses `time.monotonic()` only for presentation animation. Context
 manager shutdown stops the thread, performs a final redraw, restores the cursor,
 and flushes the stream even when execution raises.
+
+Dashboard lines adapt to current terminal width and safely truncate long task
+titles or messages. Unicode terminals use `✓`, `→`, and block progress bars;
+an explicit compatibility path uses ASCII symbols and bars.
 
 When output is redirected or running in CI, the renderer emits ordered
 timestamped lines. It writes no ANSI control sequences and starts no spinner
@@ -71,7 +78,10 @@ truthful `change.requested`, Impact Analysis, Plan materialization, and resumed
 execution events. This does not change authentication, model, transport,
 retry, token, structured-output, or Human Gate policy.
 
-## Future Presentation Surfaces
+## Presentation Boundary
 
-The same event layer can later support a formal CLI, TUI, WebSocket stream, or
-Web dashboard. Phase 8.5 implements no CLI command set, GUI, or remote server.
+`code_mule.presentation` converts ProjectState or ProgressSnapshot into immutable
+Boss-facing view models and lines. It cannot save state, schedule work, control
+runtime execution, or parse console text into decisions. ProjectState remains
+the Source of Truth. The same boundary can later support a TUI, WebSocket
+stream, or Web dashboard; this phase adds no GUI or remote server.

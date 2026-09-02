@@ -6,7 +6,12 @@ from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 import unittest
 
-from code_mule.cli import CliCommandResult, CliExitCode, main
+from code_mule.cli import (
+    CliCommandResult,
+    CliExitCode,
+    InvalidCliProjectState,
+    main,
+)
 from code_mule.cli.composition import ProductionCliComposition, RuntimeComposition
 from code_mule.domain.enums import (
     HumanActionCategory,
@@ -146,7 +151,15 @@ class ProductionCommandTests(unittest.TestCase):
     def test_status_and_ask_are_read_only_without_api_key(self):
         composition = self.init()
         before = self.state_file.read_bytes()
-        self.assertEqual(composition.status().exit_code, CliExitCode.SUCCESS)
+        status = composition.status()
+        self.assertEqual(status.exit_code, CliExitCode.SUCCESS)
+        default = "\n".join(status.output)
+        self.assertIn("PROJECT\nProject", default)
+        self.assertIn("Status      Ready", default)
+        self.assertNotIn("project_id:", default)
+        verbose = "\n".join(composition.status(verbose=True).output)
+        self.assertIn("project_id: project-1", verbose)
+        self.assertIn("project_status: idle", verbose)
         self.assertEqual(composition.ask("What remains?").exit_code, CliExitCode.SUCCESS)
         self.assertEqual(self.state_file.read_bytes(), before)
 
@@ -158,9 +171,15 @@ class ProductionCommandTests(unittest.TestCase):
         store.save(replace(state, project=replace(state.project, status=ProjectStatus.RUNNING)))
         submitted = composition.change("Add multiply")
         self.assertEqual(submitted.exit_code, CliExitCode.SUCCESS)
+        self.assertIn("CHANGE REQUESTED", submitted.output)
+        self.assertIn('"Add multiply"', submitted.output)
+        self.assertIn("Current task will finish safely", "\n".join(submitted.output))
         self.assertEqual(store.load().project.status, ProjectStatus.CHANGE_REQUESTED)
         applied = composition.apply_change()
         self.assertEqual(applied.exit_code, CliExitCode.SUCCESS)
+        self.assertIn("REPLANNING", applied.output)
+        self.assertIn("✓ Impact analysis completed", applied.output)
+        self.assertIn("Execution resumed.", applied.output)
         self.assertEqual(store.load().project.status, ProjectStatus.DONE)
 
     def test_pause_resume_and_human_required_gate(self):
@@ -293,6 +312,17 @@ class CliProcessBoundaryTests(unittest.TestCase):
         self.assertEqual(code, 5)
         self.assertIn("Traceback", errors)
         self.assertNotIn(secret, errors)
+
+    def test_typed_error_names_layer_and_gives_next_step(self):
+        commands = _FakeCommands(
+            error=InvalidCliProjectState("planning state is not recoverable")
+        )
+        code, _, errors = self.invoke(["status"], commands)
+        self.assertEqual(code, 3)
+        self.assertIn("PROJECT STATE ERROR", errors)
+        self.assertIn("planning state is not recoverable", errors)
+        self.assertIn("Next:\n  code-mule status", errors)
+        self.assertNotIn("Traceback", errors)
 
 
 if __name__ == "__main__":

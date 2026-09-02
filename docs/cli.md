@@ -29,6 +29,31 @@ The default state file is `.code-mule/project-state.json`. Pass
 `--state-file PATH` to every command when using another location. `init` never
 overwrites an existing state file and persists an absolute Worker workspace.
 
+## Default output
+
+Boss-facing output uses readable labels and hides storage identifiers and raw
+control enums:
+
+```text
+PROJECT
+Calculator
+
+Status      Running
+Plan        v2
+Progress    3 / 5
+Current     T4 · Add tests
+Boss action None
+```
+
+Add `--verbose` after a command to expose `project_id`, `active_plan_id`, Plan
+version, `current_task_id`, raw statuses, execution stop reason, and HumanAction
+identity when applicable:
+
+```bash
+.venv/bin/code-mule status --verbose
+.venv/bin/code-mule inspect --verbose
+```
+
 ## Commands
 
 - `run`: an IDLE project requires `--objective`; a RUNNING project continues
@@ -53,6 +78,14 @@ overwrites an existing state file and persists an absolute Worker workspace.
 `run` and `change --apply` render live progress. Other commands use concise
 structured text. Errors go to stderr. `--debug` before the command adds a
 sanitized traceback; credentials are never printed.
+
+The TTY dashboard separates Project, current Task, Worker, Supervisor, and the
+five most recent real activities. It adapts to terminal width and uses an ASCII
+fallback when Unicode symbols are unavailable. Redirected output is ordered,
+line-oriented, and contains no ANSI or spinner control characters.
+
+Normal errors identify the failing boundary and give a safe next command.
+Tracebacks remain exclusive to global `--debug` mode.
 
 ## Environment
 

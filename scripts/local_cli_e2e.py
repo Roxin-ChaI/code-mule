@@ -1,5 +1,6 @@
 """Real local Codex + fake Supervisor E2E through the formal Boss CLI."""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from io import StringIO
 import json
@@ -20,7 +21,13 @@ from code_mule.cli.composition import (  # noqa: E402
     ProductionCliComposition,
     RuntimeComposition,
 )
-from code_mule.domain.enums import ProjectStatus, TaskStatus  # noqa: E402
+from code_mule.domain.enums import (  # noqa: E402
+    HumanActionCategory,
+    PlanStatus,
+    ProjectStatus,
+    TaskStatus,
+)
+from code_mule.human import request_human_action  # noqa: E402
 from code_mule.orchestrator import (  # noqa: E402
     ChangeCommand,
     OrchestratorService,
@@ -72,6 +79,7 @@ def main() -> int:
         errors = StringIO()
         injected = False
         sessions: list[CodexWorkerSession] = []
+        renderers: list[ConsoleProgressRenderer] = []
         report_ids = _IdFactory("cli-report")
         decision_ids = _IdFactory("cli-decision")
         cycle_event_ids = _IdFactory("cli-cycle-event")
@@ -81,6 +89,7 @@ def main() -> int:
             store = JsonProjectStateStore(state_file)
             clock = lambda: datetime.now(UTC)
             renderer = ConsoleProgressRenderer(errors)
+            renderers.append(renderer)
             worker_config = CodexWorkerConfig(
                 command=("codex", "app-server"),
                 workspace=workspace,
@@ -221,7 +230,58 @@ def main() -> int:
             stdout=output,
             stderr=errors,
         )
+        default_output = output.getvalue()
+        verbose_start = len(default_output)
+        verbose_status_code = cli_main(
+            ["status", "--verbose", *common],
+            composition_factory=composition_factory,
+            environment={},
+            stdout=output,
+            stderr=errors,
+        )
+        verbose_output = output.getvalue()[verbose_start:]
         final = JsonProjectStateStore(state_file).load()
+
+        human_state_file = root / "human-project-state.json"
+        human_base = replace(
+            final,
+            project=replace(
+                final.project,
+                status=ProjectStatus.RUNNING,
+                current_task_id=None,
+            ),
+            plans=tuple(
+                replace(plan, status=PlanStatus.ACTIVE)
+                if plan.id == final.project.active_plan_id
+                else plan
+                for plan in final.plans
+            ),
+            human_actions=(),
+            human_resolutions=(),
+        )
+        action_ids = _IdFactory("cli-human-event")
+        human_state = request_human_action(
+            human_base,
+            category=HumanActionCategory.EXTERNAL_SIDE_EFFECT,
+            summary="Fake gated remote mutation",
+            requested_action="Review the fake push request",
+            risk="Remote repository mutation",
+            task_id=None,
+            operation_time=datetime.now(UTC),
+            action_id="ACTION-LOCAL-1",
+            event_id_factory=action_ids,
+            source_event_types=("task.human_required",),
+        )
+        JsonProjectStateStore(human_state_file).save(human_state)
+        inspect_start = len(output.getvalue())
+        inspect_code = cli_main(
+            ["inspect", "--state-file", str(human_state_file)],
+            composition_factory=composition_factory,
+            environment={},
+            stdout=output,
+            stderr=errors,
+        )
+        inspect_output = output.getvalue()[inspect_start:]
         verification = subprocess.run(
             [sys.executable, "-m", "unittest", "-v"],
             cwd=workspace,
@@ -230,7 +290,14 @@ def main() -> int:
             text=True,
         )
         payload = {
-            "exit_codes": [init_code, run_code, apply_code, status_code],
+            "exit_codes": [
+                init_code,
+                run_code,
+                apply_code,
+                status_code,
+                verbose_status_code,
+                inspect_code,
+            ],
             "safe_point_status": safe_point.project.status.value,
             "safe_point_current_task": safe_point.project.current_task_id,
             "final_status": final.project.status.value,
@@ -251,10 +318,26 @@ def main() -> int:
                 for line in errors.getvalue().splitlines()
                 if line.startswith("ERROR:")
             ],
+            "default_output_readable": (
+                "Status      Completed" in default_output
+                and "project_status:" not in default_output
+                and "execution_stop_reason:" not in default_output
+            ),
+            "verbose_output_auditable": (
+                "project_status: done" in verbose_output
+                and "active_plan_id:" in verbose_output
+                and "current_task_id:" in verbose_output
+            ),
+            "human_inspect_readable": (
+                "ACTION REQUIRED" in inspect_output
+                and "No action has been executed." in inspect_output
+                and "Review the fake push request" in inspect_output
+            ),
+            "renderers_closed": all(renderer.closed for renderer in renderers),
         }
         print(json.dumps(payload, sort_keys=True))
         passed = (
-            payload["exit_codes"] == [0, 0, 0, 0]
+            payload["exit_codes"] == [0, 0, 0, 0, 0, 0]
             and safe_point.project.status is ProjectStatus.CHANGE_REQUESTED
             and safe_point.project.current_task_id is None
             and final.project.status is ProjectStatus.DONE
@@ -264,6 +347,10 @@ def main() -> int:
             and supervisor.impact_calls == 1
             and verification.returncode == 0
             and len(sessions) == 4
+            and payload["default_output_readable"]
+            and payload["verbose_output_auditable"]
+            and payload["human_inspect_readable"]
+            and payload["renderers_closed"]
         )
     return 0 if passed else 1
 

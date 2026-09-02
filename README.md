@@ -80,6 +80,7 @@ export DEEPSEEK_API_KEY="..."
 export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
 .venv/bin/code-mule run --objective "Create a tested calculator"
 .venv/bin/code-mule status
+.venv/bin/code-mule status --verbose
 ```
 
 The formal Boss CLI also provides `ask`, `change`, `change --apply`, `pause`,
@@ -87,6 +88,12 @@ The formal Boss CLI also provides `ask`, `change`, `change --apply`, `pause`,
 [Boss CLI](docs/cli.md) and [Human Resolution](docs/human-resolution.md) for
 action-scoped approval, state behavior, Human Gates,
 environment variables, exit codes, and the manual real E2E.
+
+Default CLI output uses readable Boss terminology and hides internal IDs and
+raw statuses. Use per-command `--verbose` for an auditable internal view. During
+`run` and `change --apply`, an adaptive terminal dashboard shows Project, Task,
+Codex Worker, Supervisor, deterministic progress, and recent real activity;
+redirected output remains line-oriented with no ANSI controls.
 
 ## Manual DeepSeek E2E
 
