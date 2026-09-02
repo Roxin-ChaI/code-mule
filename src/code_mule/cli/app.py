@@ -9,23 +9,31 @@ from typing import Protocol, TextIO
 
 from code_mule.domain.enums import HumanResolutionStrategy
 
-from .contracts import CliCommandResult, CliError, CliExitCode, CliUsageError
+from .contracts import (
+    CliCommandResult,
+    CliError,
+    CliExecutionFailure,
+    CliExitCode,
+    CliHumanActionRequired,
+    CliUsageError,
+    InvalidCliProjectState,
+)
 from .parser import build_parser
 
 
 class BossCliCommands(Protocol):
-    def init_project(self, project_id: str, name: str, workspace: Path) -> CliCommandResult: ...
-    def run(self, objective: str | None) -> CliCommandResult: ...
-    def status(self) -> CliCommandResult: ...
-    def ask(self, question: str) -> CliCommandResult: ...
-    def change(self, request: str) -> CliCommandResult: ...
-    def apply_change(self) -> CliCommandResult: ...
-    def pause(self) -> CliCommandResult: ...
-    def resume(self) -> CliCommandResult: ...
+    def init_project(self, project_id: str, name: str, workspace: Path, verbose: bool = False) -> CliCommandResult: ...
+    def run(self, objective: str | None, verbose: bool = False) -> CliCommandResult: ...
+    def status(self, verbose: bool = False) -> CliCommandResult: ...
+    def ask(self, question: str, verbose: bool = False) -> CliCommandResult: ...
+    def change(self, request: str, verbose: bool = False) -> CliCommandResult: ...
+    def apply_change(self, verbose: bool = False) -> CliCommandResult: ...
+    def pause(self, verbose: bool = False) -> CliCommandResult: ...
+    def resume(self, verbose: bool = False) -> CliCommandResult: ...
     def inspect(self, verbose: bool) -> CliCommandResult: ...
-    def approve(self, action_id: str) -> CliCommandResult: ...
-    def reject(self, action_id: str) -> CliCommandResult: ...
-    def resolve(self, action_id: str, strategy: HumanResolutionStrategy) -> CliCommandResult: ...
+    def approve(self, action_id: str, verbose: bool = False) -> CliCommandResult: ...
+    def reject(self, action_id: str, verbose: bool = False) -> CliCommandResult: ...
+    def resolve(self, action_id: str, strategy: HumanResolutionStrategy, verbose: bool = False) -> CliCommandResult: ...
 
 
 CompositionFactory = Callable[[Path, Mapping[str, str], TextIO, TextIO], BossCliCommands]
@@ -54,13 +62,14 @@ def _dispatch(commands: BossCliCommands, arguments: object) -> CliCommandResult:
             getattr(arguments, "project_id"),
             getattr(arguments, "name"),
             getattr(arguments, "workspace"),
+            getattr(arguments, "verbose"),
         )
     if command == "run":
-        return commands.run(getattr(arguments, "objective"))
+        return commands.run(getattr(arguments, "objective"), getattr(arguments, "verbose"))
     if command == "status":
-        return commands.status()
+        return commands.status(getattr(arguments, "verbose"))
     if command == "ask":
-        return commands.ask(getattr(arguments, "question"))
+        return commands.ask(getattr(arguments, "question"), getattr(arguments, "verbose"))
     if command == "change":
         request = getattr(arguments, "request")
         apply = getattr(arguments, "apply")
@@ -68,23 +77,47 @@ def _dispatch(commands: BossCliCommands, arguments: object) -> CliCommandResult:
             raise CliUsageError("change accepts either a request or --apply, not both")
         if not apply and request is None:
             raise CliUsageError("change requires a request or --apply")
-        return commands.apply_change() if apply else commands.change(request)
+        return commands.apply_change(getattr(arguments, "verbose")) if apply else commands.change(request, getattr(arguments, "verbose"))
     if command == "pause":
-        return commands.pause()
+        return commands.pause(getattr(arguments, "verbose"))
     if command == "resume":
-        return commands.resume()
+        return commands.resume(getattr(arguments, "verbose"))
     if command == "inspect":
         return commands.inspect(getattr(arguments, "verbose"))
     if command == "approve":
-        return commands.approve(getattr(arguments, "action_id"))
+        return commands.approve(getattr(arguments, "action_id"), getattr(arguments, "verbose"))
     if command == "reject":
-        return commands.reject(getattr(arguments, "action_id"))
+        return commands.reject(getattr(arguments, "action_id"), getattr(arguments, "verbose"))
     if command == "resolve":
         return commands.resolve(
             getattr(arguments, "action_id"),
             HumanResolutionStrategy(getattr(arguments, "strategy")),
+            getattr(arguments, "verbose"),
         )
     raise CliUsageError("unsupported command")
+
+
+def _print_error(error: CliError, stream: TextIO) -> None:
+    if isinstance(error, CliHumanActionRequired):
+        title = "ACTION REQUIRED"
+        next_command = "code-mule inspect"
+    elif isinstance(error, CliExecutionFailure):
+        title = "PROVIDER / WORKER ERROR"
+        next_command = "code-mule status"
+    elif isinstance(error, InvalidCliProjectState):
+        title = "PROJECT STATE ERROR"
+        next_command = "code-mule status"
+    else:
+        title = "COMMAND ERROR"
+        next_command = "code-mule --help"
+    print(title, file=stream)
+    print(file=stream)
+    print(error.public_message, file=stream)
+    print(file=stream)
+    print("No unsafe operation was performed.", file=stream)
+    print(file=stream)
+    print("Next:", file=stream)
+    print(f"  {next_command}", file=stream)
 
 
 def main(
@@ -107,7 +140,7 @@ def main(
     try:
         result = _dispatch(commands, arguments)
     except CliError as error:
-        print(f"ERROR: {error.public_message}", file=errors)
+        _print_error(error, errors)
         if arguments.debug:
             traceback.print_exception(
                 type(error),
@@ -117,8 +150,13 @@ def main(
             )
         return int(error.exit_code)
     except BaseException as error:
-        safe_message = f"operation failed ({type(error).__name__})"
-        print(f"ERROR: {safe_message}", file=errors)
+        safe_message = "The operation could not be completed safely."
+        print("UNEXPECTED ERROR", file=errors)
+        print(file=errors)
+        print(safe_message, file=errors)
+        print(file=errors)
+        print("Next:", file=errors)
+        print("  code-mule status", file=errors)
         if arguments.debug:
             traceback.print_exception(
                 type(error),

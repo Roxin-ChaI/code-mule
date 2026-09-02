@@ -16,6 +16,11 @@ def _state_file(parser: argparse.ArgumentParser) -> None:
         default=DEFAULT_STATE_FILE,
         help="project-state JSON file (default: .code-mule/project-state.json)",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="show internal IDs and raw control values",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,7 +61,6 @@ def build_parser() -> argparse.ArgumentParser:
     _state_file(resume)
 
     inspect = commands.add_parser("inspect", help="inspect the pending human action")
-    inspect.add_argument("--verbose", action="store_true")
     _state_file(inspect)
 
     approve = commands.add_parser("approve", help="approve one specific pending action")

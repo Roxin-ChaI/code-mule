@@ -14,7 +14,6 @@ from code_mule.domain.enums import (
     ChangeRequestStatus,
     HumanResolutionStrategy,
     ProjectStatus,
-    TaskStatus,
 )
 from code_mule.domain.models import Project
 from code_mule.human import (
@@ -32,6 +31,13 @@ from code_mule.orchestrator import (
 )
 from code_mule.planning import ProjectPlanningRequest, ProjectPlanningService
 from code_mule.progress import ConsoleProgressRenderer
+from code_mule.presentation import (
+    render_change_applied,
+    render_change_requested,
+    render_human_action,
+    render_project,
+    status_label,
+)
 from code_mule.replanning import (
     ChangeExecutionService,
     ChangeReplanningRequest,
@@ -143,7 +149,7 @@ class ProductionCliComposition:
         self._runtime_factory = runtime_factory
 
     def init_project(
-        self, project_id: str, name: str, workspace: Path
+        self, project_id: str, name: str, workspace: Path, verbose: bool = False
     ) -> CliCommandResult:
         if self._store.exists():
             raise InvalidCliProjectState(
@@ -152,18 +158,18 @@ class ProductionCliComposition:
         resolved_workspace = workspace.expanduser().resolve()
         self._validate_workspace_path(resolved_workspace)
         self._state_file.parent.mkdir(parents=True, exist_ok=True)
-        self._store.save(_empty_state(project_id, name, resolved_workspace))
+        state = _empty_state(project_id, name, resolved_workspace)
+        self._store.save(state)
+        lines = render_project(state, verbose=verbose, heading="PROJECT INITIALIZED")
+        lines += ("", f"Workspace   {resolved_workspace}",)
+        if verbose:
+            lines += (f"state_file: {self._state_file}",)
         return CliCommandResult(
             CliExitCode.SUCCESS,
-            (
-                f"project_id: {project_id}",
-                "status: idle",
-                f"workspace: {resolved_workspace}",
-                f"state_file: {self._state_file}",
-            ),
+            lines,
         )
 
-    def run(self, objective: str | None) -> CliCommandResult:
+    def run(self, objective: str | None, verbose: bool = False) -> CliCommandResult:
         state = self._load()
         status = state.project.status
         if status is ProjectStatus.IDLE:
@@ -178,7 +184,7 @@ class ProductionCliComposition:
                 )
                 outcome = runtime.execution.run() if planning.ready_for_execution else None
             final = self._load()
-            return self._execution_result(final, outcome, plan_id=planning.plan_id)
+            return self._execution_result(final, outcome, verbose=verbose)
         if status is ProjectStatus.RUNNING:
             if objective is not None:
                 raise InvalidCliProjectState(
@@ -187,7 +193,7 @@ class ProductionCliComposition:
             runtime = self._runtime(state)
             with runtime.renderer:
                 outcome = runtime.execution.run()
-            return self._execution_result(self._load(), outcome)
+            return self._execution_result(self._load(), outcome, verbose=verbose)
         if status is ProjectStatus.CHANGE_REQUESTED:
             raise InvalidCliProjectState(
                 "change is pending; run 'code-mule change --apply' at the Safe Point"
@@ -196,21 +202,24 @@ class ProductionCliComposition:
             raise CliHumanActionRequired("project requires human action")
         raise InvalidCliProjectState(f"run is not allowed from {status.value}")
 
-    def status(self) -> CliCommandResult:
+    def status(self, verbose: bool = False) -> CliCommandResult:
         state = self._load()
-        return CliCommandResult(CliExitCode.SUCCESS, self._status_lines(state))
+        return CliCommandResult(
+            CliExitCode.SUCCESS, render_project(state, verbose=verbose)
+        )
 
-    def ask(self, question: str) -> CliCommandResult:
+    def ask(self, question: str, verbose: bool = False) -> CliCommandResult:
         if question == "":
             raise InvalidCliProjectState("question must not be empty")
         state = self._load()
-        view = self._orchestrator().query(QueryCommand(state.project.id))
+        self._orchestrator().query(QueryCommand(state.project.id))
         return CliCommandResult(
             CliExitCode.SUCCESS,
-            (f"question: {question}",) + self._status_lines(state, view=view),
+            ("PROJECT QUERY", f"Question    {question}", "")
+            + render_project(state, verbose=verbose, heading="ANSWER"),
         )
 
-    def change(self, request: str) -> CliCommandResult:
+    def change(self, request: str, verbose: bool = False) -> CliCommandResult:
         state = self._load()
         try:
             result = self._orchestrator().change(
@@ -223,16 +232,12 @@ class ProductionCliComposition:
             )
         except InvalidBossCommand as error:
             raise InvalidCliProjectState("change is invalid for current state") from error
-        return CliCommandResult(
-            CliExitCode.SUCCESS,
-            (
-                f"change_request_id: {result.change_request_id}",
-                f"status: {result.current_status.value}",
-                "next: code-mule change --apply",
-            ),
-        )
+        lines = render_change_requested(self._load(), request, verbose=verbose)
+        if verbose:
+            lines += (f"change_request_id: {result.change_request_id}",)
+        return CliCommandResult(CliExitCode.SUCCESS, lines)
 
-    def apply_change(self) -> CliCommandResult:
+    def apply_change(self, verbose: bool = False) -> CliCommandResult:
         state = self._load()
         if state.project.status is not ProjectStatus.CHANGE_REQUESTED:
             raise InvalidCliProjectState(
@@ -257,10 +262,19 @@ class ProductionCliComposition:
                 ChangeReplanningRequest(state.project.id, pending[0].id)
             )
         final = self._load()
-        lines = (
-            f"replacement_plan_id: {outcome.replanning.plan_id}",
-            f"replacement_plan_version: {outcome.replanning.plan_version}",
-        ) + self._status_lines(final)
+        stop_reason = getattr(getattr(outcome, "execution", None), "stop_reason", None)
+        stop_value = None if stop_reason is None else stop_reason.value
+        lines = render_change_applied(
+            state,
+            final,
+            verbose=verbose,
+            execution_stop_reason=stop_value,
+        )
+        if verbose:
+            lines += (
+                f"replacement_plan_id: {outcome.replanning.plan_id}",
+                f"replacement_plan_version: {outcome.replanning.plan_version}",
+            )
         code = (
             CliExitCode.HUMAN_ACTION_REQUIRED
             if outcome.human_action_required
@@ -268,15 +282,19 @@ class ProductionCliComposition:
         )
         return CliCommandResult(code, lines)
 
-    def pause(self) -> CliCommandResult:
+    def pause(self, verbose: bool = False) -> CliCommandResult:
         state = self._load()
         try:
             result = self._orchestrator().pause(PauseCommand(state.project.id))
         except InvalidBossCommand as error:
             raise InvalidCliProjectState("pause is invalid for current state") from error
-        return CliCommandResult(CliExitCode.SUCCESS, (result.message,))
+        return CliCommandResult(
+            CliExitCode.SUCCESS,
+            ("PROJECT PAUSED", result.message, "")
+            + render_project(self._load(), verbose=verbose),
+        )
 
-    def resume(self) -> CliCommandResult:
+    def resume(self, verbose: bool = False) -> CliCommandResult:
         state = self._load()
         if state.project.status is ProjectStatus.HUMAN_REQUIRED:
             raise CliHumanActionRequired(
@@ -287,7 +305,11 @@ class ProductionCliComposition:
             result = self._orchestrator().resume(ResumeCommand(state.project.id))
         except InvalidBossCommand as error:
             raise InvalidCliProjectState("resume is invalid for current state") from error
-        return CliCommandResult(CliExitCode.SUCCESS, (result.message,))
+        return CliCommandResult(
+            CliExitCode.SUCCESS,
+            ("EXECUTION RESUMED", result.message, "")
+            + render_project(self._load(), verbose=verbose),
+        )
 
     def inspect(self, verbose: bool = False) -> CliCommandResult:
         state = self._load()
@@ -297,90 +319,72 @@ class ProductionCliComposition:
             raise InvalidCliProjectState("human action state is ambiguous") from error
         if action is None:
             raise InvalidCliProjectState("no pending HumanAction")
-        task = action.task_id or "-"
-        lines = (
-            "ACTION REQUIRED",
-            f"Category   {action.category.value.replace('_', ' ').title()}",
-            f"Project    {action.project_id}",
-            f"Task       {task}",
-            f"Summary    {action.summary}",
-            f"Request    {action.requested_action}",
-            f"Risk       {action.risk}",
-            f"Created    {action.created_at.isoformat()}",
-            "",
-            "No action has been executed.",
+        return CliCommandResult(
+            CliExitCode.SUCCESS, render_human_action(action, verbose=verbose)
         )
-        if action.category.value in {"worker_approval", "external_side_effect"}:
-            lines += (
-                "",
-                "Approve:",
-                f"  code-mule approve {action.id}",
-                "Reject:",
-                f"  code-mule reject {action.id}",
-            )
-        else:
-            lines += (
-                "",
-                "Resolve:",
-                f"  code-mule resolve {action.id} --strategy <strategy>",
-            )
-        if verbose:
-            lines += (
-                "",
-                f"action_id: {action.id}",
-                f"status: {action.status.value}",
-                f"task_id: {action.task_id or '-'}",
-            )
-        return CliCommandResult(CliExitCode.SUCCESS, lines)
 
-    def approve(self, action_id: str) -> CliCommandResult:
+    def approve(self, action_id: str, verbose: bool = False) -> CliCommandResult:
         try:
             state = self._human_resolution().approve(action_id)
         except HumanResolutionError as error:
             raise InvalidCliProjectState(str(error)) from error
         action = self._action(state, action_id)
-        return CliCommandResult(
-            CliExitCode.SUCCESS,
-            (
-                f"action_id: {action.id}",
-                f"status: {action.status.value}",
-                "handoff: approved; Worker session recovery is not available",
-                "project_status: human_required",
-            ),
+        lines = (
+            "ACTION APPROVED",
+            "The approval is bound to this action only.",
+            "No operation has been executed.",
+            "Worker session recovery is not available; the project remains safely stopped.",
         )
+        if verbose:
+            lines += (
+                f"action_id: {action.id}",
+                f"action_status: {action.status.value}",
+                f"project_status: {state.project.status.value}",
+            )
+        return CliCommandResult(CliExitCode.SUCCESS, lines)
 
-    def reject(self, action_id: str) -> CliCommandResult:
+    def reject(self, action_id: str, verbose: bool = False) -> CliCommandResult:
         try:
             state = self._human_resolution().reject(action_id)
         except HumanResolutionError as error:
             raise InvalidCliProjectState(str(error)) from error
         action = self._action(state, action_id)
-        return CliCommandResult(
-            CliExitCode.SUCCESS,
-            (
-                f"action_id: {action.id}",
-                f"status: {action.status.value}",
-                "project_status: human_required",
-            ),
+        lines = (
+            "ACTION REJECTED",
+            "The requested operation was not executed.",
+            "The project remains safely stopped.",
         )
+        if verbose:
+            lines += (
+                f"action_id: {action.id}",
+                f"action_status: {action.status.value}",
+                f"project_status: {state.project.status.value}",
+            )
+        return CliCommandResult(CliExitCode.SUCCESS, lines)
 
     def resolve(
-        self, action_id: str, strategy: HumanResolutionStrategy
+        self,
+        action_id: str,
+        strategy: HumanResolutionStrategy,
+        verbose: bool = False,
     ) -> CliCommandResult:
         try:
             state = self._human_resolution().resolve(action_id, strategy)
         except HumanResolutionError as error:
             raise InvalidCliProjectState(str(error)) from error
         action = self._action(state, action_id)
-        return CliCommandResult(
-            CliExitCode.SUCCESS,
-            (
-                f"action_id: {action.id}",
-                f"status: {action.status.value}",
-                f"strategy: {strategy.value}",
-                f"project_status: {state.project.status.value}",
-            ),
+        lines = (
+            "ACTION RESOLVED",
+            f"Strategy    {strategy.value.replace('_', ' ').title()}",
+            f"Project     {status_label(state.project.status)}",
         )
+        if verbose:
+            lines += (
+                f"action_id: {action.id}",
+                f"action_status: {action.status.value}",
+                f"project_status: {state.project.status.value}",
+            )
+        return CliCommandResult(CliExitCode.SUCCESS, lines)
 
     def _human_resolution(self) -> HumanResolutionService:
         return HumanResolutionService(
@@ -539,32 +543,17 @@ class ProductionCliComposition:
                 "project Plan is not recoverable"
             ) from error
 
-    def _status_lines(self, state: ProjectState, *, view=None) -> tuple[str, ...]:
-        if view is None:
-            view = self._orchestrator().query(QueryCommand(state.project.id))
-        active_plan = next(
-            (plan for plan in state.plans if plan.id == state.project.active_plan_id),
-            None,
+    def _execution_result(
+        self, state: ProjectState, outcome, *, verbose: bool = False
+    ):
+        stop_reason = None if outcome is None else outcome.stop_reason.value
+        lines = render_project(
+            state,
+            verbose=verbose,
+            execution_stop_reason=stop_reason,
         )
-        blockers = tuple(
-            task.id for task in state.tasks if task.status is TaskStatus.BLOCKED
-        )
-        return (
-            f"project_id: {view.project_id}",
-            f"project_status: {view.status.value}",
-            f"active_plan: {view.active_plan_id or '-'}",
-            f"active_plan_version: {active_plan.version if active_plan else '-'}",
-            f"task_progress: {view.completed_tasks}/{view.total_tasks}",
-            f"current_task: {view.current_task_id or '-'}",
-            f"blockers: {','.join(blockers) if blockers else '-'}",
-            "human_action_required: "
-            + str(view.status is ProjectStatus.HUMAN_REQUIRED).lower(),
-        )
-
-    def _execution_result(self, state: ProjectState, outcome, *, plan_id=None):
-        lines = (() if plan_id is None else (f"plan_id: {plan_id}",)) + self._status_lines(state)
-        if outcome is not None:
-            lines += (f"execution_stop_reason: {outcome.stop_reason.value}",)
+        if state.project.status is ProjectStatus.HUMAN_REQUIRED:
+            lines += ("", "Next", "  code-mule inspect")
         code = (
             CliExitCode.HUMAN_ACTION_REQUIRED
             if state.project.status is ProjectStatus.HUMAN_REQUIRED

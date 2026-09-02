@@ -36,12 +36,12 @@ class _FakeCommands:
 
     def init_project(self, *values): return self._call("init", *values)
     def run(self, *values): return self._call("run", *values)
-    def status(self): return self._call("status")
+    def status(self, *values): return self._call("status", *values)
     def ask(self, *values): return self._call("ask", *values)
     def change(self, *values): return self._call("change", *values)
-    def apply_change(self): return self._call("apply_change")
-    def pause(self): return self._call("pause")
-    def resume(self): return self._call("resume")
+    def apply_change(self, *values): return self._call("apply_change", *values)
+    def pause(self, *values): return self._call("pause", *values)
+    def resume(self, *values): return self._call("resume", *values)
     def inspect(self, *values): return self._call("inspect", *values)
     def approve(self, *values): return self._call("approve", *values)
     def reject(self, *values): return self._call("reject", *values)
@@ -211,7 +211,7 @@ class ProductionCommandTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "unknown"):
             composition.approve("future-action")
         approved = composition.approve("action-123")
-        self.assertIn("status: approved", approved.output)
+        self.assertIn("ACTION APPROVED", approved.output)
         self.assertIs(
             store.load().human_actions[0].status, HumanActionStatus.APPROVED
         )
@@ -261,7 +261,7 @@ class CliProcessBoundaryTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(output, "ok\n")
         self.assertEqual(errors, "")
-        self.assertEqual(commands.calls, [("status", ())])
+        self.assertEqual(commands.calls, [("status", (False,))])
 
     def test_dispatches_human_resolution_commands(self):
         cases = (
