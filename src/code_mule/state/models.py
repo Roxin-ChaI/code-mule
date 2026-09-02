@@ -17,6 +17,7 @@ from code_mule.domain.models import (
     Requirement,
     Task,
 )
+from code_mule.execution.contracts import ExecutionLease
 
 
 @dataclass
@@ -34,6 +35,7 @@ class ProjectState:
     events: tuple[ProjectEvent, ...]
     human_actions: tuple[HumanAction, ...] = ()
     human_resolutions: tuple[HumanResolution, ...] = ()
+    execution_leases: tuple[ExecutionLease, ...] = ()
 
 
 __all__ = ["ProjectState"]

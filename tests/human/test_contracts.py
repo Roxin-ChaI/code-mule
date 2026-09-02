@@ -70,13 +70,13 @@ class HumanActionContractTests(unittest.TestCase):
         )
         self.assertIs(state.project.status, ProjectStatus.RUNNING)
 
-    def test_state_v4_migrates_and_v5_round_trips_human_records(self):
+    def test_state_v4_migrates_and_v6_round_trips_human_records(self):
         legacy = serialize_project_state(make_project_state())
         legacy["schema_version"] = 4
         del legacy["human_actions"]
         del legacy["human_resolutions"]
         migrated = deserialize_project_state(legacy)
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 5)
+        self.assertEqual(CURRENT_SCHEMA_VERSION, 6)
         self.assertEqual(migrated.human_actions, ())
         self.assertEqual(migrated.human_resolutions, ())
 

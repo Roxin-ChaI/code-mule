@@ -30,11 +30,12 @@ from code_mule.domain.models import (
     Requirement,
     Task,
 )
+from code_mule.execution.contracts import ExecutionLease, ExecutionLeaseStatus
 
 from .models import ProjectState
 
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 
 class UnsupportedStateSchema(ValueError):
@@ -289,6 +290,21 @@ def _human_resolution_to_payload(resolution: HumanResolution) -> dict[str, objec
     }
 
 
+def _execution_lease_to_payload(lease: ExecutionLease) -> dict[str, object]:
+    return {
+        "id": lease.id,
+        "project_id": lease.project_id,
+        "owner_id": lease.owner_id,
+        "pid": lease.pid,
+        "acquired_at": lease.acquired_at.isoformat(),
+        "heartbeat_at": lease.heartbeat_at.isoformat(),
+        "status": lease.status.value,
+        "current_task_id": lease.current_task_id,
+        "codex_thread_id": lease.codex_thread_id,
+        "attempt": lease.attempt,
+    }
+
+
 def serialize_project_state(state: ProjectState) -> dict[str, object]:
     """Convert a complete snapshot to a JSON-compatible object."""
 
@@ -320,6 +336,9 @@ def serialize_project_state(state: ProjectState) -> dict[str, object]:
         ],
         "human_resolutions": [
             _human_resolution_to_payload(item) for item in state.human_resolutions
+        ],
+        "execution_leases": [
+            _execution_lease_to_payload(item) for item in state.execution_leases
         ],
     }
 
@@ -541,9 +560,18 @@ def _migrate_v4_to_v5(root: dict[str, object]) -> dict[str, object]:
     """Add durable typed HumanAction and HumanResolution collections."""
 
     migrated = dict(root)
-    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
+    migrated["schema_version"] = 5
     migrated["human_actions"] = []
     migrated["human_resolutions"] = []
+    return migrated
+
+
+def _migrate_v5_to_v6(root: dict[str, object]) -> dict[str, object]:
+    """Add durable local execution ownership history."""
+
+    migrated = dict(root)
+    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
+    migrated["execution_leases"] = []
     return migrated
 
 
@@ -857,6 +885,54 @@ def _human_resolution_from_payload(value: object) -> HumanResolution:
     )
 
 
+def _execution_lease_from_payload(value: object) -> ExecutionLease:
+    payload = _expect_object(value, "execution_lease")
+    attempt_value = _field(payload, "attempt", "execution_lease")
+    return ExecutionLease(
+        id=_expect_str(
+            _field(payload, "id", "execution_lease"), "execution_lease.id"
+        ),
+        project_id=_expect_str(
+            _field(payload, "project_id", "execution_lease"),
+            "execution_lease.project_id",
+        ),
+        owner_id=_expect_str(
+            _field(payload, "owner_id", "execution_lease"),
+            "execution_lease.owner_id",
+        ),
+        pid=_expect_int(
+            _field(payload, "pid", "execution_lease"), "execution_lease.pid"
+        ),
+        acquired_at=_datetime(
+            _field(payload, "acquired_at", "execution_lease"),
+            "execution_lease.acquired_at",
+        ),
+        heartbeat_at=_datetime(
+            _field(payload, "heartbeat_at", "execution_lease"),
+            "execution_lease.heartbeat_at",
+        ),
+        status=ExecutionLeaseStatus(
+            _expect_str(
+                _field(payload, "status", "execution_lease"),
+                "execution_lease.status",
+            )
+        ),
+        current_task_id=_expect_optional_str(
+            _field(payload, "current_task_id", "execution_lease"),
+            "execution_lease.current_task_id",
+        ),
+        codex_thread_id=_expect_optional_str(
+            _field(payload, "codex_thread_id", "execution_lease"),
+            "execution_lease.codex_thread_id",
+        ),
+        attempt=(
+            None
+            if attempt_value is None
+            else _expect_int(attempt_value, "execution_lease.attempt")
+        ),
+    )
+
+
 def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     """Restore a complete snapshot, rejecting unknown or corrupt payloads."""
 
@@ -866,7 +942,7 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     schema_version = root["schema_version"]
     if type(schema_version) is not int:
         raise UnsupportedStateSchema("schema_version must be an integer")
-    if schema_version not in {1, 2, 3, 4, CURRENT_SCHEMA_VERSION}:
+    if schema_version not in {1, 2, 3, 4, 5, CURRENT_SCHEMA_VERSION}:
         raise UnsupportedStateSchema(
             f"unsupported schema_version: {schema_version!r}"
         )
@@ -881,6 +957,9 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
         schema_version = 4
     if schema_version == 4:
         root = _migrate_v4_to_v5(root)
+        schema_version = 5
+    if schema_version == 5:
+        root = _migrate_v5_to_v6(root)
 
     try:
         quality_value = _field(root, "quality_status", "project state")
@@ -948,6 +1027,11 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
                 _field(root, "human_resolutions", "project state"),
                 "human_resolutions",
                 _human_resolution_from_payload,
+            ),
+            execution_leases=_tuple_of(
+                _field(root, "execution_leases", "project state"),
+                "execution_leases",
+                _execution_lease_from_payload,
             ),
         )
     except InvalidProjectState:
