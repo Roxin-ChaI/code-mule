@@ -68,6 +68,24 @@ python3.12 -m venv .venv
 
 Do not rely on packages installed in the global `python3.12` environment.
 
+## Boss CLI Quick Start
+
+```bash
+.venv/bin/code-mule init \
+  --project-id calculator \
+  --name "Calculator" \
+  --workspace /absolute/path/to/disposable/repository
+
+export DEEPSEEK_API_KEY="..."
+export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
+.venv/bin/code-mule run --objective "Create a tested calculator"
+.venv/bin/code-mule status
+```
+
+The formal Boss CLI also provides `ask`, `change`, `change --apply`, `pause`,
+and `resume`. See [Boss CLI](docs/cli.md) for state behavior, Human Gates,
+environment variables, exit codes, and the manual real E2E.
+
 ## Manual DeepSeek E2E
 
 This command makes a real DeepSeek API request and may incur charges. It is a Boss-only manual gate and is not run by automated verification or Codex.
