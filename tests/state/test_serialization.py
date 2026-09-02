@@ -27,6 +27,7 @@ class ProjectStateSerializationTests(unittest.TestCase):
         self.assertIsInstance(project, dict)
         self.assertEqual(project["status"], ProjectStatus.RUNNING.value)
         self.assertEqual(project["created_at"], state.project.created_at.isoformat())
+        self.assertIsNone(project["workspace"])
         requirements = payload["requirements"]
         self.assertIsInstance(requirements, list)
         self.assertEqual([item["id"] for item in requirements], ["req-2", "req-1"])
@@ -70,7 +71,7 @@ class InvalidProjectStateTests(unittest.TestCase):
             deserialize_project_state(self.payload)
 
     def test_unsupported_schema_version_is_rejected(self):
-        self.payload["schema_version"] = 4
+        self.payload["schema_version"] = CURRENT_SCHEMA_VERSION + 1
         with self.assertRaises(UnsupportedStateSchema):
             deserialize_project_state(self.payload)
 
@@ -162,6 +163,15 @@ class InvalidProjectStateTests(unittest.TestCase):
         invalid["tasks"][0]["requirement_ids"] = ["req-2", 1]
         with self.assertRaises(InvalidProjectState):
             deserialize_project_state(invalid)
+
+    def test_v3_state_migrates_with_unknown_workspace(self):
+        payload = copy.deepcopy(self.payload)
+        payload["schema_version"] = 3
+        payload["project"].pop("workspace")
+
+        restored = deserialize_project_state(payload)
+
+        self.assertIsNone(restored.project.workspace)
 
     def test_collection_with_wrong_type_is_invalid(self):
         self.payload["requirements"] = {}

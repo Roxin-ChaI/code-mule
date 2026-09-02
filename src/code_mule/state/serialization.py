@@ -29,7 +29,7 @@ from code_mule.domain.models import (
 from .models import ProjectState
 
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 class UnsupportedStateSchema(ValueError):
@@ -114,6 +114,7 @@ def _project_to_payload(project: Project) -> dict[str, object]:
         "current_task_id": project.current_task_id,
         "created_at": project.created_at.isoformat(),
         "updated_at": project.updated_at.isoformat(),
+        "workspace": project.workspace,
     }
 
 
@@ -304,6 +305,9 @@ def _project_from_payload(value: object) -> Project:
         updated_at=_datetime(
             _field(payload, "updated_at", "project"), "project.updated_at"
         ),
+        workspace=_expect_optional_str(
+            _field(payload, "workspace", "project"), "project.workspace"
+        ),
     )
 
 
@@ -475,9 +479,22 @@ def _migrate_v2_to_v3(root: dict[str, object]) -> dict[str, object]:
         migrated_impacts.append(impact)
 
     migrated = dict(root)
-    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
+    migrated["schema_version"] = 3
     migrated["requirements"] = migrated_requirements
     migrated["impact_analyses"] = migrated_impacts
+    return migrated
+
+
+def _migrate_v3_to_v4(root: dict[str, object]) -> dict[str, object]:
+    """Add the persisted Worker workspace required by the Boss CLI."""
+
+    project = dict(
+        _expect_object(_field(root, "project", "project state"), "project")
+    )
+    project["workspace"] = None
+    migrated = dict(root)
+    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
+    migrated["project"] = project
     return migrated
 
 
@@ -724,7 +741,7 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     schema_version = root["schema_version"]
     if type(schema_version) is not int:
         raise UnsupportedStateSchema("schema_version must be an integer")
-    if schema_version not in {1, 2, CURRENT_SCHEMA_VERSION}:
+    if schema_version not in {1, 2, 3, CURRENT_SCHEMA_VERSION}:
         raise UnsupportedStateSchema(
             f"unsupported schema_version: {schema_version!r}"
         )
@@ -733,6 +750,9 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
         schema_version = 2
     if schema_version == 2:
         root = _migrate_v2_to_v3(root)
+        schema_version = 3
+    if schema_version == 3:
+        root = _migrate_v3_to_v4(root)
 
     try:
         quality_value = _field(root, "quality_status", "project state")
