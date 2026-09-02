@@ -15,10 +15,14 @@ from .routing import (
     boss_intent_schema,
     parse_boss_intent,
 )
+from .loop import run_chat_loop
+from .service import BossCommandGateway, BossConversationService
 
 __all__ = [
     "BossIntent",
     "BossIntentRouter",
+    "BossCommandGateway",
+    "BossConversationService",
     "BossSession",
     "CompositeBossIntentRouter",
     "ConversationReply",
@@ -28,4 +32,5 @@ __all__ = [
     "StructuredBossIntentRouter",
     "boss_intent_schema",
     "parse_boss_intent",
+    "run_chat_loop",
 ]

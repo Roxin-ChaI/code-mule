@@ -55,6 +55,10 @@ _CHANGE_PREFIX = re.compile(
     r"^(?:请)?(?:再)?(?:增加|添加|加入|加上|新增)\s*(.+)$|^(?:please\s+)?(?:add|include)\s+(.+)$",
     re.IGNORECASE,
 )
+_ACTION_COMMAND = re.compile(
+    r"^(?P<command>批准|approve|拒绝|reject|重试|retry)\s+(?P<action_id>\S+)$",
+    re.IGNORECASE,
+)
 
 
 class DeterministicBossIntentRouter:
@@ -65,6 +69,23 @@ class DeterministicBossIntentRouter:
         if normalized == "":
             return RoutedIntent(BossIntent.UNKNOWN, "clarify", 1.0, "empty input")
         key = normalized.casefold().rstrip("?？。！!")
+        action_command = _ACTION_COMMAND.fullmatch(normalized)
+        if action_command is not None:
+            command = action_command.group("command").casefold()
+            intent = {
+                "批准": BossIntent.APPROVE,
+                "approve": BossIntent.APPROVE,
+                "拒绝": BossIntent.REJECT,
+                "reject": BossIntent.REJECT,
+                "重试": BossIntent.RESOLVE,
+                "retry": BossIntent.RESOLVE,
+            }[command]
+            return RoutedIntent(
+                intent,
+                action_command.group("action_id"),
+                1.0,
+                "explicit Human Action ID",
+            )
         intent = _EXACT.get(key)
         if intent is not None:
             request = (

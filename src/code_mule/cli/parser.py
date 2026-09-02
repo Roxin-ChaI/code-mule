@@ -83,6 +83,9 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     _state_file(resolve)
+
+    chat = commands.add_parser("chat", help="start an interactive Boss conversation")
+    _state_file(chat)
     return parser
 
 

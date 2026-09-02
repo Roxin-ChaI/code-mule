@@ -16,6 +16,14 @@ from code_mule.domain.enums import (
     ProjectStatus,
 )
 from code_mule.domain.models import Project
+from code_mule.conversation import (
+    BossConversationService,
+    BossSession,
+    CompositeBossIntentRouter,
+    DeterministicBossIntentRouter,
+    StructuredBossIntentRouter,
+    run_chat_loop,
+)
 from code_mule.human import (
     HumanResolutionError,
     HumanResolutionService,
@@ -385,6 +393,44 @@ class ProductionCliComposition:
                 f"project_status: {state.project.status.value}",
             )
         return CliCommandResult(CliExitCode.SUCCESS, lines)
+
+    def chat(self, input_stream: TextIO, verbose: bool = False) -> CliCommandResult:
+        state = self._load()
+        service = BossConversationService(
+            state_loader=self._load,
+            commands=self,
+            router=self._boss_intent_router(),
+            session=BossSession(state.project.id),
+            verbose=verbose,
+        )
+        run_chat_loop(
+            service,
+            input_stream=input_stream,
+            output_stream=self._stdout,
+        )
+        return CliCommandResult(CliExitCode.SUCCESS)
+
+    def _boss_intent_router(self):
+        deterministic = DeterministicBossIntentRouter()
+        api_key = self._environment.get("DEEPSEEK_API_KEY")
+        if not api_key:
+            return CompositeBossIntentRouter(deterministic=deterministic)
+        model = self._environment.get(
+            "CODE_MULE_DEEPSEEK_MODEL", "deepseek-v4-flash"
+        )
+        client = DeepSeekSupervisorModelClient(
+            OpenAI(
+                api_key=api_key,
+                base_url="https://api.deepseek.com",
+                max_retries=0,
+                http_client=DefaultHttpx2Client(trust_env=False),
+            ),
+            DeepSeekSupervisorConfig(model=model, max_output_tokens=None),
+        )
+        return CompositeBossIntentRouter(
+            deterministic=deterministic,
+            model=StructuredBossIntentRouter(client),
+        )
 
     def _human_resolution(self) -> HumanResolutionService:
         return HumanResolutionService(

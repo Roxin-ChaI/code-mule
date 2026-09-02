@@ -34,6 +34,7 @@ class BossCliCommands(Protocol):
     def approve(self, action_id: str, verbose: bool = False) -> CliCommandResult: ...
     def reject(self, action_id: str, verbose: bool = False) -> CliCommandResult: ...
     def resolve(self, action_id: str, strategy: HumanResolutionStrategy, verbose: bool = False) -> CliCommandResult: ...
+    def chat(self, input_stream: TextIO, verbose: bool = False) -> CliCommandResult: ...
 
 
 CompositionFactory = Callable[[Path, Mapping[str, str], TextIO, TextIO], BossCliCommands]
@@ -55,7 +56,9 @@ def _production_factory(
     )
 
 
-def _dispatch(commands: BossCliCommands, arguments: object) -> CliCommandResult:
+def _dispatch(
+    commands: BossCliCommands, arguments: object, input_stream: TextIO
+) -> CliCommandResult:
     command = getattr(arguments, "command")
     if command == "init":
         return commands.init_project(
@@ -94,6 +97,8 @@ def _dispatch(commands: BossCliCommands, arguments: object) -> CliCommandResult:
             HumanResolutionStrategy(getattr(arguments, "strategy")),
             getattr(arguments, "verbose"),
         )
+    if command == "chat":
+        return commands.chat(input_stream, getattr(arguments, "verbose"))
     raise CliUsageError("unsupported command")
 
 
@@ -127,9 +132,11 @@ def main(
     environment: Mapping[str, str] | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
+    stdin: TextIO | None = None,
 ) -> int:
     output = stdout or sys.stdout
     errors = stderr or sys.stderr
+    inputs = stdin or sys.stdin
     arguments = build_parser().parse_args(argv)
     commands = composition_factory(
         arguments.state_file,
@@ -138,7 +145,7 @@ def main(
         errors,
     )
     try:
-        result = _dispatch(commands, arguments)
+        result = _dispatch(commands, arguments, inputs)
     except CliError as error:
         _print_error(error, errors)
         if arguments.debug:
