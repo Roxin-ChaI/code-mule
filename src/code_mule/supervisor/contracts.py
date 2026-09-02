@@ -18,6 +18,7 @@ class SupervisorOperation(StrEnum):
     REVIEW = "review"
     IMPACT_ANALYSIS = "impact_analysis"
     PROGRESS_REPORT = "progress_report"
+    BOSS_ROUTING = "boss_routing"
 
 
 @dataclass(frozen=True)

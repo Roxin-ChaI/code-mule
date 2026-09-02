@@ -52,6 +52,7 @@ _SCHEMA_NAMES = {
     SupervisorOperation.REVIEW: "code_mule_review",
     SupervisorOperation.IMPACT_ANALYSIS: "code_mule_impact_analysis",
     SupervisorOperation.PROGRESS_REPORT: "code_mule_progress_report",
+    SupervisorOperation.BOSS_ROUTING: "code_mule_boss_routing",
 }
 
 

@@ -70,6 +70,7 @@ class OpenAISupervisorRequestTests(unittest.TestCase):
             SupervisorOperation.REVIEW: "code_mule_review",
             SupervisorOperation.IMPACT_ANALYSIS: "code_mule_impact_analysis",
             SupervisorOperation.PROGRESS_REPORT: "code_mule_progress_report",
+            SupervisorOperation.BOSS_ROUTING: "code_mule_boss_routing",
         }
         for operation, expected_name in expected_names.items():
             with self.subTest(operation=operation):
