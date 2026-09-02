@@ -55,6 +55,42 @@ class BossRoutingTests(unittest.TestCase):
             "action-123",
         )
 
+    def test_read_only_paraphrases_ignore_common_punctuation(self):
+        router = CompositeBossIntentRouter(model=FailingModel())
+        cases = (
+            ("还有几个任务", BossIntent.QUERY_PROGRESS),
+            ("还有几个任务？", BossIntent.QUERY_PROGRESS),
+            ("还剩多少任务", BossIntent.QUERY_PROGRESS),
+            ("剩余多少任务。", BossIntent.QUERY_PROGRESS),
+            ("还有多少工作", BossIntent.QUERY_PROGRESS),
+            ("完成多少？", BossIntent.QUERY_PROGRESS),
+            ("  进度怎么样  ", BossIntent.QUERY_PROGRESS),
+            ("现在忙什么", BossIntent.QUERY_CURRENT_WORK),
+            ("正在做哪个任务？", BossIntent.QUERY_CURRENT_WORK),
+            ("接下来准备怎么做", BossIntent.QUERY_PLAN),
+            ("怎么安排的？", BossIntent.QUERY_PLAN),
+            ("分几个步骤", BossIntent.QUERY_PLAN),
+            ("有什么问题需要我处理吗", BossIntent.QUERY_BLOCKERS),
+            ("有什么问题，需要我处理吗？", BossIntent.QUERY_BLOCKERS),
+            ("有没有什么需要我介入的", BossIntent.QUERY_BLOCKERS),
+            ("卡在哪里？", BossIntent.QUERY_BLOCKERS),
+            ("我需要做什么吗", BossIntent.QUERY_BLOCKERS),
+        )
+        for message, expected in cases:
+            with self.subTest(message=message):
+                routed = router.route(message, self.session)
+                self.assertIs(routed.intent, expected)
+                self.assertEqual(routed.normalized_request, message.strip())
+
+    def test_ambiguous_side_effect_language_remains_unknown(self):
+        router = CompositeBossIntentRouter()
+        for message in ("也许先停一下", "要不要调整一下功能", "考虑批准它"):
+            with self.subTest(message=message):
+                self.assertIs(
+                    router.route(message, self.session).intent,
+                    BossIntent.UNKNOWN,
+                )
+
     def test_ambiguous_request_without_model_is_unknown(self):
         routed = CompositeBossIntentRouter().route("也许可以调整一下", self.session)
         self.assertIs(routed.intent, BossIntent.UNKNOWN)
@@ -90,6 +126,9 @@ class BossRoutingTests(unittest.TestCase):
         self.assertIs(call["operation"], SupervisorOperation.BOSS_ROUTING)
         self.assertEqual(call["schema"], boss_intent_schema())
         self.assertNotIn("project_state", call)
+        self.assertIn("还有几个任务", call["system_prompt"])
+        self.assertIn("有什么需要我处理的吗", call["system_prompt"])
+        self.assertIn("never propose or perform a state change", call["system_prompt"])
 
     def test_low_model_confidence_becomes_unknown(self):
         client = FakeClient(
@@ -102,6 +141,36 @@ class BossRoutingTests(unittest.TestCase):
         )
         routed = StructuredBossIntentRouter(client).route("考虑改一下", self.session)
         self.assertIs(routed.intent, BossIntent.UNKNOWN)
+
+    def test_model_side_effect_requires_higher_confidence_than_read_only(self):
+        read_client = FakeClient(
+            {
+                "intent": "query_progress",
+                "normalized_request": "还有几个任务",
+                "confidence": 0.9,
+                "reason": "read-only progress query",
+            }
+        )
+        effect_client = FakeClient(
+            {
+                "intent": "change",
+                "normalized_request": "也许调整功能",
+                "confidence": 0.9,
+                "reason": "possible change",
+            }
+        )
+        self.assertIs(
+            StructuredBossIntentRouter(read_client)
+            .route("还有几个任务", self.session)
+            .intent,
+            BossIntent.QUERY_PROGRESS,
+        )
+        self.assertIs(
+            StructuredBossIntentRouter(effect_client)
+            .route("也许调整功能", self.session)
+            .intent,
+            BossIntent.UNKNOWN,
+        )
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ from code_mule.conversation import (
     BossConversationService,
     BossIntent,
     BossSession,
+    CompositeBossIntentRouter,
     ConversationReply,
     DeterministicBossIntentRouter,
     RoutedIntent,
@@ -30,6 +31,13 @@ class FixedRouter:
 
 class ExplodingRouter:
     def route(self, message, session): raise RuntimeError("sk-secret-router")
+
+
+class FallbackRouter:
+    def __init__(self): self.calls = []
+    def route(self, message, session):
+        self.calls.append(message)
+        return RoutedIntent(BossIntent.UNKNOWN, message)
 
 
 class FakeGateway:
@@ -187,6 +195,59 @@ class BossConversationServiceTests(unittest.TestCase):
         output = "\n".join(conversation.handle("暂停").lines)
         self.assertIn("not valid in the current project state", output)
         self.assertIn("No unsafe operation", output)
+
+    def test_real_service_answers_read_only_paraphrases_without_state_change(self):
+        state = make_project_state()
+        before = repr(state)
+        gateway = FakeGateway()
+        fallback = FallbackRouter()
+        conversation = BossConversationService(
+            state_loader=lambda: state,
+            commands=gateway,
+            router=CompositeBossIntentRouter(model=fallback),
+            session=BossSession(state.project.id),
+        )
+        cases = (
+            ("还有几个任务", BossIntent.QUERY_PROGRESS),
+            ("还有几个任务？", BossIntent.QUERY_PROGRESS),
+            ("还剩多少任务", BossIntent.QUERY_PROGRESS),
+            ("现在忙什么", BossIntent.QUERY_CURRENT_WORK),
+            ("接下来准备怎么做", BossIntent.QUERY_PLAN),
+            ("有什么问题需要我处理吗", BossIntent.QUERY_BLOCKERS),
+            ("有没有什么需要我介入的", BossIntent.QUERY_BLOCKERS),
+        )
+        for message, expected in cases:
+            with self.subTest(message=message):
+                self.assertIs(conversation.handle(message).intent, expected)
+        self.assertEqual(fallback.calls, [])
+        self.assertEqual(gateway.calls, [])
+        self.assertEqual(repr(state), before)
+
+    def test_blocker_query_gives_boss_specific_empty_and_action_answers(self):
+        state = make_project_state()
+        conversation, _ = service(state, BossIntent.QUERY_BLOCKERS)
+        self.assertEqual(
+            conversation.handle("有什么问题需要我处理吗").lines,
+            ("目前没有需要你处理的问题。",),
+        )
+
+        action = HumanAction(
+            "action-1", state.project.id, "task-1",
+            HumanActionCategory.WORKER_INPUT,
+            "Choose an input", "Provide the missing value", "Execution is stopped",
+            HumanActionStatus.PENDING, UPDATED,
+        )
+        gated = replace(
+            state,
+            project=replace(state.project, status=ProjectStatus.HUMAN_REQUIRED),
+            human_actions=(action,),
+        )
+        conversation, _ = service(gated, BossIntent.QUERY_BLOCKERS)
+        output = "\n".join(
+            conversation.handle("有什么问题需要我处理吗").lines
+        )
+        self.assertIn("Boss action required: Choose an input", output)
+        self.assertIn("inspect", output)
 
 
 class ChatLoopTests(unittest.TestCase):

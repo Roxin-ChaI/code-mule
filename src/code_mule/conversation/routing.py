@@ -59,16 +59,83 @@ _ACTION_COMMAND = re.compile(
     r"^(?P<command>批准|approve|拒绝|reject|重试|retry)\s+(?P<action_id>\S+)$",
     re.IGNORECASE,
 )
+_MATCH_PUNCTUATION = str.maketrans(
+    {character: " " for character in "?？。!！,，;；:：、…()（）"}
+)
+_READ_ONLY_PATTERNS: tuple[
+    tuple[BossIntent, tuple[re.Pattern[str], ...]], ...
+] = (
+    (
+        BossIntent.QUERY_BLOCKERS,
+        (
+            re.compile(r"(?:有什么|有没有(?:什么)?)(?:问题|阻塞)(?:需要我(?:来)?(?:处理|介入))?"),
+            re.compile(r"卡在(?:哪|哪里|什么地方)"),
+            re.compile(r"(?:有什么|有没有什么)?需要我(?:来)?(?:处理|介入)"),
+            re.compile(r"我需要做什么"),
+        ),
+    ),
+    (
+        BossIntent.QUERY_CURRENT_WORK,
+        (
+            re.compile(r"(?:现在|当前)(?:在|正)?(?:干|做|忙)(?:什么|啥)"),
+            re.compile(r"正在做(?:哪个|什么)?任务"),
+        ),
+    ),
+    (
+        BossIntent.QUERY_PROGRESS,
+        (
+            re.compile(r"做到哪(?:一步|里|儿|了)?"),
+            re.compile(r"进度(?:如何|怎么样|怎样|到哪)?"),
+            re.compile(r"完成(?:了)?(?:多少|几个)"),
+            re.compile(r"(?:还有|还剩|剩余)(?:几个|多少)?(?:个)?(?:任务|工作)"),
+        ),
+    ),
+    (
+        BossIntent.QUERY_PLAN,
+        (
+            re.compile(r"(?:完整)?计划(?:是)?什么"),
+            re.compile(r"怎么安排(?:的)?"),
+            re.compile(r"分(?:成)?几个步骤"),
+            re.compile(r"接下来(?:准备)?(?:怎么做|做什么|干什么)"),
+        ),
+    ),
+)
+_SIDE_EFFECT_INTENTS = frozenset(
+    {
+        BossIntent.CHANGE,
+        BossIntent.PAUSE,
+        BossIntent.RESUME,
+        BossIntent.APPROVE,
+        BossIntent.REJECT,
+        BossIntent.RESOLVE,
+    }
+)
+
+
+def _match_text(message: str) -> str:
+    """Normalize only the copy used for deterministic intent matching."""
+
+    collapsed = " ".join(message.split()).casefold()
+    return " ".join(collapsed.translate(_MATCH_PUNCTUATION).split())
+
+
+def _read_only_intent(match_text: str) -> BossIntent | None:
+    compact = match_text.replace(" ", "")
+    for intent, patterns in _READ_ONLY_PATTERNS:
+        if any(pattern.search(compact) for pattern in patterns):
+            return intent
+    return None
 
 
 class DeterministicBossIntentRouter:
     """Recognize only high-precision Boss phrases without a model call."""
 
     def route(self, message: str, session: BossSession) -> RoutedIntent:
-        normalized = " ".join(message.strip().split())
-        if normalized == "":
+        request = message.strip()
+        if request == "":
             return RoutedIntent(BossIntent.UNKNOWN, "clarify", 1.0, "empty input")
-        key = normalized.casefold().rstrip("?？。！!")
+        normalized = " ".join(request.split())
+        key = _match_text(normalized)
         action_command = _ACTION_COMMAND.fullmatch(normalized)
         if action_command is not None:
             command = action_command.group("command").casefold()
@@ -89,24 +156,34 @@ class DeterministicBossIntentRouter:
         intent = _EXACT.get(key)
         if intent is not None:
             request = (
-                "retry_task" if intent is BossIntent.RESOLVE else normalized
+                "retry_task" if intent is BossIntent.RESOLVE else request
             )
             return RoutedIntent(intent, request)
+        if request in {"?", "？"}:
+            return RoutedIntent(BossIntent.HELP, request)
+        read_only = _read_only_intent(key)
+        if read_only is not None:
+            return RoutedIntent(
+                read_only,
+                request,
+                1.0,
+                "deterministic read-only semantic pattern",
+            )
         change = _CHANGE_PREFIX.fullmatch(normalized)
         if change is not None:
             detail = next(group for group in change.groups() if group is not None)
             if detail.strip():
                 return RoutedIntent(
                     BossIntent.CHANGE,
-                    normalized,
+                    request,
                     1.0,
                     "explicit change verb",
                 )
         if key in {"现在怎么样", "how is it going", "how's it going"}:
-            return RoutedIntent(BossIntent.QUERY_STATUS, normalized)
+            return RoutedIntent(BossIntent.QUERY_STATUS, request)
         return RoutedIntent(
             BossIntent.UNKNOWN,
-            normalized,
+            request,
             1.0,
             "no deterministic match",
         )
@@ -154,11 +231,22 @@ def parse_boss_intent(payload: dict[str, object]) -> RoutedIntent:
 class StructuredBossIntentRouter:
     """Use one strict Supervisor model call only after deterministic routing fails."""
 
-    def __init__(self, client: SupervisorModelClient, *, minimum_confidence: float = 0.8):
+    def __init__(
+        self,
+        client: SupervisorModelClient,
+        *,
+        minimum_confidence: float = 0.8,
+        minimum_side_effect_confidence: float = 0.95,
+    ):
         if not 0.0 <= minimum_confidence <= 1.0:
             raise ValueError("minimum_confidence must be between zero and one")
+        if not minimum_confidence <= minimum_side_effect_confidence <= 1.0:
+            raise ValueError(
+                "minimum_side_effect_confidence must be at least the general threshold"
+            )
         self._client = client
         self._minimum_confidence = minimum_confidence
+        self._minimum_side_effect_confidence = minimum_side_effect_confidence
 
     def route(self, message: str, session: BossSession) -> RoutedIntent:
         payload = self._client.create_structured_response(
@@ -166,14 +254,23 @@ class StructuredBossIntentRouter:
             system_prompt=(
                 "Classify the Boss message into exactly one schema intent. "
                 "You only route; never propose or perform a state change. "
-                "Use UNKNOWN for ambiguous requests. normalized_request must "
-                "preserve the Boss meaning without adding facts."
+                "Use UNKNOWN for ambiguous requests, especially possible state-changing "
+                "requests. Read-only examples: '还有几个任务' -> query_progress; "
+                "'有什么需要我处理的吗' -> query_blockers; '接下来准备怎么做' -> "
+                "query_plan; '现在忙什么' -> query_current_work. normalized_request "
+                "must preserve the Boss meaning without adding facts. Never execute a "
+                "command or output a state modification."
             ),
             user_prompt=f"Boss message:\n{message}",
             schema=boss_intent_schema(),
         )
         routed = parse_boss_intent(payload)
-        if routed.confidence < self._minimum_confidence:
+        threshold = (
+            self._minimum_side_effect_confidence
+            if routed.intent in _SIDE_EFFECT_INTENTS
+            else self._minimum_confidence
+        )
+        if routed.confidence < threshold:
             return RoutedIntent(
                 BossIntent.UNKNOWN,
                 routed.normalized_request,

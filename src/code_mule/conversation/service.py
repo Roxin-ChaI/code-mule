@@ -8,6 +8,7 @@ from code_mule.cli.contracts import CliCommandResult, CliError
 from code_mule.domain.enums import (
     HumanActionStatus,
     HumanResolutionStrategy,
+    ProjectStatus,
     TaskStatus,
 )
 from code_mule.presentation import (
@@ -371,16 +372,21 @@ class BossConversationService:
         _, _, tasks = self._active_graph(state)
         blocked = tuple(task for task in tasks if task.status is TaskStatus.BLOCKED)
         pending_actions = self._pending_actions(state)
-        if not blocked and not pending_actions:
+        human_required = state.project.status is ProjectStatus.HUMAN_REQUIRED
+        if not blocked and not pending_actions and not human_required:
             return ConversationReply(
                 BossIntent.QUERY_BLOCKERS,
-                ("No persisted blockers or pending Human Actions were found.",),
+                ("目前没有需要你处理的问题。",),
             )
         lines: tuple[str, ...] = ("Current blockers:",)
         lines += tuple(f"- {task.id} · {task.title}" for task in blocked)
         lines += tuple(
-            f"- Human Action: {action.summary}" for action in pending_actions
+            f"- Boss action required: {action.summary}" for action in pending_actions
         )
+        if human_required and not pending_actions:
+            lines += ("- The project is safely stopped and requires human review.",)
+        if pending_actions:
+            lines += ("Say '发生什么了？' or use inspect to review the action.",)
         return ConversationReply(BossIntent.QUERY_BLOCKERS, lines)
 
     @staticmethod
