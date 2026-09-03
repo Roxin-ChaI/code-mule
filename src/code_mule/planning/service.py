@@ -75,7 +75,7 @@ class ProjectPlanningService:
     def plan(self, request: ProjectPlanningRequest) -> ProjectPlanningOutcome:
         initial = self._store.load()
         self._validate_initial_state(initial, request)
-        planning = self._start_planning(initial)
+        planning = self._start_planning(initial, request.objective)
         self._emit(
             planning,
             ProgressEventType.PLANNING_STARTED,
@@ -210,7 +210,7 @@ class ProjectPlanningService:
                 "initial planning requires an unbound IDLE Project"
             )
 
-    def _start_planning(self, state: ProjectState) -> ProjectState:
+    def _start_planning(self, state: ProjectState, objective: str) -> ProjectState:
         validate_transition(state.project.status, ProjectStatus.PLANNING)
         operation_time = self._clock()
         updated = replace(
@@ -218,6 +218,7 @@ class ProjectPlanningService:
             project=replace(
                 state.project,
                 status=ProjectStatus.PLANNING,
+                objective=objective,
                 updated_at=operation_time,
             ),
             events=state.events

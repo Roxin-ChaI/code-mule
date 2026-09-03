@@ -32,11 +32,20 @@ from code_mule.domain.models import (
 )
 from code_mule.execution.contracts import ExecutionLease, ExecutionLeaseStatus
 from code_mule.git_delivery.contracts import GitBaseline, GitChangeSet, GitCommitResult
+from code_mule.project_verification.contracts import (
+    FinalReviewDecision,
+    ProjectVerificationCategory,
+    ProjectVerificationCheck,
+    ProjectVerificationCommand,
+    ProjectVerificationResult,
+    ProjectVerificationSpec,
+    ProjectVerificationStatus,
+)
 
 from .models import ProjectState
 
 
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 
 
 class UnsupportedStateSchema(ValueError):
@@ -86,6 +95,12 @@ def _expect_bool(value: object, context: str) -> bool:
     return cast(bool, value)
 
 
+def _expect_number(value: object, context: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise InvalidProjectState(f"{context} must be a number")
+    return float(value)
+
+
 def _field(payload: dict[str, object], name: str, context: str) -> object:
     if name not in payload:
         raise InvalidProjectState(f"{context} is missing required field {name!r}")
@@ -122,6 +137,7 @@ def _project_to_payload(project: Project) -> dict[str, object]:
         "created_at": project.created_at.isoformat(),
         "updated_at": project.updated_at.isoformat(),
         "workspace": project.workspace,
+        "objective": project.objective,
     }
 
 
@@ -339,6 +355,63 @@ def _git_commit_result_to_payload(result: GitCommitResult) -> dict[str, object]:
     }
 
 
+def _verification_command_to_payload(
+    command: ProjectVerificationCommand,
+) -> dict[str, object]:
+    return {
+        "name": command.name,
+        "category": command.category.value,
+        "command": list(command.command),
+        "required": command.required,
+        "timeout_seconds": command.timeout_seconds,
+        "network_allowed": command.network_allowed,
+    }
+
+
+def _verification_spec_to_payload(
+    spec: ProjectVerificationSpec,
+) -> dict[str, object]:
+    return {
+        "project_id": spec.project_id,
+        "commands": [_verification_command_to_payload(item) for item in spec.commands],
+    }
+
+
+def _verification_check_to_payload(
+    check: ProjectVerificationCheck,
+) -> dict[str, object]:
+    return {
+        "name": check.name,
+        "category": check.category.value,
+        "command": list(check.command),
+        "status": check.status.value,
+        "exit_code": check.exit_code,
+        "safe_summary": check.safe_summary,
+        "required": check.required,
+    }
+
+
+def _verification_result_to_payload(
+    result: ProjectVerificationResult,
+) -> dict[str, object]:
+    return {
+        "id": result.id,
+        "project_id": result.project_id,
+        "plan_id": result.plan_id,
+        "expected_head": result.expected_head,
+        "verified_head": result.verified_head,
+        "checks": [_verification_check_to_payload(item) for item in result.checks],
+        "started_at": result.started_at.isoformat(),
+        "completed_at": result.completed_at.isoformat(),
+        "final_review_decision": (
+            None
+            if result.final_review_decision is None
+            else result.final_review_decision.value
+        ),
+        "final_review_summary": result.final_review_summary,
+    }
+
+
 def serialize_project_state(state: ProjectState) -> dict[str, object]:
     """Convert a complete snapshot to a JSON-compatible object."""
 
@@ -383,6 +456,15 @@ def serialize_project_state(state: ProjectState) -> dict[str, object]:
         "git_commit_results": [
             _git_commit_result_to_payload(item) for item in state.git_commit_results
         ],
+        "project_verification_spec": (
+            None
+            if state.project_verification_spec is None
+            else _verification_spec_to_payload(state.project_verification_spec)
+        ),
+        "project_verification_results": [
+            _verification_result_to_payload(item)
+            for item in state.project_verification_results
+        ],
     }
 
 
@@ -408,6 +490,9 @@ def _project_from_payload(value: object) -> Project:
         ),
         workspace=_expect_optional_str(
             _field(payload, "workspace", "project"), "project.workspace"
+        ),
+        objective=_expect_optional_str(
+            _field(payload, "objective", "project"), "project.objective"
         ),
     )
 
@@ -622,10 +707,25 @@ def _migrate_v6_to_v7(root: dict[str, object]) -> dict[str, object]:
     """Add durable per-Task Git delivery evidence."""
 
     migrated = dict(root)
-    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
+    migrated["schema_version"] = 7
     migrated["git_baselines"] = []
     migrated["git_change_sets"] = []
     migrated["git_commit_results"] = []
+    return migrated
+
+
+def _migrate_v7_to_v8(root: dict[str, object]) -> dict[str, object]:
+    """Add deterministic project verification configuration and evidence."""
+
+    project = dict(
+        _expect_object(_field(root, "project", "project state"), "project")
+    )
+    project["objective"] = None
+    migrated = dict(root)
+    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
+    migrated["project"] = project
+    migrated["project_verification_spec"] = None
+    migrated["project_verification_results"] = []
     return migrated
 
 
@@ -1076,6 +1176,146 @@ def _git_commit_result_from_payload(value: object) -> GitCommitResult:
     )
 
 
+def _verification_command_from_payload(
+    value: object,
+) -> ProjectVerificationCommand:
+    payload = _expect_object(value, "project_verification_command")
+    return ProjectVerificationCommand(
+        name=_expect_str(
+            _field(payload, "name", "project_verification_command"),
+            "project_verification_command.name",
+        ),
+        category=ProjectVerificationCategory(
+            _expect_str(
+                _field(payload, "category", "project_verification_command"),
+                "project_verification_command.category",
+            )
+        ),
+        command=_strings(
+            _field(payload, "command", "project_verification_command"),
+            "project_verification_command.command",
+        ),
+        required=_expect_bool(
+            _field(payload, "required", "project_verification_command"),
+            "project_verification_command.required",
+        ),
+        timeout_seconds=_expect_number(
+            _field(payload, "timeout_seconds", "project_verification_command"),
+            "project_verification_command.timeout_seconds",
+        ),
+        network_allowed=_expect_bool(
+            _field(payload, "network_allowed", "project_verification_command"),
+            "project_verification_command.network_allowed",
+        ),
+    )
+
+
+def _verification_spec_from_payload(value: object) -> ProjectVerificationSpec:
+    payload = _expect_object(value, "project_verification_spec")
+    return ProjectVerificationSpec(
+        project_id=_expect_str(
+            _field(payload, "project_id", "project_verification_spec"),
+            "project_verification_spec.project_id",
+        ),
+        commands=_tuple_of(
+            _field(payload, "commands", "project_verification_spec"),
+            "project_verification_spec.commands",
+            _verification_command_from_payload,
+        ),
+    )
+
+
+def _verification_check_from_payload(value: object) -> ProjectVerificationCheck:
+    payload = _expect_object(value, "project_verification_check")
+    exit_code = _field(payload, "exit_code", "project_verification_check")
+    return ProjectVerificationCheck(
+        name=_expect_str(
+            _field(payload, "name", "project_verification_check"),
+            "project_verification_check.name",
+        ),
+        category=ProjectVerificationCategory(
+            _expect_str(
+                _field(payload, "category", "project_verification_check"),
+                "project_verification_check.category",
+            )
+        ),
+        command=_strings(
+            _field(payload, "command", "project_verification_check"),
+            "project_verification_check.command",
+        ),
+        status=ProjectVerificationStatus(
+            _expect_str(
+                _field(payload, "status", "project_verification_check"),
+                "project_verification_check.status",
+            )
+        ),
+        exit_code=(
+            None
+            if exit_code is None
+            else _expect_int(exit_code, "project_verification_check.exit_code")
+        ),
+        safe_summary=_expect_str(
+            _field(payload, "safe_summary", "project_verification_check"),
+            "project_verification_check.safe_summary",
+        ),
+        required=_expect_bool(
+            _field(payload, "required", "project_verification_check"),
+            "project_verification_check.required",
+        ),
+    )
+
+
+def _verification_result_from_payload(value: object) -> ProjectVerificationResult:
+    payload = _expect_object(value, "project_verification_result")
+    decision = _field(payload, "final_review_decision", "project_verification_result")
+    return ProjectVerificationResult(
+        id=_expect_str(
+            _field(payload, "id", "project_verification_result"),
+            "project_verification_result.id",
+        ),
+        project_id=_expect_str(
+            _field(payload, "project_id", "project_verification_result"),
+            "project_verification_result.project_id",
+        ),
+        plan_id=_expect_str(
+            _field(payload, "plan_id", "project_verification_result"),
+            "project_verification_result.plan_id",
+        ),
+        expected_head=_expect_str(
+            _field(payload, "expected_head", "project_verification_result"),
+            "project_verification_result.expected_head",
+        ),
+        verified_head=_expect_str(
+            _field(payload, "verified_head", "project_verification_result"),
+            "project_verification_result.verified_head",
+        ),
+        checks=_tuple_of(
+            _field(payload, "checks", "project_verification_result"),
+            "project_verification_result.checks",
+            _verification_check_from_payload,
+        ),
+        started_at=_datetime(
+            _field(payload, "started_at", "project_verification_result"),
+            "project_verification_result.started_at",
+        ),
+        completed_at=_datetime(
+            _field(payload, "completed_at", "project_verification_result"),
+            "project_verification_result.completed_at",
+        ),
+        final_review_decision=(
+            None
+            if decision is None
+            else FinalReviewDecision(
+                _expect_str(decision, "project_verification_result.final_review_decision")
+            )
+        ),
+        final_review_summary=_expect_optional_str(
+            _field(payload, "final_review_summary", "project_verification_result"),
+            "project_verification_result.final_review_summary",
+        ),
+    )
+
+
 def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     """Restore a complete snapshot, rejecting unknown or corrupt payloads."""
 
@@ -1085,7 +1325,7 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     schema_version = root["schema_version"]
     if type(schema_version) is not int:
         raise UnsupportedStateSchema("schema_version must be an integer")
-    if schema_version not in {1, 2, 3, 4, 5, 6, CURRENT_SCHEMA_VERSION}:
+    if schema_version not in {1, 2, 3, 4, 5, 6, 7, CURRENT_SCHEMA_VERSION}:
         raise UnsupportedStateSchema(
             f"unsupported schema_version: {schema_version!r}"
         )
@@ -1106,6 +1346,9 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
         schema_version = 6
     if schema_version == 6:
         root = _migrate_v6_to_v7(root)
+        schema_version = 7
+    if schema_version == 7:
+        root = _migrate_v7_to_v8(root)
 
     try:
         quality_value = _field(root, "quality_status", "project state")
@@ -1193,6 +1436,18 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
                 _field(root, "git_commit_results", "project state"),
                 "git_commit_results",
                 _git_commit_result_from_payload,
+            ),
+            project_verification_spec=(
+                None
+                if _field(root, "project_verification_spec", "project state") is None
+                else _verification_spec_from_payload(
+                    _field(root, "project_verification_spec", "project state")
+                )
+            ),
+            project_verification_results=_tuple_of(
+                _field(root, "project_verification_results", "project state"),
+                "project_verification_results",
+                _verification_result_from_payload,
             ),
         )
     except InvalidProjectState:

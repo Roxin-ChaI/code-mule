@@ -40,7 +40,7 @@ class GitDeliveryContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             replace(commit, staged_paths=())
 
-    def test_schema_v7_round_trip_persists_git_evidence(self):
+    def test_schema_v8_round_trip_persists_git_evidence(self):
         baseline, changes, commit = evidence()
         state = replace(
             make_project_state(),
@@ -49,7 +49,7 @@ class GitDeliveryContractTests(unittest.TestCase):
             git_commit_results=(commit,),
         )
         payload = serialize_project_state(state)
-        self.assertEqual(payload["schema_version"], 7)
+        self.assertEqual(payload["schema_version"], 8)
         self.assertEqual(deserialize_project_state(payload), state)
 
     def test_schema_v6_migrates_with_empty_git_evidence(self):
@@ -59,7 +59,7 @@ class GitDeliveryContractTests(unittest.TestCase):
         payload.pop("git_change_sets")
         payload.pop("git_commit_results")
         state = deserialize_project_state(payload)
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 7)
+        self.assertEqual(CURRENT_SCHEMA_VERSION, 8)
         self.assertEqual(state.git_baselines, ())
         self.assertEqual(state.git_change_sets, ())
         self.assertEqual(state.git_commit_results, ())

@@ -19,6 +19,10 @@ from code_mule.domain.models import (
 )
 from code_mule.execution.contracts import ExecutionLease
 from code_mule.git_delivery.contracts import GitBaseline, GitChangeSet, GitCommitResult
+from code_mule.project_verification.contracts import (
+    ProjectVerificationResult,
+    ProjectVerificationSpec,
+)
 
 
 @dataclass
@@ -40,6 +44,8 @@ class ProjectState:
     git_baselines: tuple[GitBaseline, ...] = ()
     git_change_sets: tuple[GitChangeSet, ...] = ()
     git_commit_results: tuple[GitCommitResult, ...] = ()
+    project_verification_spec: ProjectVerificationSpec | None = None
+    project_verification_results: tuple[ProjectVerificationResult, ...] = ()
 
 
 __all__ = ["ProjectState"]

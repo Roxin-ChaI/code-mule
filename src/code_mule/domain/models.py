@@ -97,12 +97,15 @@ class Project:
     created_at: datetime
     updated_at: datetime
     workspace: str | None = None
+    objective: str | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty(self.id, "id")
         _require_non_empty(self.name, "name")
         if self.workspace == "":
             raise ValueError("workspace must not be empty")
+        if self.objective == "":
+            raise ValueError("objective must not be empty")
 
 
 @dataclass
