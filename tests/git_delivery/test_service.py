@@ -128,6 +128,17 @@ class GitDeliveryServiceTests(RepositoryCase):
         with self.assertRaises(GitOwnershipError):
             self.service.prepare_change_set(baseline, failed, ("bad.py",))
 
+    def test_nonblocking_issues_are_left_for_supervisor_review(self):
+        baseline = self.service.capture_baseline("TASK-1")
+        (self.root / "owned.py").write_text("owned\n")
+        evidence = replace(
+            report("owned.py"), issues=("Nonblocking environment note",)
+        )
+        changes = self.service.prepare_change_set(
+            baseline, evidence, ("owned.py",)
+        )
+        self.assertEqual(changes.changed_paths, ("owned.py",))
+
     def test_unexpected_head_change_is_rejected(self):
         baseline = self.service.capture_baseline("TASK-1")
         (self.root / "other.py").write_text("other\n")

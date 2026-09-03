@@ -234,8 +234,6 @@ class GitDeliveryService:
         checks = report.tests + report.static_checks
         if any(": pass" not in item.lower() for item in checks):
             raise GitOwnershipError("Worker verification evidence is not passing")
-        if report.issues:
-            raise GitOwnershipError("Worker reported unresolved delivery issues")
 
     @staticmethod
     def _nul_paths(raw: str) -> tuple[str, ...]:

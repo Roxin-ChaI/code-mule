@@ -183,6 +183,17 @@ See [Boss CHANGE and Replanning](docs/change-replanning.md) for lifecycle,
 versioning, progress, failure behavior, the real local Codex smoke, and the
 Boss-only real DeepSeek manual E2E.
 
+## Git Delivery
+
+Phase 16 captures a clean repository baseline before every Task, validates the
+Worker's exact path ownership, and creates one deterministic local commit only
+after verification and Supervisor acceptance. Commit evidence is persisted
+before the Task becomes completed. REWORK attempts remain uncommitted, while
+push, tag, and release stay behind a Human Gate.
+
+See [Git Delivery Workflow](docs/git-delivery.md) for the clean-baseline rule,
+ownership checks, commit boundary, and disposable local E2E.
+
 ## Status
 
 Early development.
