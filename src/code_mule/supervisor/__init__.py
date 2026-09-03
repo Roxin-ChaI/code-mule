@@ -13,10 +13,15 @@ from .contracts import (
     RequirementUpdateProposal,
     ReviewRequest,
     ReviewResult,
+    SupervisorAttemptResult,
+    SupervisorCallFailure,
+    SupervisorFailureCategory,
     SupervisorOperation,
+    SupervisorRetryPolicy,
     TaskDependencyChange,
     TaskRequirementUpdate,
     TaskProposal,
+    supervisor_failure_is_retryable,
 )
 from .parsing import (
     InvalidSupervisorResponse,
@@ -54,7 +59,11 @@ __all__ = [
     "ReviewRequest",
     "ReviewResult",
     "SupervisorModelClient",
+    "SupervisorAttemptResult",
+    "SupervisorCallFailure",
+    "SupervisorFailureCategory",
     "SupervisorOperation",
+    "SupervisorRetryPolicy",
     "SupervisorService",
     "SUPERVISOR_SYSTEM_POLICY",
     "TaskProposal",
@@ -72,4 +81,5 @@ __all__ = [
     "plan_response_schema",
     "progress_report_response_schema",
     "review_response_schema",
+    "supervisor_failure_is_retryable",
 ]

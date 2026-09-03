@@ -21,6 +21,95 @@ class SupervisorOperation(StrEnum):
     BOSS_ROUTING = "boss_routing"
 
 
+class SupervisorFailureCategory(StrEnum):
+    TRANSPORT_TIMEOUT = "transport_timeout"
+    TEMPORARY_CONNECTION_FAILURE = "temporary_connection_failure"
+    INCOMPLETE_MAX_OUTPUT_TOKENS = "incomplete_max_output_tokens"
+    MALFORMED_STRUCTURED_RESPONSE = "malformed_structured_response"
+    SCHEMA_CONTRACT_VIOLATION = "schema_contract_violation"
+    DECISION_CONTRACT_VIOLATION = "decision_contract_violation"
+    CONTENT_FILTER = "content_filter"
+    DETERMINISTIC_VALIDATION_FAILURE = "deterministic_validation_failure"
+    HUMAN_GATE = "human_gate"
+    INVALID_BUSINESS_REFERENCE = "invalid_business_reference"
+    PROVIDER_AUTHENTICATION = "provider_authentication"
+    PROVIDER_CONFIGURATION = "provider_configuration"
+    UNKNOWN_FAILURE = "unknown_failure"
+
+
+_RETRYABLE_FAILURES = frozenset(
+    {
+        SupervisorFailureCategory.TRANSPORT_TIMEOUT,
+        SupervisorFailureCategory.TEMPORARY_CONNECTION_FAILURE,
+        SupervisorFailureCategory.INCOMPLETE_MAX_OUTPUT_TOKENS,
+        SupervisorFailureCategory.MALFORMED_STRUCTURED_RESPONSE,
+        SupervisorFailureCategory.SCHEMA_CONTRACT_VIOLATION,
+        SupervisorFailureCategory.DECISION_CONTRACT_VIOLATION,
+    }
+)
+
+
+def supervisor_failure_is_retryable(
+    category: SupervisorFailureCategory,
+) -> bool:
+    return category in _RETRYABLE_FAILURES
+
+
+@dataclass(frozen=True)
+class SupervisorRetryPolicy:
+    max_attempts: int = 2
+    retry_delay_seconds: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.max_attempts < 1:
+            raise ValueError("max_attempts must be at least 1")
+        if self.retry_delay_seconds < 0:
+            raise ValueError("retry_delay_seconds must be non-negative")
+
+
+@dataclass(frozen=True)
+class SupervisorAttemptResult:
+    operation: SupervisorOperation
+    attempt: int
+    succeeded: bool
+    failure_category: SupervisorFailureCategory | None
+    retryable: bool
+
+    def __post_init__(self) -> None:
+        if self.attempt < 1:
+            raise ValueError("attempt must be at least 1")
+        if self.succeeded:
+            if self.failure_category is not None or self.retryable:
+                raise ValueError("successful attempt cannot carry failure metadata")
+        elif self.failure_category is None:
+            raise ValueError("failed attempt requires failure_category")
+
+
+class SupervisorCallFailure(RuntimeError):
+    """Safe typed result of a non-retryable or exhausted Supervisor call."""
+
+    def __init__(
+        self,
+        *,
+        operation: SupervisorOperation,
+        failure_category: SupervisorFailureCategory,
+        attempt_count: int,
+        retryable: bool,
+        exhausted: bool,
+    ) -> None:
+        if attempt_count < 1:
+            raise ValueError("attempt_count must be at least 1")
+        super().__init__(
+            f"Supervisor {operation.value} failed after {attempt_count} "
+            f"attempt(s): {failure_category.value}"
+        )
+        self.operation = operation
+        self.failure_category = failure_category
+        self.attempt_count = attempt_count
+        self.retryable = retryable
+        self.exhausted = exhausted
+
+
 @dataclass(frozen=True)
 class PlanRequest:
     project_state: ProjectState
@@ -221,7 +310,12 @@ __all__ = [
     "ReviewRequest",
     "ReviewResult",
     "SupervisorOperation",
+    "SupervisorAttemptResult",
+    "SupervisorCallFailure",
+    "SupervisorFailureCategory",
+    "SupervisorRetryPolicy",
     "TaskProposal",
     "TaskDependencyChange",
     "TaskRequirementUpdate",
+    "supervisor_failure_is_retryable",
 ]
