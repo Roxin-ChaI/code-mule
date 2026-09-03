@@ -3,7 +3,10 @@ import inspect
 from types import SimpleNamespace
 import unittest
 
-from code_mule.supervisor.contracts import SupervisorOperation
+from code_mule.supervisor.contracts import (
+    SupervisorFailureCategory,
+    SupervisorOperation,
+)
 from code_mule.supervisor.providers import deepseek as provider_module
 from code_mule.supervisor.providers.deepseek import (
     DeepSeekSupervisorConfig,
@@ -195,6 +198,10 @@ class DeepSeekSupervisorResponseTests(unittest.TestCase):
         error = context.exception
         self.assertEqual(error.status, "incomplete")
         self.assertEqual(error.incomplete_reason, "max_output_tokens")
+        self.assertIs(
+            error.failure_category,
+            SupervisorFailureCategory.INCOMPLETE_MAX_OUTPUT_TOKENS,
+        )
         self.assertIn("reason='max_output_tokens'", str(error))
         self.assertNotIn("must-not-leak", str(error))
         self.assertEqual(len(responses.calls), 1)
@@ -210,6 +217,10 @@ class DeepSeekSupervisorResponseTests(unittest.TestCase):
             self._call(provider)
         self.assertEqual(context.exception.status, "incomplete")
         self.assertEqual(context.exception.incomplete_reason, "content_filter")
+        self.assertIs(
+            context.exception.failure_category,
+            SupervisorFailureCategory.CONTENT_FILTER,
+        )
         self.assertIn("content_filter", str(context.exception))
         self.assertEqual(len(responses.calls), 1)
 
@@ -266,6 +277,34 @@ class DeepSeekSupervisorResponseTests(unittest.TestCase):
             self._call(provider)
         self.assertIs(context.exception, failure)
         self.assertEqual(len(responses.calls), 1)
+
+    def test_transport_timeout_is_exposed_as_typed_retryable_failure(self):
+        provider, responses = make_provider(error=TimeoutError("temporary"))
+        with self.assertRaises(DeepSeekSupervisorResponseError) as raised:
+            self._call(provider)
+        self.assertIs(
+            raised.exception.failure_category,
+            SupervisorFailureCategory.TRANSPORT_TIMEOUT,
+        )
+        self.assertNotIn("temporary", str(raised.exception))
+        self.assertEqual(len(responses.calls), 1)
+
+    def test_failed_auth_code_is_typed_without_message_classification(self):
+        provider, _ = make_provider(
+            SimpleNamespace(
+                status="failed",
+                error={
+                    "code": "authentication_error",
+                    "message": "credentials rejected",
+                },
+            )
+        )
+        with self.assertRaises(DeepSeekSupervisorResponseError) as raised:
+            self._call(provider)
+        self.assertIs(
+            raised.exception.failure_category,
+            SupervisorFailureCategory.PROVIDER_AUTHENTICATION,
+        )
 
     def _call(self, provider: DeepSeekSupervisorModelClient) -> dict[str, object]:
         return provider.create_structured_response(

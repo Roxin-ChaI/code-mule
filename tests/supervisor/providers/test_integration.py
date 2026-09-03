@@ -9,6 +9,8 @@ from code_mule.supervisor.contracts import (
     ProgressReport,
     ProgressReportRequest,
     ReviewRequest,
+    SupervisorCallFailure,
+    SupervisorFailureCategory,
 )
 from code_mule.supervisor.providers.deepseek import (
     DeepSeekSupervisorConfig,
@@ -106,7 +108,75 @@ class DeepSeekIntegrationFakeClient:
         self.responses = DeepSeekIntegrationFakeResponsesAPI(payload)
 
 
+class SequencedDeepSeekResponsesAPI:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.responses.pop(0)
+
+
+class SequencedDeepSeekClient:
+    def __init__(self, responses):
+        self.responses = SequencedDeepSeekResponsesAPI(responses)
+
+
 class DeepSeekSupervisorIntegrationTests(unittest.TestCase):
+    def test_incomplete_max_tokens_regenerates_but_content_filter_does_not(self):
+        state = make_project_state()
+        client = SequencedDeepSeekClient(
+            [
+                SimpleNamespace(
+                    status="incomplete",
+                    incomplete_details=SimpleNamespace(
+                        reason="max_output_tokens"
+                    ),
+                ),
+                SimpleNamespace(
+                    status="completed",
+                    output_text=json.dumps(plan_payload()),
+                ),
+            ]
+        )
+        service = SupervisorService(
+            DeepSeekSupervisorModelClient(
+                client,
+                DeepSeekSupervisorConfig("deepseek-integration-model"),
+            )
+        )
+
+        service.plan(PlanRequest(state, "Plan with regeneration"))
+
+        self.assertEqual(len(client.responses.calls), 2)
+        self.assertIs(
+            service.last_attempt_results[0].failure_category,
+            SupervisorFailureCategory.INCOMPLETE_MAX_OUTPUT_TOKENS,
+        )
+
+        filtered = SequencedDeepSeekClient(
+            [
+                SimpleNamespace(
+                    status="incomplete",
+                    incomplete_details=SimpleNamespace(reason="content_filter"),
+                )
+            ]
+        )
+        filtered_service = SupervisorService(
+            DeepSeekSupervisorModelClient(
+                filtered,
+                DeepSeekSupervisorConfig("deepseek-integration-model"),
+            )
+        )
+        with self.assertRaises(SupervisorCallFailure) as raised:
+            filtered_service.plan(PlanRequest(state, "Plan safely"))
+        self.assertIs(
+            raised.exception.failure_category,
+            SupervisorFailureCategory.CONTENT_FILTER,
+        )
+        self.assertEqual(len(filtered.responses.calls), 1)
+
     def test_plan_uses_the_exact_plan_json_schema_and_parser_contract(self):
         state = make_project_state()
         client = DeepSeekIntegrationFakeClient(plan_payload())

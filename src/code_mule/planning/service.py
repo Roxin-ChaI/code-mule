@@ -17,6 +17,10 @@ from code_mule.progress import (
 )
 from code_mule.state.models import ProjectState
 from code_mule.supervisor.contracts import PlanProposal, PlanRequest
+from code_mule.supervisor import (
+    SupervisorFailureCategory,
+    supervisor_failure_metadata,
+)
 
 from .contracts import ProjectPlanningOutcome, ProjectPlanningRequest
 from .errors import (
@@ -24,6 +28,7 @@ from .errors import (
     PlanMaterializationError,
     ProjectPlanningStateError,
     SupervisorPlanningError,
+    UnknownProposalReference,
 )
 from .materialization import PlanMaterializer
 from .validation import PlanProposalValidator
@@ -90,7 +95,7 @@ class ProjectPlanningService:
             self._fail_planning(
                 planning,
                 event_type="planning.failed",
-                error_type=type(error).__name__,
+                failure_metadata=supervisor_failure_metadata(error),
             )
             raise SupervisorPlanningError("Supervisor PLAN failed") from error
 
@@ -105,7 +110,14 @@ class ProjectPlanningService:
             self._fail_planning(
                 planning,
                 event_type="planning.proposal_rejected",
-                error_type=type(error).__name__,
+                failure_metadata=supervisor_failure_metadata(
+                    error,
+                    category=(
+                        SupervisorFailureCategory.INVALID_BUSINESS_REFERENCE
+                        if isinstance(error, UnknownProposalReference)
+                        else SupervisorFailureCategory.DETERMINISTIC_VALIDATION_FAILURE
+                    ),
+                ),
             )
             raise
 
@@ -127,7 +139,12 @@ class ProjectPlanningService:
             self._fail_planning(
                 planning,
                 event_type="planning.failed",
-                error_type=type(error).__name__,
+                failure_metadata=supervisor_failure_metadata(
+                    error,
+                    category=(
+                        SupervisorFailureCategory.DETERMINISTIC_VALIDATION_FAILURE
+                    ),
+                ),
             )
             raise
 
@@ -222,7 +239,7 @@ class ProjectPlanningService:
         state: ProjectState,
         *,
         event_type: str,
-        error_type: str,
+        failure_metadata: dict[str, str],
     ) -> ProjectState:
         operation_time = self._clock()
         failed = request_human_action(
@@ -236,14 +253,14 @@ class ProjectPlanningService:
             action_id=f"action-{self._event_id_factory()}",
             event_id_factory=self._event_id_factory,
             source_event_types=(event_type,),
-            source_metadata={"error_type": error_type},
+            source_metadata=failure_metadata,
         )
         self._store.save(failed)
         self._emit(
             failed,
             ProgressEventType.PLANNING_FAILED,
             "Project planning requires human review",
-            metadata={"error_type": error_type},
+            metadata=failure_metadata,
         )
         return failed
 

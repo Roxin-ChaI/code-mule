@@ -12,6 +12,11 @@ from code_mule.planning import (
     SupervisorPlanningError,
 )
 from code_mule.progress import ProgressEventType, RecordingProgressSink
+from code_mule.supervisor import (
+    SupervisorCallFailure,
+    SupervisorFailureCategory,
+    SupervisorOperation,
+)
 
 from planning.test_validation import NOW, empty_state, valid_proposal
 
@@ -170,6 +175,31 @@ class ProjectPlanningServiceTests(unittest.TestCase):
         self.assertEqual(store.state.events[-1].event_type, "planning.failed")
         self.assertNotIn("provider failed", str(store.state.events[-1].metadata))
         self.assertIs(progress.events[-1].type, ProgressEventType.PLANNING_FAILED)
+
+    def test_retry_exhaustion_metadata_reaches_human_action_audit(self):
+        store = FakeStore(empty_state())
+        failure = SupervisorCallFailure(
+            operation=SupervisorOperation.PLAN,
+            failure_category=(
+                SupervisorFailureCategory.SCHEMA_CONTRACT_VIOLATION
+            ),
+            attempt_count=2,
+            retryable=True,
+            exhausted=True,
+        )
+        supervisor = FakeSupervisor(error=failure)
+
+        with self.assertRaises(SupervisorPlanningError):
+            make_service(store, supervisor).plan(
+                ProjectPlanningRequest("project-1", "Objective")
+            )
+
+        metadata = store.state.events[-1].metadata
+        self.assertEqual(metadata["operation"], "plan")
+        self.assertEqual(metadata["attempt_count"], "2")
+        self.assertEqual(
+            metadata["failure_category"], "schema_contract_violation"
+        )
 
     def test_invalid_proposal_is_rejected_without_repair_or_second_call(self):
         proposal = valid_proposal()

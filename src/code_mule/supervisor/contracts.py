@@ -55,6 +55,29 @@ def supervisor_failure_is_retryable(
     return category in _RETRYABLE_FAILURES
 
 
+def supervisor_failure_metadata(
+    error: BaseException,
+    *,
+    category: SupervisorFailureCategory | None = None,
+) -> dict[str, str]:
+    """Project only safe typed failure metadata; never exception text."""
+    resolved = category
+    if resolved is None:
+        candidate = getattr(error, "failure_category", None)
+        if isinstance(candidate, SupervisorFailureCategory):
+            resolved = candidate
+    metadata = {"error_type": type(error).__name__}
+    if resolved is not None:
+        metadata["failure_category"] = resolved.value
+    attempt_count = getattr(error, "attempt_count", None)
+    if isinstance(attempt_count, int) and attempt_count >= 1:
+        metadata["attempt_count"] = str(attempt_count)
+    operation = getattr(error, "operation", None)
+    if isinstance(operation, SupervisorOperation):
+        metadata["operation"] = operation.value
+    return metadata
+
+
 @dataclass(frozen=True)
 class SupervisorRetryPolicy:
     max_attempts: int = 2
@@ -318,4 +341,5 @@ __all__ = [
     "TaskDependencyChange",
     "TaskRequirementUpdate",
     "supervisor_failure_is_retryable",
+    "supervisor_failure_metadata",
 ]

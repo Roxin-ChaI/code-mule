@@ -16,11 +16,23 @@ from .contracts import (
     TaskDependencyChange,
     TaskRequirementUpdate,
     TaskProposal,
+    SupervisorFailureCategory,
 )
 
 
 class InvalidSupervisorResponse(ValueError):
     """Raised when model output violates a Supervisor response contract."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_category: SupervisorFailureCategory = (
+            SupervisorFailureCategory.MALFORMED_STRUCTURED_RESPONSE
+        ),
+    ) -> None:
+        super().__init__(message)
+        self.failure_category = failure_category
 
 
 _R = TypeVar("_R")
@@ -42,11 +54,17 @@ def _exact_fields(
     extra = actual - required
     if missing:
         raise InvalidSupervisorResponse(
-            f"{context} is missing fields: {', '.join(sorted(missing))}"
+            f"{context} is missing fields: {', '.join(sorted(missing))}",
+            failure_category=(
+                SupervisorFailureCategory.SCHEMA_CONTRACT_VIOLATION
+            ),
         )
     if extra:
         raise InvalidSupervisorResponse(
-            f"{context} contains extra fields: {', '.join(sorted(extra))}"
+            f"{context} contains extra fields: {', '.join(sorted(extra))}",
+            failure_category=(
+                SupervisorFailureCategory.SCHEMA_CONTRACT_VIOLATION
+            ),
         )
 
 
@@ -172,13 +190,22 @@ def _task_requirement_update(
     )
 
 
-def _parse(parse_operation: Callable[[], _R]) -> _R:
+def _parse(
+    parse_operation: Callable[[], _R],
+    *,
+    value_failure_category: SupervisorFailureCategory = (
+        SupervisorFailureCategory.MALFORMED_STRUCTURED_RESPONSE
+    ),
+) -> _R:
     try:
         return parse_operation()
     except InvalidSupervisorResponse:
         raise
     except (TypeError, ValueError) as error:
-        raise InvalidSupervisorResponse("response violates its contract") from error
+        raise InvalidSupervisorResponse(
+            "response violates its contract",
+            failure_category=value_failure_category,
+        ) from error
 
 
 def parse_plan_response(payload: dict[str, object]) -> PlanProposal:
@@ -244,7 +271,12 @@ def parse_review_response(payload: dict[str, object]) -> ReviewResult:
             issues=_string_tuple(root["issues"], "issues"),
         )
 
-    return _parse(parse)
+    return _parse(
+        parse,
+        value_failure_category=(
+            SupervisorFailureCategory.DECISION_CONTRACT_VIOLATION
+        ),
+    )
 
 
 def parse_impact_analysis_response(

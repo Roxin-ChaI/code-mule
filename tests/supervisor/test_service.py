@@ -11,8 +11,10 @@ from code_mule.supervisor.contracts import (
     ReviewRequest,
     ReviewResult,
     SupervisorOperation,
+    SupervisorCallFailure,
+    SupervisorFailureCategory,
+    SupervisorRetryPolicy,
 )
-from code_mule.supervisor.parsing import InvalidSupervisorResponse
 from code_mule.supervisor.prompts import (
     build_impact_analysis_prompt,
     build_plan_prompt,
@@ -26,14 +28,15 @@ from code_mule.supervisor.schemas import (
     review_response_schema,
 )
 from code_mule.supervisor.service import SupervisorService
+from code_mule.progress import ProgressEventType, RecordingProgressSink
 
 from state import make_project_state
 from supervisor.test_parsing import impact_payload, plan_payload, progress_payload
 
 
 class FakeSupervisorModelClient:
-    def __init__(self, payload: dict[str, object]):
-        self.payload = payload
+    def __init__(self, payload):
+        self.outcomes = list(payload) if isinstance(payload, list) else [payload]
         self.calls: list[dict[str, object]] = []
 
     def create_structured_response(
@@ -52,7 +55,16 @@ class FakeSupervisorModelClient:
                 "schema": schema,
             }
         )
-        return self.payload
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
+class TypedProviderFailure(RuntimeError):
+    def __init__(self, category):
+        super().__init__("safe provider failure")
+        self.failure_category = category
 
 
 def review_payload():
@@ -137,15 +149,160 @@ class SupervisorServiceTests(unittest.TestCase):
         )
         self.assertEqual(state, original)
 
-    def test_invalid_response_is_not_retried_or_repaired(self):
+    def test_malformed_first_response_regenerates_complete_plan(self):
         state = make_project_state()
-        client = FakeSupervisorModelClient({"invalid": True})
+        client = FakeSupervisorModelClient([[], plan_payload()])
         service = SupervisorService(client)
 
-        with self.assertRaises(InvalidSupervisorResponse):
+        result = service.plan(PlanRequest(state, "Plan"))
+
+        self.assertIsInstance(result, PlanProposal)
+        self.assertEqual(len(client.calls), 2)
+        self.assertIn("fresh complete response", client.calls[1]["user_prompt"])
+        self.assertEqual(len(service.last_attempt_results), 2)
+
+    def test_extra_field_is_not_repaired_and_fresh_response_succeeds(self):
+        state = make_project_state()
+        invalid = plan_payload()
+        invalid["not_used"] = "must-not-leak"
+        client = FakeSupervisorModelClient([invalid, plan_payload()])
+        service = SupervisorService(client)
+
+        service.plan(PlanRequest(state, "Plan"))
+
+        self.assertEqual(len(client.calls), 2)
+        self.assertNotIn("must-not-leak", client.calls[1]["user_prompt"])
+        self.assertIs(
+            service.last_attempt_results[0].failure_category,
+            SupervisorFailureCategory.SCHEMA_CONTRACT_VIOLATION,
+        )
+
+    def test_review_illegal_combination_regenerates_and_succeeds(self):
+        state = make_project_state()
+        invalid = review_payload()
+        invalid.update(
+            decision="human_required",
+            next_task_prompt="unsafe worker instruction",
+        )
+        client = FakeSupervisorModelClient([invalid, review_payload()])
+        service = SupervisorService(client)
+
+        result = service.review(
+            ReviewRequest(state, state.tasks[0], state.execution_reports[0])
+        )
+
+        self.assertIsInstance(result, ReviewResult)
+        self.assertEqual(len(client.calls), 2)
+        self.assertIs(
+            service.last_attempt_results[0].failure_category,
+            SupervisorFailureCategory.DECISION_CONTRACT_VIOLATION,
+        )
+
+    def test_retry_exhaustion_obeys_max_attempts_and_emits_safe_progress(self):
+        state = make_project_state()
+        client = FakeSupervisorModelClient(
+            [{"invalid": "secret-one"}, {"invalid": "secret-two"}]
+        )
+        progress = RecordingProgressSink()
+        sleeps = []
+        service = SupervisorService(
+            client,
+            retry_policy=SupervisorRetryPolicy(
+                max_attempts=2,
+                retry_delay_seconds=0.25,
+            ),
+            sleeper=sleeps.append,
+            progress_sink=progress,
+        )
+
+        with self.assertRaises(SupervisorCallFailure) as raised:
             service.plan(PlanRequest(state, "Plan"))
 
-        self.assertEqual(len(client.calls), 1)
+        failure = raised.exception
+        self.assertEqual(failure.attempt_count, 2)
+        self.assertTrue(failure.retryable)
+        self.assertTrue(failure.exhausted)
+        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(sleeps, [0.25])
+        self.assertEqual(
+            tuple(event.type for event in progress.events),
+            (
+                ProgressEventType.SUPERVISOR_RETRYING,
+                ProgressEventType.SUPERVISOR_RETRY_EXHAUSTED,
+            ),
+        )
+        self.assertNotIn("secret-one", repr(progress.events))
+        self.assertNotIn("secret-two", str(failure))
+
+    def test_timeout_is_retryable_but_content_filter_and_auth_are_not(self):
+        state = make_project_state()
+        timeout_client = FakeSupervisorModelClient(
+            [TimeoutError("temporary"), plan_payload()]
+        )
+        SupervisorService(timeout_client).plan(PlanRequest(state, "Plan"))
+        self.assertEqual(len(timeout_client.calls), 2)
+
+        for category in (
+            SupervisorFailureCategory.CONTENT_FILTER,
+            SupervisorFailureCategory.PROVIDER_AUTHENTICATION,
+            SupervisorFailureCategory.PROVIDER_CONFIGURATION,
+        ):
+            with self.subTest(category=category):
+                client = FakeSupervisorModelClient(
+                    [TypedProviderFailure(category), plan_payload()]
+                )
+                with self.assertRaises(SupervisorCallFailure) as raised:
+                    SupervisorService(client).plan(
+                        PlanRequest(state, "Plan")
+                    )
+                self.assertIs(raised.exception.failure_category, category)
+                self.assertEqual(raised.exception.attempt_count, 1)
+                self.assertEqual(len(client.calls), 1)
+
+    def test_plan_review_impact_and_progress_all_share_bounded_layer(self):
+        state = make_project_state()
+        cases = (
+            (
+                lambda service: service.plan(PlanRequest(state, "Plan")),
+                plan_payload(),
+                SupervisorOperation.PLAN,
+            ),
+            (
+                lambda service: service.review(
+                    ReviewRequest(
+                        state, state.tasks[0], state.execution_reports[0]
+                    )
+                ),
+                review_payload(),
+                SupervisorOperation.REVIEW,
+            ),
+            (
+                lambda service: service.analyze_change(
+                    ImpactAnalysisRequest(state, state.change_requests[0])
+                ),
+                impact_payload(),
+                SupervisorOperation.IMPACT_ANALYSIS,
+            ),
+            (
+                lambda service: service.report_progress(
+                    ProgressReportRequest(state, None)
+                ),
+                progress_payload(),
+                SupervisorOperation.PROGRESS_REPORT,
+            ),
+        )
+        for call, valid, operation in cases:
+            with self.subTest(operation=operation):
+                client = FakeSupervisorModelClient([["invalid"], valid])
+                service = SupervisorService(client)
+                call(service)
+                self.assertEqual(len(client.calls), 2)
+                self.assertTrue(
+                    all(
+                        item["operation"] is operation
+                        for item in client.calls
+                    )
+                )
 
     def _assert_single_call(
         self,

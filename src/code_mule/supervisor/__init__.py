@@ -22,6 +22,7 @@ from .contracts import (
     TaskRequirementUpdate,
     TaskProposal,
     supervisor_failure_is_retryable,
+    supervisor_failure_metadata,
 )
 from .parsing import (
     InvalidSupervisorResponse,
@@ -82,4 +83,5 @@ __all__ = [
     "progress_report_response_schema",
     "review_response_schema",
     "supervisor_failure_is_retryable",
+    "supervisor_failure_metadata",
 ]

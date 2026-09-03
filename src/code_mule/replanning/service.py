@@ -21,14 +21,21 @@ from code_mule.progress import (
     resilient_progress_sink,
 )
 from code_mule.state.models import ProjectState
-from code_mule.supervisor import ImpactAnalysisRequest, ImpactAnalysisResult
+from code_mule.supervisor import (
+    ImpactAnalysisRequest,
+    ImpactAnalysisResult,
+    SupervisorFailureCategory,
+    supervisor_failure_metadata,
+)
 
 from .contracts import ChangeReplanningOutcome, ChangeReplanningRequest
 from .errors import (
     InvalidReplanProposal,
     InvalidReplanningState,
     ReplanMaterializationError,
+    ReplanIdCollision,
     SupervisorReplanningError,
+    UnknownReplanReference,
 )
 from .materialization import ChangeReplanMaterializer
 from .validation import ChangeReplanValidator
@@ -104,7 +111,7 @@ class ChangeReplanningService:
                 replanning,
                 analyzing_change,
                 event_type="replanning.failed",
-                error_type=type(error).__name__,
+                failure_metadata=supervisor_failure_metadata(error),
             )
             raise SupervisorReplanningError(
                 "Supervisor Impact Analysis failed"
@@ -122,7 +129,17 @@ class ChangeReplanningService:
                 replanning,
                 analyzing_change,
                 event_type="replanning.proposal_rejected",
-                error_type=type(error).__name__,
+                failure_metadata=supervisor_failure_metadata(
+                    error,
+                    category=(
+                        SupervisorFailureCategory.INVALID_BUSINESS_REFERENCE
+                        if isinstance(
+                            error,
+                            (UnknownReplanReference, ReplanIdCollision),
+                        )
+                        else SupervisorFailureCategory.DETERMINISTIC_VALIDATION_FAILURE
+                    ),
+                ),
             )
             raise
 
@@ -146,7 +163,12 @@ class ChangeReplanningService:
                 replanning,
                 analyzing_change,
                 event_type="replanning.failed",
-                error_type=type(error).__name__,
+                failure_metadata=supervisor_failure_metadata(
+                    error,
+                    category=(
+                        SupervisorFailureCategory.DETERMINISTIC_VALIDATION_FAILURE
+                    ),
+                ),
             )
             raise
 
@@ -301,7 +323,7 @@ class ChangeReplanningService:
         change_request: ChangeRequest,
         *,
         event_type: str,
-        error_type: str,
+        failure_metadata: dict[str, str],
     ) -> ProjectState:
         operation_time = self._clock()
         rejected = replace(
@@ -325,14 +347,14 @@ class ChangeReplanningService:
             action_id=f"action-{self._event_id_factory()}",
             event_id_factory=self._event_id_factory,
             source_event_types=(event_type,),
-            source_metadata={"error_type": error_type},
+            source_metadata=failure_metadata,
         )
         self._store.save(failed)
         self._emit(
             failed,
             ProgressEventType.REPLANNING_FAILED,
             "Change replanning requires human review",
-            metadata={"error_type": error_type},
+            metadata=failure_metadata,
         )
         return failed
 

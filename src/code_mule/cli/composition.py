@@ -490,6 +490,8 @@ class ProductionCliComposition:
         model = self._environment.get(
             "CODE_MULE_DEEPSEEK_MODEL", "deepseek-v4-flash"
         )
+        clock = lambda: datetime.now(UTC)
+        renderer = ConsoleProgressRenderer(self._stderr)
         supervisor = SupervisorService(
             DeepSeekSupervisorModelClient(
                 OpenAI(
@@ -499,19 +501,27 @@ class ProductionCliComposition:
                     http_client=DefaultHttpx2Client(trust_env=False),
                 ),
                 DeepSeekSupervisorConfig(model=model, max_output_tokens=None),
-            )
+            ),
+            progress_sink=renderer,
+            clock=clock,
         )
-        return self._compose_runtime(state, supervisor, ownership)
+        return self._compose_runtime(
+            state,
+            supervisor,
+            ownership,
+            renderer=renderer,
+        )
 
     def _compose_runtime(
         self,
         state: ProjectState,
         supervisor: SupervisorService,
         ownership: ExecutionOwnershipHandle | None = None,
+        renderer: ConsoleProgressRenderer | None = None,
     ) -> RuntimeComposition:
         workspace = self._workspace(state)
         clock = lambda: datetime.now(UTC)
-        renderer = ConsoleProgressRenderer(self._stderr)
+        renderer = renderer or ConsoleProgressRenderer(self._stderr)
         worker_config = CodexWorkerConfig(
             command=("codex", "app-server"),
             workspace=workspace,

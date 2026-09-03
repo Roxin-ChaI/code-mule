@@ -5,7 +5,20 @@ from dataclasses import dataclass
 import json
 from typing import Protocol, cast
 
-from code_mule.supervisor.contracts import SupervisorOperation
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    AuthenticationError,
+    BadRequestError,
+    NotFoundError,
+    PermissionDeniedError,
+    UnprocessableEntityError,
+)
+
+from code_mule.supervisor.contracts import (
+    SupervisorFailureCategory,
+    SupervisorOperation,
+)
 
 
 class DeepSeekSupervisorResponseError(RuntimeError):
@@ -19,12 +32,14 @@ class DeepSeekSupervisorResponseError(RuntimeError):
         incomplete_reason: str | None = None,
         error_code: str | None = None,
         error_message: str | None = None,
+        failure_category: SupervisorFailureCategory,
     ) -> None:
         super().__init__(message)
         self.status = status
         self.incomplete_reason = incomplete_reason
         self.error_code = error_code
         self.error_message = error_message
+        self.failure_category = failure_category
 
 
 @dataclass(frozen=True)
@@ -90,7 +105,34 @@ class DeepSeekSupervisorModelClient:
         if self._config.max_output_tokens is not None:
             request["max_output_tokens"] = self._config.max_output_tokens
 
-        response = self._client.responses.create(**request)
+        try:
+            response = self._client.responses.create(**request)
+        except (APITimeoutError, TimeoutError) as error:
+            raise DeepSeekSupervisorResponseError(
+                "DeepSeek request timed out",
+                failure_category=SupervisorFailureCategory.TRANSPORT_TIMEOUT,
+            ) from error
+        except (AuthenticationError, PermissionDeniedError) as error:
+            raise DeepSeekSupervisorResponseError(
+                "DeepSeek provider authentication failed",
+                failure_category=(
+                    SupervisorFailureCategory.PROVIDER_AUTHENTICATION
+                ),
+            ) from error
+        except (BadRequestError, NotFoundError, UnprocessableEntityError) as error:
+            raise DeepSeekSupervisorResponseError(
+                "DeepSeek provider configuration was rejected",
+                failure_category=(
+                    SupervisorFailureCategory.PROVIDER_CONFIGURATION
+                ),
+            ) from error
+        except (APIConnectionError, ConnectionError) as error:
+            raise DeepSeekSupervisorResponseError(
+                "DeepSeek temporary connection failure",
+                failure_category=(
+                    SupervisorFailureCategory.TEMPORARY_CONNECTION_FAILURE
+                ),
+            ) from error
         status = _string_field(response, "status")
         if status == "incomplete":
             incomplete_details = getattr(response, "incomplete_details", None)
@@ -99,6 +141,15 @@ class DeepSeekSupervisorModelClient:
                 f"DeepSeek response incomplete: reason={incomplete_reason!r}",
                 status=status,
                 incomplete_reason=incomplete_reason,
+                failure_category=(
+                    SupervisorFailureCategory.INCOMPLETE_MAX_OUTPUT_TOKENS
+                    if incomplete_reason == "max_output_tokens"
+                    else (
+                        SupervisorFailureCategory.CONTENT_FILTER
+                        if incomplete_reason == "content_filter"
+                        else SupervisorFailureCategory.UNKNOWN_FAILURE
+                    )
+                ),
             )
         if status == "failed":
             response_error = getattr(response, "error", None)
@@ -110,11 +161,13 @@ class DeepSeekSupervisorModelClient:
                 status=status,
                 error_code=error_code,
                 error_message=error_message,
+                failure_category=_failed_response_category(error_code),
             )
         if status != "completed":
             raise DeepSeekSupervisorResponseError(
                 f"DeepSeek response status is not completed: {status!r}",
                 status=status,
+                failure_category=SupervisorFailureCategory.UNKNOWN_FAILURE,
             )
 
         output_text = getattr(response, "output_text", None)
@@ -122,6 +175,9 @@ class DeepSeekSupervisorModelClient:
             raise DeepSeekSupervisorResponseError(
                 "DeepSeek completed response has no output_text",
                 status=status,
+                failure_category=(
+                    SupervisorFailureCategory.MALFORMED_STRUCTURED_RESPONSE
+                ),
             )
         try:
             payload: object = json.loads(output_text)
@@ -129,11 +185,17 @@ class DeepSeekSupervisorModelClient:
             raise DeepSeekSupervisorResponseError(
                 "DeepSeek output_text is not valid JSON",
                 status=status,
+                failure_category=(
+                    SupervisorFailureCategory.MALFORMED_STRUCTURED_RESPONSE
+                ),
             ) from error
         if not isinstance(payload, dict):
             raise DeepSeekSupervisorResponseError(
                 "DeepSeek output_text must contain a JSON object",
                 status=status,
+                failure_category=(
+                    SupervisorFailureCategory.MALFORMED_STRUCTURED_RESPONSE
+                ),
             )
         return cast(dict[str, object], payload)
 
@@ -146,6 +208,33 @@ def _string_field(value: object, field_name: str) -> str | None:
     if not isinstance(field, str):
         return None
     return field[:500]
+
+
+def _failed_response_category(
+    error_code: str | None,
+) -> SupervisorFailureCategory:
+    if error_code in {
+        "authentication_error",
+        "permission_denied",
+        "unauthorized",
+    }:
+        return SupervisorFailureCategory.PROVIDER_AUTHENTICATION
+    if error_code in {
+        "bad_request",
+        "invalid_request_error",
+        "model_not_found",
+        "unsupported_parameter",
+    }:
+        return SupervisorFailureCategory.PROVIDER_CONFIGURATION
+    if error_code in {
+        "rate_limit_exceeded",
+        "server_error",
+        "service_unavailable",
+    }:
+        return SupervisorFailureCategory.TEMPORARY_CONNECTION_FAILURE
+    if error_code == "content_filter":
+        return SupervisorFailureCategory.CONTENT_FILTER
+    return SupervisorFailureCategory.UNKNOWN_FAILURE
 
 
 __all__ = [

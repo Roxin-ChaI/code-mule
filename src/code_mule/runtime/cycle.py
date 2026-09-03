@@ -22,6 +22,7 @@ from code_mule.progress import (
 )
 from code_mule.state.models import ProjectState
 from code_mule.supervisor.contracts import ReviewRequest, ReviewResult
+from code_mule.supervisor import supervisor_failure_metadata
 from code_mule.worker.contracts import (
     CodexApprovalRequired,
     CodexUserInputRequired,
@@ -220,19 +221,20 @@ class TaskCycleService:
                         ReviewRequest(persisted, persisted_task, report)
                     )
                 except BaseException as error:
+                    failure_metadata = supervisor_failure_metadata(error)
                     self._emit_progress(
                         persisted,
                         persisted_task,
                         ProgressEventType.SUPERVISOR_FAILED,
                         "Supervisor review failed",
                         attempt=report.attempt,
-                        metadata={"error_type": type(error).__name__},
+                        metadata=failure_metadata,
                     )
                     self._transition_human_required(
                         persisted,
                         persisted_task,
                         event_types=("supervisor.review_failed", "task.human_required"),
-                        metadata={"error_type": type(error).__name__},
+                        metadata=failure_metadata,
                         category=HumanActionCategory.SUPERVISOR_FAILURE,
                         summary="Supervisor review failed",
                         requested_action="Inspect the failure and choose an explicit resolution",

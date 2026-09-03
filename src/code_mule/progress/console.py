@@ -293,6 +293,24 @@ class ConsoleProgressRenderer:
         elif event.type is ProgressEventType.SUPERVISOR_FAILED:
             updates.update(supervisor_status="FAILED", stage_started_at=event.timestamp)
             self._stage_started_mono = None
+        elif event.type is ProgressEventType.SUPERVISOR_RETRYING:
+            updates.update(
+                supervisor_status="Regenerating",
+                stage_started_at=event.timestamp,
+            )
+            self._stage_started_mono = self._monotonic()
+        elif event.type is ProgressEventType.SUPERVISOR_RETRY_SUCCEEDED:
+            updates.update(
+                supervisor_status="Recovered",
+                stage_started_at=event.timestamp,
+            )
+            self._stage_started_mono = None
+        elif event.type is ProgressEventType.SUPERVISOR_RETRY_EXHAUSTED:
+            updates.update(
+                supervisor_status="FAILED",
+                stage_started_at=event.timestamp,
+            )
+            self._stage_started_mono = None
         elif event.type is ProgressEventType.TASK_COMPLETED:
             updates.update(
                 completed_tasks=_count(
