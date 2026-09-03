@@ -10,6 +10,13 @@ from code_mule.domain.enums import (
 )
 from code_mule.domain.models import ExecutionReport
 from code_mule.execution import ExecutionLease, ExecutionLeaseStatus
+from code_mule.git_delivery import (
+    DirtyGitBaseline,
+    GitBaseline,
+    GitChangeSet,
+    GitCommitError,
+    GitCommitResult,
+)
 from code_mule.orchestrator import (
     ChangeCommand,
     OrchestratorService,
@@ -153,6 +160,7 @@ def build_cycle(
     progress_sink=None,
     worker_identity_started=None,
     worker_identity_cleared=None,
+    git_delivery=None,
 ):
     store = store or FakeStore(cycle_state())
     session = session or FakeWorkerSession()
@@ -177,6 +185,7 @@ def build_cycle(
         progress_sink=progress_sink,
         worker_identity_started=worker_identity_started,
         worker_identity_cleared=worker_identity_cleared,
+        git_delivery=git_delivery,
     )
     request_task = (
         store.current.tasks[0]
@@ -185,6 +194,41 @@ def build_cycle(
     )
     request = TaskCycleRequest(request_task, "initial prompt")
     return service, request, store, session, supervisor, sessions
+
+
+class FakeGitDelivery:
+    def __init__(self, *, baseline_error=None, prepare_error=None, commit_error=None):
+        self.baseline_error = baseline_error
+        self.prepare_error = prepare_error
+        self.commit_error = commit_error
+        self.baseline_calls = []
+        self.prepare_calls = []
+        self.commit_calls = []
+
+    def capture_baseline(self, task_id):
+        self.baseline_calls.append(task_id)
+        if self.baseline_error:
+            raise self.baseline_error
+        return GitBaseline(task_id, "/repo", "a" * 40, ())
+
+    def prepare_change_set(self, baseline, report, owned_paths):
+        self.prepare_calls.append((baseline, report, owned_paths))
+        if self.prepare_error:
+            raise self.prepare_error
+        return GitChangeSet(
+            baseline.task_id, baseline.repository_root, baseline.baseline_head,
+            tuple(sorted(owned_paths)), (), (),
+        )
+
+    def commit(self, change_set, task):
+        self.commit_calls.append((change_set, task))
+        if self.commit_error:
+            raise self.commit_error
+        return GitCommitResult(
+            task.id, change_set.repository_root, change_set.baseline_head,
+            "b" * 40, "feat(task): delivery", change_set.changed_paths,
+            change_set.changed_paths, NOW,
+        )
 
 
 class TaskCycleContractTests(unittest.TestCase):
@@ -222,6 +266,81 @@ class TaskCycleContractTests(unittest.TestCase):
                     service.execute(request)
                 self.assertEqual(sessions, [])
                 self.assertEqual(store.saved, [])
+
+
+class TaskCycleGitDeliveryTests(unittest.TestCase):
+    def test_accepted_task_commits_before_completion_and_persists_sha(self):
+        delivery = FakeGitDelivery()
+        service, request, store, _, _, _ = build_cycle(git_delivery=delivery)
+        outcome = service.execute(request)
+        self.assertFalse(outcome.human_action_required)
+        self.assertIs(store.current.tasks[0].status, TaskStatus.COMPLETED)
+        self.assertEqual(store.current.git_commit_results[0].commit_sha, "b" * 40)
+        event_types = tuple(event.event_type for event in store.current.events)
+        self.assertLess(event_types.index("git.committed"), event_types.index("task.completed"))
+        self.assertEqual(len(delivery.commit_calls), 1)
+
+    def test_rework_does_not_commit_until_final_accepted_attempt(self):
+        delivery = FakeGitDelivery()
+        supervisor = FakeSupervisor(
+            [
+                review(SupervisorDecisionType.REWORK, "fix it"),
+                review(SupervisorDecisionType.CONTINUE),
+            ]
+        )
+        session = FakeWorkerSession()
+        service, request, store, _, _, _ = build_cycle(
+            git_delivery=delivery, supervisor=supervisor, session=session
+        )
+        service.execute(request)
+        self.assertEqual(len(delivery.prepare_calls), 2)
+        self.assertEqual(len(delivery.commit_calls), 1)
+        self.assertEqual(len(store.current.git_commit_results), 1)
+        self.assertEqual(store.current.tasks[0].execution_attempts, 2)
+
+    def test_dirty_baseline_stops_before_worker_dispatch(self):
+        delivery = FakeGitDelivery(
+            baseline_error=DirtyGitBaseline("dirty workspace")
+        )
+        service, request, store, session, supervisor, sessions = build_cycle(
+            git_delivery=delivery
+        )
+        outcome = service.execute(request)
+        self.assertTrue(outcome.human_action_required)
+        self.assertIs(store.current.project.status, ProjectStatus.HUMAN_REQUIRED)
+        self.assertEqual(sessions, [])
+        self.assertEqual(session.started, 0)
+        self.assertEqual(supervisor.requests, [])
+        self.assertEqual(delivery.commit_calls, [])
+
+    def test_worker_human_gate_and_supervisor_failure_never_commit(self):
+        delivery = FakeGitDelivery()
+        session = FakeWorkerSession(human_action_required=True)
+        service, request, _, _, _, _ = build_cycle(
+            git_delivery=delivery, session=session
+        )
+        self.assertTrue(service.execute(request).human_action_required)
+        self.assertEqual(delivery.commit_calls, [])
+
+        delivery = FakeGitDelivery()
+        supervisor = FakeSupervisor([RuntimeError("review unavailable")])
+        service, request, store, _, _, _ = build_cycle(
+            git_delivery=delivery, supervisor=supervisor
+        )
+        with self.assertRaises(RuntimeError):
+            service.execute(request)
+        self.assertIs(store.current.project.status, ProjectStatus.HUMAN_REQUIRED)
+        self.assertEqual(delivery.commit_calls, [])
+
+    def test_commit_failure_enters_human_required_without_completion(self):
+        delivery = FakeGitDelivery(commit_error=GitCommitError("commit failed"))
+        service, request, store, _, _, _ = build_cycle(git_delivery=delivery)
+        outcome = service.execute(request)
+        self.assertTrue(outcome.human_action_required)
+        self.assertIs(store.current.project.status, ProjectStatus.HUMAN_REQUIRED)
+        self.assertIs(store.current.tasks[0].status, TaskStatus.IN_PROGRESS)
+        self.assertEqual(store.current.git_commit_results, ())
+        self.assertEqual(len(delivery.commit_calls), 1)
 
 
 class TaskCycleFlowTests(unittest.TestCase):

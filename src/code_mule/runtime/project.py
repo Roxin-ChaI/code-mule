@@ -78,6 +78,8 @@ class TaskPromptBuilder:
             "- Work only on this task and its acceptance criteria.\n"
             "- Inspect existing repository state before editing.\n"
             "- Run focused verification and do not push, tag, or release.\n"
+            "- Do not stage or commit; the Orchestrator owns local Git delivery.\n"
+            "- Report every changed path exactly, relative to the repository root.\n"
             "- Stop for any operation requiring human approval.\n\n"
             "The Worker layer enforces its structured report contract through "
             "the native output schema; do not invent another control protocol."

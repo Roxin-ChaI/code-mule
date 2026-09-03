@@ -12,6 +12,8 @@ from code_mule.presentation import (
     render_project,
     status_label,
 )
+from code_mule.git_delivery import GitCommitResult
+from state import CREATED
 from state import make_project_state
 
 
@@ -47,18 +49,28 @@ class PresentationModelTests(unittest.TestCase):
         self.assertEqual((view.completed_tasks, view.total_tasks), (0, 1))
 
     def test_default_hides_internal_ids_and_verbose_exposes_them(self):
-        state = make_project_state()
+        state = replace(
+            make_project_state(),
+            git_commit_results=(
+                GitCommitResult(
+                    "task-1", "/repo", "a" * 40, "b" * 40,
+                    "feat(task): delivery", ("file.py",), ("file.py",), CREATED,
+                ),
+            ),
+        )
         default = "\n".join(render_project(state))
         self.assertIn("Status      Running", default)
         self.assertIn("Plan        v1", default)
         self.assertIn("Progress    0 / 1", default)
         self.assertNotIn("active_plan_id", default)
         self.assertNotIn("project_status: running", default)
+        self.assertNotIn("latest_task_commit", default)
         verbose = "\n".join(render_project(state, verbose=True))
         self.assertIn("project_id: project-1", verbose)
         self.assertIn("active_plan_id: plan-1", verbose)
         self.assertIn("current_task_id: task-1", verbose)
         self.assertIn("project_status: running", verbose)
+        self.assertIn(f"latest_task_commit: {'b' * 40}", verbose)
 
 
 if __name__ == "__main__":

@@ -29,6 +29,7 @@ from code_mule.human import (
     HumanResolutionService,
     pending_action,
 )
+from code_mule.git_delivery import GitDeliveryService
 from code_mule.execution import (
     ExecutionAlreadyOwned,
     ExecutionRecoveryRequired,
@@ -556,6 +557,7 @@ class ProductionCliComposition:
                     if ownership is None
                     else ownership.clear_worker_identity
                 ),
+                git_delivery=GitDeliveryService(workspace, clock=clock),
             )
 
         execution = ProjectExecutionService(

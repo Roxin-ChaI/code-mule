@@ -12,6 +12,13 @@ from .contracts import (
     GitStagingError,
     UnexpectedGitHead,
 )
+from .service import (
+    GitCommandResult,
+    GitCommandRunner,
+    GitDeliveryService,
+    commit_message,
+    run_git_command,
+)
 
 __all__ = [
     "DirtyGitBaseline",
@@ -24,4 +31,9 @@ __all__ = [
     "GitOwnershipError",
     "GitStagingError",
     "UnexpectedGitHead",
+    "GitCommandResult",
+    "GitCommandRunner",
+    "GitDeliveryService",
+    "commit_message",
+    "run_git_command",
 ]

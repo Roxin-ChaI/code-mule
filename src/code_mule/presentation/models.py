@@ -22,6 +22,7 @@ class ProjectView:
     raw_status: str
     active_plan_id: str | None
     current_task_id: str | None
+    latest_task_commit: str | None
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,11 @@ def project_view(state: ProjectState) -> ProjectView:
         raw_status=state.project.status.value,
         active_plan_id=state.project.active_plan_id,
         current_task_id=state.project.current_task_id,
+        latest_task_commit=(
+            None
+            if not state.git_commit_results
+            else state.git_commit_results[-1].commit_sha
+        ),
     )
 
 

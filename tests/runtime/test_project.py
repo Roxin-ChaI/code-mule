@@ -263,6 +263,8 @@ class ProjectExecutionContractTests(unittest.TestCase):
         self.assertIn("Accept current", prompt)
         self.assertIn("dep: Dependency identity", prompt)
         self.assertIn("native output schema", prompt)
+        self.assertIn("Do not stage or commit", prompt)
+        self.assertIn("Report every changed path exactly", prompt)
         self.assertNotIn("SECRET UNRELATED", prompt)
         self.assertNotIn("API_KEY=never", prompt)
 

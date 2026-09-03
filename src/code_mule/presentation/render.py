@@ -34,6 +34,7 @@ def render_project(
             f"active_plan_version: {view.plan_version or '-'}",
             f"current_task_id: {view.current_task_id or '-'}",
             f"execution_stop_reason: {execution_stop_reason or '-'}",
+            f"latest_task_commit: {view.latest_task_commit or '-'}",
         )
     return lines
 

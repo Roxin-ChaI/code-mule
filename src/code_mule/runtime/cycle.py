@@ -14,6 +14,14 @@ from code_mule.domain.enums import (
 from code_mule.domain.models import Decision, ExecutionReport, ProjectEvent, Task
 from code_mule.domain.state_machine import validate_transition
 from code_mule.human import request_human_action
+from code_mule.human import pending_action
+from code_mule.git_delivery import (
+    GitBaseline,
+    GitChangeSet,
+    GitCommitResult,
+    GitDeliveryError,
+    GitOwnershipError,
+)
 from code_mule.progress import (
     ProgressEvent,
     ProgressEventType,
@@ -65,6 +73,19 @@ class ReviewService(Protocol):
     def review(self, request: ReviewRequest) -> ReviewResult: ...
 
 
+class GitDelivery(Protocol):
+    def capture_baseline(self, task_id: str) -> GitBaseline: ...
+
+    def prepare_change_set(
+        self,
+        baseline: GitBaseline,
+        report: ExecutionReport,
+        owned_paths: tuple[str, ...],
+    ) -> GitChangeSet: ...
+
+    def commit(self, change_set: GitChangeSet, task: Task) -> GitCommitResult: ...
+
+
 class TaskCycleService:
     """Run one task until a deterministic terminal review outcome."""
 
@@ -82,6 +103,7 @@ class TaskCycleService:
         progress_sink: ProgressSink | None = None,
         worker_identity_started: Callable[[str, str, int], None] | None = None,
         worker_identity_cleared: Callable[[str], None] | None = None,
+        git_delivery: GitDelivery | None = None,
     ) -> None:
         self._worker_session_factory = worker_session_factory
         self._supervisor = supervisor
@@ -94,6 +116,7 @@ class TaskCycleService:
         self._progress = resilient_progress_sink(progress_sink)
         self._worker_identity_started = worker_identity_started
         self._worker_identity_cleared = worker_identity_cleared
+        self._git_delivery = git_delivery
 
     @property
     def progress_errors(self) -> tuple[BaseException, ...]:
@@ -102,10 +125,29 @@ class TaskCycleService:
     def execute(self, request: TaskCycleRequest) -> TaskCycleOutcome:
         state = self._store.load()
         task = self._validate_start(state, request)
-        session = self._worker_session_factory()
         reports: tuple[ExecutionReport, ...] = ()
         decisions: tuple[Decision, ...] = ()
         prompt = request.initial_prompt
+        baseline: GitBaseline | None = None
+
+        if self._git_delivery is not None:
+            try:
+                baseline = self._git_delivery.capture_baseline(task.id)
+                state = self._persist_git_baseline(state, task, baseline)
+                self._emit_progress(
+                    state,
+                    task,
+                    ProgressEventType.GIT_BASELINE_CAPTURED,
+                    "Clean Git baseline captured",
+                )
+            except GitDeliveryError as error:
+                self._record_git_failure(state, task, error, "baseline")
+                self._emit_git_failure(state, task, error, "baseline", attempt=1)
+                return self._human_outcome(
+                    task.id, reports, decisions, final_prompt=None
+                )
+
+        session = self._worker_session_factory()
 
         try:
             try:
@@ -207,6 +249,45 @@ class TaskCycleService:
                         task.id, reports, decisions, final_prompt=None
                     )
 
+                change_set: GitChangeSet | None = None
+                if self._git_delivery is not None:
+                    if baseline is None:
+                        raise InvalidTaskCycleState("Git delivery requires a baseline")
+                    owned_paths = tuple(
+                        dict.fromkeys(
+                            path
+                            for persisted_report in reports
+                            for path in persisted_report.files_changed
+                        )
+                    )
+                    try:
+                        change_set = self._git_delivery.prepare_change_set(
+                            baseline,
+                            report,
+                            owned_paths,
+                        )
+                        self._emit_progress(
+                            state,
+                            task,
+                            ProgressEventType.GIT_CHANGE_SET_VERIFIED,
+                            "Task Git ownership verified",
+                            attempt=report.attempt,
+                            metadata={"path_count": str(len(change_set.changed_paths))},
+                        )
+                    except GitDeliveryError as error:
+                        self._record_git_failure(state, task, error, "ownership")
+                        self._emit_git_failure(
+                            state,
+                            task,
+                            error,
+                            "ownership",
+                            attempt=report.attempt,
+                        )
+                        self._clear_worker_identity(task.id)
+                        return self._human_outcome(
+                            task.id, reports, decisions, final_prompt=None
+                        )
+
                 persisted = self._store.load()
                 persisted_task = self._task(persisted, task.id)
                 self._emit_progress(
@@ -253,6 +334,12 @@ class TaskCycleService:
                 decisions += (decision,)
 
                 if review.decision is SupervisorDecisionType.CONTINUE:
+                    if change_set is not None:
+                        if not self._deliver_task(change_set, persisted_task, report.attempt):
+                            self._clear_worker_identity(task.id)
+                            return self._human_outcome(
+                                task.id, reports, decisions, final_prompt=None
+                            )
                     self._complete_task(state, persisted_task, review.decision)
                     self._clear_worker_identity(task.id)
                     self._emit_progress(
@@ -274,6 +361,12 @@ class TaskCycleService:
                     )
 
                 if review.decision is SupervisorDecisionType.DONE:
+                    if change_set is not None:
+                        if not self._deliver_task(change_set, persisted_task, report.attempt):
+                            self._clear_worker_identity(task.id)
+                            return self._human_outcome(
+                                task.id, reports, decisions, final_prompt=None
+                            )
                     self._complete_task(state, persisted_task, review.decision)
                     self._clear_worker_identity(task.id)
                     self._emit_progress(
@@ -381,6 +474,25 @@ class TaskCycleService:
             state, task, "worker_failure", attempt=attempt
         )
 
+    def _emit_git_failure(
+        self,
+        state: ProjectState,
+        task: Task,
+        error: GitDeliveryError,
+        stage: str,
+        *,
+        attempt: int,
+    ) -> None:
+        self._emit_progress(
+            state,
+            task,
+            ProgressEventType.GIT_DELIVERY_FAILED,
+            "Task Git delivery requires human action",
+            attempt=attempt,
+            metadata={"error_type": type(error).__name__, "stage": stage},
+        )
+        self._emit_human_gate(state, task, "git_delivery", attempt=attempt)
+
     def _emit_human_gate(
         self,
         state: ProjectState,
@@ -474,6 +586,112 @@ class TaskCycleService:
         )
         self._store.save(new_state)
         return new_state
+
+    def _persist_git_baseline(
+        self, state: ProjectState, task: Task, baseline: GitBaseline
+    ) -> ProjectState:
+        state, task = self._reload_task_state(task.id)
+        if baseline.task_id != task.id:
+            raise InvalidTaskCycleState("Git baseline targets a different task")
+        operation_time = self._clock()
+        event = self._event(
+            state,
+            task,
+            "git.baseline_captured",
+            operation_time,
+            {"baseline_head": baseline.baseline_head},
+        )
+        new_state = replace(
+            state,
+            project=replace(state.project, updated_at=operation_time),
+            git_baselines=state.git_baselines + (baseline,),
+            events=state.events + (event,),
+        )
+        self._store.save(new_state)
+        return new_state
+
+    def _deliver_task(
+        self, change_set: GitChangeSet, task: Task, attempt: int
+    ) -> bool:
+        if self._git_delivery is None:
+            raise InvalidTaskCycleState("Git delivery service is unavailable")
+        latest = self._store.load()
+        latest_task = self._task(latest, task.id)
+        try:
+            if (
+                latest.project.status is ProjectStatus.HUMAN_REQUIRED
+                or pending_action(latest) is not None
+            ):
+                raise GitOwnershipError("pending Human Gate blocks Git commit")
+            operation_time = self._clock()
+            change_event = self._event(
+                latest,
+                latest_task,
+                "git.change_set_verified",
+                operation_time,
+                {"path_count": str(len(change_set.changed_paths))},
+            )
+            with_change_set = replace(
+                latest,
+                project=replace(latest.project, updated_at=operation_time),
+                git_change_sets=latest.git_change_sets + (change_set,),
+                events=latest.events + (change_event,),
+            )
+            self._store.save(with_change_set)
+            result = self._git_delivery.commit(change_set, latest_task)
+            latest = self._store.load()
+            commit_event = self._event(
+                latest,
+                self._task(latest, task.id),
+                "git.committed",
+                result.committed_at,
+                {
+                    "commit_sha": result.commit_sha,
+                    "path_count": str(len(result.changed_paths)),
+                },
+            )
+            committed = replace(
+                latest,
+                project=replace(latest.project, updated_at=result.committed_at),
+                git_commit_results=latest.git_commit_results + (result,),
+                events=latest.events + (commit_event,),
+            )
+            self._store.save(committed)
+            self._emit_progress(
+                committed,
+                self._task(committed, task.id),
+                ProgressEventType.GIT_COMMITTED,
+                "Task delivered in a local Git commit",
+                attempt=attempt,
+                metadata={"commit_sha": result.commit_sha},
+            )
+            return True
+        except GitDeliveryError as error:
+            failed_state = self._store.load()
+            failed_task = self._task(failed_state, task.id)
+            self._record_git_failure(failed_state, failed_task, error, "commit")
+            self._emit_git_failure(
+                failed_state, failed_task, error, "commit", attempt=attempt
+            )
+            return False
+
+    def _record_git_failure(
+        self,
+        state: ProjectState,
+        task: Task,
+        error: GitDeliveryError,
+        stage: str,
+    ) -> ProjectState:
+        return self._transition_human_required(
+            state,
+            task,
+            event_types=("git.delivery_failed", "task.human_required"),
+            metadata={"error_type": type(error).__name__, "stage": stage},
+            category=HumanActionCategory.RECOVERY_UNCERTAIN,
+            summary="Task Git delivery could not be completed safely",
+            requested_action="Inspect repository ownership and choose an explicit resolution",
+            risk="Committing may include unrelated work or duplicate an uncertain delivery",
+        )
 
     def _persist_report(
         self,
@@ -728,6 +946,7 @@ class TaskCycleService:
 
 __all__ = [
     "ProjectStateStore",
+    "GitDelivery",
     "ReviewService",
     "TaskCycleService",
     "WorkerSession",
