@@ -95,6 +95,11 @@ class _InterruptingExecution:
         raise KeyboardInterrupt
 
 
+class _BoundaryInterruptingExecution:
+    def run(self):
+        raise KeyboardInterrupt
+
+
 class _FakeChangeExecution:
     def __init__(self, store): self.store = store
     def apply_and_resume(self, request):
@@ -293,6 +298,29 @@ class ProductionCommandTests(unittest.TestCase):
             final.human_actions[-1].category,
             HumanActionCategory.RECOVERY_UNCERTAIN,
         )
+
+    def test_keyboard_interrupt_at_task_boundary_releases_cleanly(self):
+        def runtime_factory(state):
+            store = JsonProjectStateStore(self.state_file)
+            return RuntimeComposition(
+                supervisor=object(),
+                worker_service=object(),
+                planning=_FakePlanning(store),
+                execution=_BoundaryInterruptingExecution(),
+                change_execution=_FakeChangeExecution(store),
+                renderer=ConsoleProgressRenderer(self.stderr),
+            )
+
+        composition = self.composition(runtime_factory)
+        self.init(composition)
+        with self.assertRaisesRegex(Exception, "safe boundary"):
+            composition.run("Build it")
+
+        final = JsonProjectStateStore(self.state_file).load()
+        self.assertIs(final.project.status, ProjectStatus.RUNNING)
+        self.assertIsNone(final.project.current_task_id)
+        self.assertEqual(final.human_actions, ())
+        self.assertEqual(final.execution_leases[-1].status.value, "released")
 
     def test_status_and_ask_are_read_only_without_api_key(self):
         composition = self.init()
