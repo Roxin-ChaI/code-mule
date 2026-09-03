@@ -7,12 +7,10 @@ from typing import Protocol
 
 from code_mule.domain.enums import (
     HumanActionCategory,
-    PlanStatus,
     ProjectStatus,
     TaskStatus,
 )
 from code_mule.domain.models import Milestone, ProjectEvent, Task
-from code_mule.domain.state_machine import validate_transition
 from code_mule.human import pending_action, request_human_action
 from code_mule.progress import (
     ProgressEvent,
@@ -42,6 +40,10 @@ class ProjectStateStore(Protocol):
 
 class TaskCycleRunner(Protocol):
     def execute(self, request: TaskCycleRequest) -> TaskCycleOutcome: ...
+
+
+class ProjectFinalizer(Protocol):
+    def finalize(self, state: ProjectState) -> ProjectState: ...
 
 
 class TaskPromptBuilder:
@@ -100,6 +102,7 @@ class ProjectExecutionService:
         event_id_factory: Callable[[], str],
         config: ProjectExecutionConfig,
         progress_sink: ProgressSink | None = None,
+        finalizer: ProjectFinalizer | None = None,
     ) -> None:
         self._store = store
         self._scheduler = scheduler
@@ -109,6 +112,7 @@ class ProjectExecutionService:
         self._event_id_factory = event_id_factory
         self._config = config
         self._progress = resilient_progress_sink(progress_sink)
+        self._finalizer = finalizer
 
     @property
     def progress_errors(self) -> tuple[BaseException, ...]:
@@ -162,7 +166,44 @@ class ProjectExecutionService:
                 return self._recovery_required(state, started, completed, task_ids)
 
             if self._scheduler.is_plan_complete(state):
-                final_state = self._complete_plan(state)
+                if self._finalizer is None:
+                    stopped = self._stop_for_human(
+                        state,
+                        "project.final_verification_unavailable",
+                        {},
+                        category=HumanActionCategory.RECOVERY_UNCERTAIN,
+                        summary="Project final verification is unavailable",
+                        requested_action="Inspect runtime composition before completing the project",
+                        risk="The project cannot be marked complete without final verification",
+                    )
+                    self._emit_stopped(
+                        stopped, ProjectExecutionStopReason.HUMAN_REQUIRED
+                    )
+                    return self._outcome(
+                        stopped,
+                        started,
+                        completed,
+                        task_ids,
+                        ProjectExecutionStopReason.HUMAN_REQUIRED,
+                        human_action_required=True,
+                    )
+                final_state = self._finalizer.finalize(state)
+                if final_state.project.status is ProjectStatus.HUMAN_REQUIRED:
+                    self._emit_stopped(
+                        final_state, ProjectExecutionStopReason.HUMAN_REQUIRED
+                    )
+                    return self._outcome(
+                        final_state,
+                        started,
+                        completed,
+                        task_ids,
+                        ProjectExecutionStopReason.HUMAN_REQUIRED,
+                        human_action_required=True,
+                    )
+                if final_state.project.status is not ProjectStatus.DONE:
+                    raise InvalidProjectExecutionState(
+                        "final verification must finish DONE or HUMAN_REQUIRED"
+                    )
                 completed_count, total = self._progress_counts_from_closed_plan(
                     final_state
                 )
@@ -425,61 +466,6 @@ class ProjectExecutionService:
         self._store.save(updated)
         return updated
 
-    def _complete_plan(self, state: ProjectState) -> ProjectState:
-        graph = resolve_active_plan_graph(state)
-        operation_time = self._clock()
-        tasks = {task.id: task for task in graph.tasks}
-        milestones = state.milestones
-        milestone_events: tuple[ProjectEvent, ...] = ()
-        for milestone in graph.milestones:
-            if milestone.status == "completed":
-                continue
-            if not all(
-                tasks[task_id].status
-                in {TaskStatus.COMPLETED, TaskStatus.CANCELLED}
-                for task_id in milestone.task_ids
-            ):
-                raise InvalidProjectExecutionState(
-                    "Plan completion found an incomplete Milestone"
-                )
-            milestones = self._replace_milestone(
-                milestones, replace(milestone, status="completed")
-            )
-            milestone_events += (
-                self._event(
-                    state,
-                    "milestone.completed",
-                    milestone.id,
-                    operation_time,
-                    {},
-                ),
-            )
-        validate_transition(state.project.status, ProjectStatus.DONE)
-        completed_plan = replace(graph.plan, status=PlanStatus.COMPLETED)
-        plan_event = self._event(
-            state, "plan.completed", graph.plan.id, operation_time, {}
-        )
-        project_event = self._event(
-            state, "project.completed", state.project.id, operation_time, {}
-        )
-        updated = replace(
-            state,
-            project=replace(
-                state.project,
-                status=ProjectStatus.DONE,
-                current_task_id=None,
-                updated_at=operation_time,
-            ),
-            plans=tuple(
-                completed_plan if plan.id == completed_plan.id else plan
-                for plan in state.plans
-            ),
-            milestones=milestones,
-            events=state.events + milestone_events + (plan_event, project_event),
-        )
-        self._store.save(updated)
-        return updated
-
     def _ensure_human_required(
         self, state: ProjectState, task_id: str
     ) -> ProjectState:
@@ -677,6 +663,7 @@ class ProjectExecutionService:
 
 __all__ = [
     "ProjectExecutionService",
+    "ProjectFinalizer",
     "ProjectStateStore",
     "TaskCycleRunner",
     "TaskPromptBuilder",

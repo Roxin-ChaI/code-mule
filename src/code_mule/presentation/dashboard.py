@@ -19,6 +19,8 @@ _COMPLETED_EVENTS = frozenset(
         "supervisor.impact_completed",
         "planning.completed",
         "replanning.completed",
+        "project.verification_completed",
+        "project.final_review_completed",
         "project.completed",
     }
 )
@@ -34,6 +36,8 @@ _ACTIVE_EVENTS = frozenset(
         "supervisor.impact_started",
         "planning.started",
         "replanning.started",
+        "project.verification_started",
+        "project.final_review_started",
     }
 )
 

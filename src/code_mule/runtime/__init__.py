@@ -14,7 +14,7 @@ from .contracts import (
     TaskCycleRequest,
 )
 from .cycle import TaskCycleService
-from .project import ProjectExecutionService, TaskPromptBuilder
+from .project import ProjectExecutionService, ProjectFinalizer, TaskPromptBuilder
 
 __all__ = [
     "InvalidProjectExecutionState",
@@ -24,6 +24,7 @@ __all__ = [
     "ProjectExecutionOutcome",
     "ProjectExecutionService",
     "ProjectExecutionStopReason",
+    "ProjectFinalizer",
     "TaskCycleConfig",
     "TaskCycleError",
     "TaskCycleLimitReached",

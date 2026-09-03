@@ -28,6 +28,8 @@ from .contracts import (
     SupervisorOperation,
     SupervisorRetryPolicy,
     supervisor_failure_is_retryable,
+    FinalReviewRequest,
+    FinalReviewResult,
 )
 from .parsing import (
     InvalidSupervisorResponse,
@@ -35,18 +37,21 @@ from .parsing import (
     parse_plan_response,
     parse_progress_report_response,
     parse_review_response,
+    parse_final_review_response,
 )
 from .prompts import (
     build_impact_analysis_prompt,
     build_plan_prompt,
     build_progress_report_prompt,
     build_review_prompt,
+    build_final_review_prompt,
 )
 from .schemas import (
     impact_analysis_response_schema,
     plan_response_schema,
     progress_report_response_schema,
     review_response_schema,
+    final_review_response_schema,
 )
 
 
@@ -119,6 +124,16 @@ class SupervisorService:
             prompts=build_progress_report_prompt(request),
             schema_factory=progress_report_response_schema,
             parser=parse_progress_report_response,
+            project_id=request.project_state.project.id,
+            task_id=None,
+        )
+
+    def final_review(self, request: FinalReviewRequest) -> FinalReviewResult:
+        return self._execute(
+            operation=SupervisorOperation.FINAL_REVIEW,
+            prompts=build_final_review_prompt(request),
+            schema_factory=final_review_response_schema,
+            parser=parse_final_review_response,
             project_id=request.project_state.project.id,
             task_id=None,
         )

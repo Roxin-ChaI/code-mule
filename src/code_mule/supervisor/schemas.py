@@ -229,7 +229,22 @@ def progress_report_response_schema() -> dict[str, object]:
     )
 
 
+def final_review_response_schema() -> dict[str, object]:
+    return _strict_object(
+        {
+            "decision": {
+                "type": "string",
+                "enum": ["approve", "human_required"],
+            },
+            "rationale": {"type": "string", "minLength": 1},
+            "issues": _string_array(),
+        },
+        ["decision", "rationale", "issues"],
+    )
+
+
 __all__ = [
+    "final_review_response_schema",
     "impact_analysis_response_schema",
     "plan_response_schema",
     "progress_report_response_schema",

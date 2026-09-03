@@ -1,6 +1,10 @@
 """Line-oriented Boss CLI rendering from immutable view models."""
 
 from code_mule.domain.models import HumanAction
+from code_mule.project_verification import (
+    FinalReviewDecision,
+    ProjectVerificationStatus,
+)
 from code_mule.state.models import ProjectState
 
 from .models import human_action_view, project_view
@@ -24,6 +28,57 @@ def render_project(
         f"Current     {view.current_task or 'None'}",
         f"Boss action {view.boss_action or 'None'}",
     )
+    verification = next(
+        (
+            result
+            for result in reversed(state.project_verification_results)
+            if result.plan_id == state.project.active_plan_id
+        ),
+        None,
+    )
+    if verification is not None:
+        lines += ("", "FINAL VERIFICATION")
+        symbols = {
+            ProjectVerificationStatus.PASS: "✓",
+            ProjectVerificationStatus.FAIL: "✗",
+            ProjectVerificationStatus.TIMEOUT: "✗",
+            ProjectVerificationStatus.SKIPPED: "–",
+            ProjectVerificationStatus.PENDING: "○",
+        }
+        lines += tuple(
+            f"{symbols[check.status]} {check.name}"
+            for check in verification.checks
+        )
+        if verification.final_review_decision is FinalReviewDecision.APPROVE:
+            lines += ("✓ Supervisor final review",)
+        elif verification.final_review_decision is FinalReviewDecision.HUMAN_REQUIRED:
+            lines += ("✗ Supervisor final review",)
+        else:
+            lines += ("○ Supervisor final review",)
+        failed = next(
+            (
+                check
+                for check in verification.checks
+                if check.required
+                and check.status is not ProjectVerificationStatus.PASS
+            ),
+            None,
+        )
+        if failed is not None:
+            lines += (f"Failure     {failed.name}: {failed.safe_summary}",)
+    elif (
+        view.total_tasks > 0
+        and view.completed_tasks == view.total_tasks
+        and state.project.status.value != "done"
+    ):
+        lines += (
+            "",
+            "FINAL VERIFICATION",
+            "○ Project checks have not completed.",
+            "○ Supervisor final review is pending.",
+        )
+    if state.project.status.value == "done":
+        lines += ("", "PROJECT COMPLETED")
     if verbose:
         lines += (
             "",
@@ -35,6 +90,14 @@ def render_project(
             f"current_task_id: {view.current_task_id or '-'}",
             f"execution_stop_reason: {execution_stop_reason or '-'}",
             f"latest_task_commit: {view.latest_task_commit or '-'}",
+            "project_verification_result_id: "
+            + ("-" if verification is None else verification.id),
+            "final_review_decision: "
+            + (
+                "-"
+                if verification is None or verification.final_review_decision is None
+                else verification.final_review_decision.value
+            ),
         )
     return lines
 

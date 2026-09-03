@@ -48,6 +48,10 @@ from code_mule.orchestrator import (
 )
 from code_mule.planning import ProjectPlanningRequest, ProjectPlanningService
 from code_mule.progress import ConsoleProgressRenderer
+from code_mule.project_verification.service import (
+    ProjectFinalizationService,
+    ProjectVerificationService,
+)
 from code_mule.presentation import (
     render_change_applied,
     render_change_requested,
@@ -569,6 +573,17 @@ class ProductionCliComposition:
             event_id_factory=lambda: _id("execution-event"),
             config=ProjectExecutionConfig(max_tasks_per_run=50),
             progress_sink=renderer,
+            finalizer=ProjectFinalizationService(
+                store=self._store,
+                verification=ProjectVerificationService(
+                    clock=clock,
+                    result_id_factory=lambda: _id("verification"),
+                ),
+                supervisor=supervisor,
+                clock=clock,
+                event_id_factory=lambda: _id("verification-event"),
+                progress_sink=renderer,
+            ),
         )
         planning = ProjectPlanningService(
             store=self._store,

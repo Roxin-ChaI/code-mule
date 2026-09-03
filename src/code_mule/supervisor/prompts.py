@@ -21,6 +21,7 @@ from .contracts import (
     ProgressReportRequest,
     ReviewRequest,
     SupervisorOperation,
+    FinalReviewRequest,
 )
 
 
@@ -369,10 +370,39 @@ def build_progress_report_prompt(
     return _system_prompt(SupervisorOperation.PROGRESS_REPORT), user_prompt
 
 
+def build_final_review_prompt(request: FinalReviewRequest) -> tuple[str, str]:
+    result = request.verification_result
+    checks = "\n".join(
+        f"- {item.category.value}: {item.name} = {item.status.value}; "
+        f"{_text(item.safe_summary)}"
+        for item in result.checks
+    ) or "- None"
+    commits = "\n".join(
+        f"- {item.task_id}: {item.commit_sha}"
+        for item in request.project_state.git_commit_results
+    ) or "- None recorded"
+    user_prompt = (
+        f"{_render_project_state(request.project_state)}\n\n"
+        "Current operation context:\n"
+        "Operation: FINAL_REVIEW\n"
+        f"Objective: {_text(request.project_state.project.objective or request.project_state.project.name)}\n"
+        f"Active Plan ID: {_text(result.plan_id)}\n"
+        f"Verified HEAD: {_text(result.verified_head)}\n"
+        f"Project verification checks:\n{checks}\n"
+        f"Task delivery commits:\n{commits}\n"
+        "Return APPROVE only when the recorded Requirements, active Plan, completed "
+        "Tasks, delivery commits, and deterministic verification evidence support "
+        "project completion. Otherwise return HUMAN_REQUIRED. Do not return REWORK, "
+        "generate commands, or modify project state."
+    )
+    return _system_prompt(SupervisorOperation.FINAL_REVIEW), user_prompt
+
+
 __all__ = [
     "SUPERVISOR_SYSTEM_POLICY",
     "build_impact_analysis_prompt",
     "build_plan_prompt",
     "build_progress_report_prompt",
     "build_review_prompt",
+    "build_final_review_prompt",
 ]

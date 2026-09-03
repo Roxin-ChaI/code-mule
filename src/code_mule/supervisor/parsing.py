@@ -6,6 +6,7 @@ from typing import TypeVar, cast
 from code_mule.domain.enums import SupervisorDecisionType
 
 from .contracts import (
+    FinalReviewResult,
     ImpactAnalysisResult,
     MilestoneProposal,
     PlanProposal,
@@ -18,6 +19,7 @@ from .contracts import (
     TaskProposal,
     SupervisorFailureCategory,
 )
+from code_mule.project_verification import FinalReviewDecision
 
 
 class InvalidSupervisorResponse(ValueError):
@@ -437,7 +439,26 @@ def parse_progress_report_response(
     return _parse(parse)
 
 
+def parse_final_review_response(
+    payload: dict[str, object],
+) -> FinalReviewResult:
+    def parse() -> FinalReviewResult:
+        root = _object(payload, "final review response")
+        _exact_fields(root, {"decision", "rationale", "issues"}, "final review response")
+        return FinalReviewResult(
+            decision=FinalReviewDecision(_string(root["decision"], "decision")),
+            rationale=_string(root["rationale"], "rationale"),
+            issues=_string_tuple(root["issues"], "issues"),
+        )
+
+    return _parse(
+        parse,
+        value_failure_category=SupervisorFailureCategory.DECISION_CONTRACT_VIOLATION,
+    )
+
+
 __all__ = [
+    "parse_final_review_response",
     "InvalidSupervisorResponse",
     "parse_impact_analysis_response",
     "parse_plan_response",

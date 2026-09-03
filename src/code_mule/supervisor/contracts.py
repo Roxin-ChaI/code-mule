@@ -5,6 +5,10 @@ from enum import StrEnum
 
 from code_mule.domain.enums import SupervisorDecisionType
 from code_mule.domain.models import ChangeRequest, ExecutionReport, Task
+from code_mule.project_verification.contracts import (
+    FinalReviewDecision,
+    ProjectVerificationResult,
+)
 from code_mule.state.models import ProjectState
 
 
@@ -19,6 +23,7 @@ class SupervisorOperation(StrEnum):
     IMPACT_ANALYSIS = "impact_analysis"
     PROGRESS_REPORT = "progress_report"
     BOSS_ROUTING = "boss_routing"
+    FINAL_REVIEW = "final_review"
 
 
 class SupervisorFailureCategory(StrEnum):
@@ -163,6 +168,22 @@ class ProgressReportRequest:
     def __post_init__(self) -> None:
         if self.question == "":
             raise ValueError("question must not be empty when provided")
+
+
+@dataclass(frozen=True)
+class FinalReviewRequest:
+    project_state: ProjectState
+    verification_result: ProjectVerificationResult
+
+
+@dataclass(frozen=True)
+class FinalReviewResult:
+    decision: FinalReviewDecision
+    rationale: str
+    issues: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _require_non_empty(self.rationale, "rationale")
 
 
 @dataclass(frozen=True)
@@ -321,6 +342,8 @@ class ProgressReport:
 
 
 __all__ = [
+    "FinalReviewRequest",
+    "FinalReviewResult",
     "ImpactAnalysisRequest",
     "ImpactAnalysisResult",
     "MilestoneProposal",

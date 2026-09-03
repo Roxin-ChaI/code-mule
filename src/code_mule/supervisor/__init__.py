@@ -2,6 +2,8 @@
 
 from .client import SupervisorModelClient
 from .contracts import (
+    FinalReviewRequest,
+    FinalReviewResult,
     ImpactAnalysisRequest,
     ImpactAnalysisResult,
     MilestoneProposal,
@@ -25,6 +27,7 @@ from .contracts import (
     supervisor_failure_metadata,
 )
 from .parsing import (
+    parse_final_review_response,
     InvalidSupervisorResponse,
     parse_impact_analysis_response,
     parse_plan_response,
@@ -37,8 +40,10 @@ from .prompts import (
     build_plan_prompt,
     build_progress_report_prompt,
     build_review_prompt,
+    build_final_review_prompt,
 )
 from .schemas import (
+    final_review_response_schema,
     impact_analysis_response_schema,
     plan_response_schema,
     progress_report_response_schema,
@@ -47,6 +52,8 @@ from .schemas import (
 from .service import SupervisorService
 
 __all__ = [
+    "FinalReviewRequest",
+    "FinalReviewResult",
     "ImpactAnalysisRequest",
     "ImpactAnalysisResult",
     "InvalidSupervisorResponse",
@@ -74,6 +81,7 @@ __all__ = [
     "build_plan_prompt",
     "build_progress_report_prompt",
     "build_review_prompt",
+    "build_final_review_prompt",
     "impact_analysis_response_schema",
     "parse_impact_analysis_response",
     "parse_plan_response",
@@ -82,6 +90,8 @@ __all__ = [
     "plan_response_schema",
     "progress_report_response_schema",
     "review_response_schema",
+    "final_review_response_schema",
+    "parse_final_review_response",
     "supervisor_failure_is_retryable",
     "supervisor_failure_metadata",
 ]

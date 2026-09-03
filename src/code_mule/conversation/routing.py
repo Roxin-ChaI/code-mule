@@ -31,6 +31,8 @@ _EXACT: dict[str, BossIntent] = {
     "有什么问题": BossIntent.QUERY_BLOCKERS,
     "有什么阻塞": BossIntent.QUERY_BLOCKERS,
     "blockers": BossIntent.QUERY_BLOCKERS,
+    "最终验证结果是什么": BossIntent.QUERY_STATUS,
+    "为什么项目还没完成": BossIntent.QUERY_STATUS,
     "暂停": BossIntent.PAUSE,
     "先暂停": BossIntent.PAUSE,
     "stop for now": BossIntent.PAUSE,
@@ -65,6 +67,13 @@ _MATCH_PUNCTUATION = str.maketrans(
 _READ_ONLY_PATTERNS: tuple[
     tuple[BossIntent, tuple[re.Pattern[str], ...]], ...
 ] = (
+    (
+        BossIntent.QUERY_STATUS,
+        (
+            re.compile(r"最终验证(?:结果)?(?:是)?什么"),
+            re.compile(r"为什么项目还没完成"),
+        ),
+    ),
     (
         BossIntent.QUERY_BLOCKERS,
         (
