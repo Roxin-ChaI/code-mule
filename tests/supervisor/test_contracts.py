@@ -31,6 +31,7 @@ class SupervisorContractTests(unittest.TestCase):
                 "IMPACT_ANALYSIS": "impact_analysis",
                 "PROGRESS_REPORT": "progress_report",
                 "BOSS_ROUTING": "boss_routing",
+                "FINAL_REVIEW": "final_review",
             },
         )
 

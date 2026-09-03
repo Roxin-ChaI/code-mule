@@ -2,14 +2,17 @@ import copy
 import unittest
 
 from code_mule.domain.enums import SupervisorDecisionType
+from code_mule.project_verification import FinalReviewDecision
 from code_mule.supervisor.parsing import (
     InvalidSupervisorResponse,
+    parse_final_review_response,
     parse_impact_analysis_response,
     parse_plan_response,
     parse_progress_report_response,
     parse_review_response,
 )
 from code_mule.supervisor.schemas import (
+    final_review_response_schema,
     impact_analysis_response_schema,
     plan_response_schema,
     progress_report_response_schema,
@@ -170,6 +173,7 @@ class SchemaTests(unittest.TestCase):
             review_response_schema,
             impact_analysis_response_schema,
             progress_report_response_schema,
+            final_review_response_schema,
         )
         for factory in factories:
             with self.subTest(factory=factory):
@@ -198,6 +202,25 @@ class SchemaTests(unittest.TestCase):
 
 
 class ParsingTests(unittest.TestCase):
+    def test_final_review_parser_is_typed_and_fail_closed(self):
+        result = parse_final_review_response(
+            {"decision": "approve", "rationale": "Complete.", "issues": []}
+        )
+        self.assertIs(result.decision, FinalReviewDecision.APPROVE)
+        self.assertEqual(result.issues, ())
+        for payload in (
+            {"decision": "rework", "rationale": "No.", "issues": []},
+            {
+                "decision": "approve",
+                "rationale": "Complete.",
+                "issues": [],
+                "command": "pytest",
+            },
+        ):
+            with self.subTest(payload=payload):
+                with self.assertRaises(InvalidSupervisorResponse):
+                    parse_final_review_response(payload)
+
     def test_plan_parser_restores_nested_tuples_in_original_order(self):
         result = parse_plan_response(plan_payload())
         self.assertEqual(result.requirements_considered, ("req-2", "req-1"))

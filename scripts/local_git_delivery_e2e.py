@@ -29,6 +29,16 @@ from code_mule.domain import (  # noqa: E402
     TaskStatus,
 )
 from code_mule.git_delivery import GitDeliveryService  # noqa: E402
+from code_mule.project_verification import (  # noqa: E402
+    FinalReviewDecision,
+    ProjectVerificationCategory,
+    ProjectVerificationCommand,
+    ProjectVerificationSpec,
+)
+from code_mule.project_verification.service import (  # noqa: E402
+    ProjectFinalizationService,
+    ProjectVerificationService,
+)
 from code_mule.runtime import (  # noqa: E402
     ProjectExecutionConfig,
     ProjectExecutionService,
@@ -87,6 +97,15 @@ class FakeSupervisor:
             SupervisorDecisionType.CONTINUE,
             "Fake Supervisor accepted deterministic evidence.",
             None,
+            (),
+        )
+
+    def final_review(self, request):
+        from code_mule.supervisor import FinalReviewResult
+
+        return FinalReviewResult(
+            FinalReviewDecision.APPROVE,
+            "Fake final Supervisor approved persisted verification evidence.",
             (),
         )
 
@@ -179,6 +198,18 @@ def initial_state(repository: Path, *, rework: bool) -> ProjectState:
                 ("REQ-1",),
             ),
         )
+    verification_commands = (
+        ()
+        if rework
+        else (
+            ProjectVerificationCommand(
+                "project unittest",
+                ProjectVerificationCategory.TEST,
+                (sys.executable, "-m", "unittest", "discover", "-s", ".", "-v"),
+                timeout_seconds=60,
+            ),
+        )
+    )
     return ProjectState(
         project=Project(
             "PROJECT", "Git Delivery E2E", ProjectStatus.RUNNING, "PLAN-1", None,
@@ -198,6 +229,9 @@ def initial_state(repository: Path, *, rework: bool) -> ProjectState:
         execution_reports=(),
         quality_status=None,
         events=(),
+        project_verification_spec=ProjectVerificationSpec(
+            "PROJECT", verification_commands
+        ),
     )
 
 
@@ -259,6 +293,16 @@ def run_scenario(*, real_worker: bool, rework: bool) -> dict[str, object]:
             clock=lambda: datetime.now(UTC),
             event_id_factory=execution_event_ids,
             config=ProjectExecutionConfig(max_tasks_per_run=10),
+            finalizer=ProjectFinalizationService(
+                store=store,
+                verification=ProjectVerificationService(
+                    clock=lambda: datetime.now(UTC),
+                    result_id_factory=IdFactory("verification"),
+                ),
+                supervisor=supervisor,
+                clock=lambda: datetime.now(UTC),
+                event_id_factory=IdFactory("verification-event"),
+            ),
         ).run()
         final = store.load()
         pending_actions = [
@@ -285,6 +329,11 @@ def run_scenario(*, real_worker: bool, rework: bool) -> dict[str, object]:
             }
             for report in final.execution_reports
         ]
+        verification = (
+            None
+            if not final.project_verification_results
+            else final.project_verification_results[-1]
+        )
         generated_test = "not_applicable"
         if not rework:
             completed = subprocess.run(
@@ -314,6 +363,19 @@ def run_scenario(*, real_worker: bool, rework: bool) -> dict[str, object]:
             "pending_actions": pending_actions,
             "failure_types": failure_types,
             "worker_reports": reports,
+            "verification_checks": (
+                []
+                if verification is None
+                else [
+                    {"name": check.name, "status": check.status.value}
+                    for check in verification.checks
+                ]
+            ),
+            "final_review_decision": (
+                None
+                if verification is None or verification.final_review_decision is None
+                else verification.final_review_decision.value
+            ),
             "final_git_status": git(repository, "status", "--short"),
         }
 

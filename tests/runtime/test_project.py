@@ -8,7 +8,7 @@ from code_mule.domain.enums import (
     SupervisorDecisionType,
     TaskStatus,
 )
-from code_mule.domain.models import Milestone, Plan, Project, Task
+from code_mule.domain.models import Milestone, Plan, Project, ProjectEvent, Task
 from code_mule.progress import (
     ProgressEventType,
     RecordingProgressSink,
@@ -192,6 +192,34 @@ class FakeCycleFactory:
         )
 
 
+class FakeFinalizer:
+    def __init__(self, store):
+        self.store = store
+        self.calls = 0
+
+    def finalize(self, state):
+        self.calls += 1
+        plan = next(item for item in state.plans if item.id == state.project.active_plan_id)
+        completed = replace(
+            state,
+            project=replace(state.project, status=ProjectStatus.DONE, updated_at=NOW),
+            plans=tuple(
+                replace(item, status=PlanStatus.COMPLETED) if item.id == plan.id else item
+                for item in state.plans
+            ),
+            milestones=tuple(
+                replace(item, status="completed") if item.id in plan.milestone_ids else item
+                for item in state.milestones
+            ),
+            events=state.events + (
+                ProjectEvent("final-plan", state.project.id, "plan.completed", plan.id, NOW, {}),
+                ProjectEvent("final-project", state.project.id, "project.completed", state.project.id, NOW, {}),
+            ),
+        )
+        self.store.save(completed)
+        return completed
+
+
 def build_service(
     state,
     *,
@@ -199,9 +227,11 @@ def build_service(
     cycle_options=None,
     store=None,
     progress_sink=None,
+    finalizer=None,
 ):
     store = store or FakeStore(state)
     cycles = FakeCycleFactory(store, **(cycle_options or {}))
+    finalizer = finalizer or FakeFinalizer(store)
     service = ProjectExecutionService(
         store=store,
         scheduler=TaskScheduler(),
@@ -211,6 +241,7 @@ def build_service(
         event_id_factory=IdFactory(),
         config=ProjectExecutionConfig(max_tasks),
         progress_sink=progress_sink,
+        finalizer=finalizer,
     )
     return service, store, cycles
 
@@ -270,6 +301,43 @@ class ProjectExecutionContractTests(unittest.TestCase):
 
 
 class ProjectExecutionFlowTests(unittest.TestCase):
+    def test_completed_tasks_enter_finalizer_without_worker_dispatch(self):
+        state = make_state((make_task("task-a", status=TaskStatus.COMPLETED),))
+        store = FakeStore(state)
+        finalizer = FakeFinalizer(store)
+        service, _, cycles = build_service(
+            state, store=store, finalizer=finalizer
+        )
+
+        outcome = service.run()
+
+        self.assertEqual(cycles.requests, [])
+        self.assertEqual(finalizer.calls, 1)
+        self.assertIs(outcome.final_project_status, ProjectStatus.DONE)
+
+    def test_missing_finalizer_fails_closed_instead_of_completing(self):
+        state = make_state((make_task("task-a", status=TaskStatus.COMPLETED),))
+        store = FakeStore(state)
+        cycles = FakeCycleFactory(store)
+        service = ProjectExecutionService(
+            store=store,
+            scheduler=TaskScheduler(),
+            task_cycle_factory=cycles,
+            prompt_builder=TaskPromptBuilder(),
+            clock=lambda: NOW,
+            event_id_factory=IdFactory(),
+            config=ProjectExecutionConfig(20),
+        )
+
+        outcome = service.run()
+
+        self.assertEqual(cycles.requests, [])
+        self.assertIs(outcome.final_project_status, ProjectStatus.HUMAN_REQUIRED)
+        self.assertEqual(
+            store.current.events[-1].event_type,
+            "project.final_verification_unavailable",
+        )
+
     def test_project_progress_events_preserve_required_execution_order(self):
         state = make_state(
             (

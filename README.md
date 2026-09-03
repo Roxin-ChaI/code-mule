@@ -194,6 +194,18 @@ push, tag, and release stay behind a Human Gate.
 See [Git Delivery Workflow](docs/git-delivery.md) for the clean-baseline rule,
 ownership checks, commit boundary, and disposable local E2E.
 
+## Project-Level Final Verification
+
+Phase 17 makes Task completion distinct from Project completion. After every
+active-Plan Task has a delivery commit, Code Mule runs only the deterministic
+checks persisted in ProjectState, verifies the repository is clean at the last
+Task delivery HEAD, and requests a strict final Supervisor review. The Project
+enters `DONE` only when every required check passes and that review approves.
+
+See [Project-Level Final Verification](docs/project-verification.md) for the
+completion boundary, safe command execution, failure handling, evidence model,
+and disposable local E2E.
+
 ## Status
 
 Early development.

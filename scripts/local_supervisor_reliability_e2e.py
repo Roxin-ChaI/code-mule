@@ -1,5 +1,6 @@
 """Deterministic local E2E for bounded Supervisor regeneration."""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 import json
 from pathlib import Path
@@ -17,6 +18,7 @@ from code_mule.domain import (  # noqa: E402
     ExecutionReport,
     Project,
     ProjectStatus,
+    PlanStatus,
     SupervisorDecisionType,
 )
 from code_mule.planning import (  # noqa: E402
@@ -45,6 +47,27 @@ from code_mule.supervisor import (  # noqa: E402
     SupervisorService,
 )
 from scripts.local_codex_autonomous_smoke import _IdFactory  # noqa: E402
+
+
+class _ReliabilityFinalizer:
+    """Keep this Phase 15 harness focused on Supervisor retry behavior."""
+
+    def __init__(self, store):
+        self.store = store
+
+    def finalize(self, state):
+        updated = replace(
+            state,
+            project=replace(state.project, status=ProjectStatus.DONE),
+            plans=tuple(
+                replace(item, status=PlanStatus.COMPLETED)
+                if item.id == state.project.active_plan_id
+                else item
+                for item in state.plans
+            ),
+        )
+        self.store.save(updated)
+        return updated
 
 
 def _plan_payload(*, requirement_id: str = "REQ-LOCAL") -> dict[str, object]:
@@ -220,6 +243,7 @@ def _execution(
         event_id_factory=_IdFactory(f"{prefix}-execution-event"),
         config=ProjectExecutionConfig(max_tasks_per_run=1),
         progress_sink=progress,
+        finalizer=_ReliabilityFinalizer(store),
     )
 
 

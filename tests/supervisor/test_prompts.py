@@ -1,7 +1,15 @@
 import unittest
 from dataclasses import replace
+from datetime import UTC, datetime
 
+from code_mule.project_verification import (
+    ProjectVerificationCategory,
+    ProjectVerificationCheck,
+    ProjectVerificationResult,
+    ProjectVerificationStatus,
+)
 from code_mule.supervisor.contracts import (
+    FinalReviewRequest,
     ImpactAnalysisRequest,
     PlanRequest,
     ProgressReportRequest,
@@ -13,12 +21,38 @@ from code_mule.supervisor.prompts import (
     build_plan_prompt,
     build_progress_report_prompt,
     build_review_prompt,
+    build_final_review_prompt,
 )
 
 from state import make_project_state
 
 
 class SupervisorPromptTests(unittest.TestCase):
+    def test_final_review_prompt_contains_only_persisted_completion_evidence(self):
+        state = make_project_state()
+        now = datetime(2026, 9, 3, tzinfo=UTC)
+        result = ProjectVerificationResult(
+            "verification-1", state.project.id, state.project.active_plan_id,
+            "a" * 40, "a" * 40,
+            (
+                ProjectVerificationCheck(
+                    "Tests", ProjectVerificationCategory.TEST,
+                    ("python", "-m", "unittest"),
+                    ProjectVerificationStatus.PASS, 0,
+                    "Verification command passed.", True,
+                ),
+            ),
+            now, now,
+        )
+        system, prompt = build_final_review_prompt(FinalReviewRequest(state, result))
+        self.assertIn("Current operation: final_review", system)
+        self.assertIn("Operation: FINAL_REVIEW", prompt)
+        self.assertIn("Verified HEAD", prompt)
+        self.assertIn("test: Tests = pass", prompt)
+        self.assertIn("return HUMAN_REQUIRED", prompt)
+        self.assertIn("Do not return REWORK", prompt)
+        self.assertNotIn("Generate a shell command", prompt)
+
     def test_plan_prompt_contains_current_facts_and_context(self):
         state = make_project_state()
         system_prompt, user_prompt = build_plan_prompt(

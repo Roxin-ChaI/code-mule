@@ -34,6 +34,10 @@ class GitDeliveryE2ETests(unittest.TestCase):
         self.assertEqual(len(two_tasks["delivery_commits"]), 2)
         self.assertTrue(two_tasks["workspace_clean"])
         self.assertEqual(two_tasks["generated_tests"], "pass")
+        self.assertEqual(two_tasks["final_review_decision"], "approve")
+        self.assertTrue(
+            all(check["status"] in {"pass", "skipped"} for check in two_tasks["verification_checks"])
+        )
         rework = payload["rework"]
         self.assertEqual(rework["project_status"], "done")
         self.assertEqual(rework["commit_count"], 1)

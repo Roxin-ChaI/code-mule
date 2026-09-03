@@ -20,6 +20,12 @@ from code_mule.domain import (
     ProjectStatus,
     TaskStatus,
 )
+from code_mule.project_verification import (
+    ProjectVerificationCategory,
+    ProjectVerificationCheck,
+    ProjectVerificationResult,
+    ProjectVerificationStatus,
+)
 from state import UPDATED, make_project_state
 
 
@@ -73,6 +79,38 @@ def service(state, intent, *, gateway=None, verbose=False, normalized="request")
 
 
 class BossConversationServiceTests(unittest.TestCase):
+    def test_final_verification_questions_use_persisted_facts(self):
+        state = make_project_state()
+        result = ProjectVerificationResult(
+            "verification-1", state.project.id, state.project.active_plan_id,
+            "a" * 40, "a" * 40,
+            (
+                ProjectVerificationCheck(
+                    "Tests", ProjectVerificationCategory.TEST,
+                    ("python", "-m", "unittest"),
+                    ProjectVerificationStatus.FAIL, 1,
+                    "Verification command failed; output was not persisted.", True,
+                ),
+            ),
+            UPDATED, UPDATED,
+        )
+        state = replace(state, project_verification_results=(result,))
+        gateway = FakeGateway()
+        conversation = BossConversationService(
+            state_loader=lambda: state,
+            commands=gateway,
+            router=CompositeBossIntentRouter(model=FallbackRouter()),
+            session=BossSession(state.project.id),
+        )
+
+        for question in ("最终验证结果是什么？", "为什么项目还没完成？"):
+            with self.subTest(question=question):
+                output = "\n".join(conversation.handle(question).lines)
+                self.assertIn("FINAL VERIFICATION", output)
+                self.assertIn("✗ Tests", output)
+                self.assertIn("output was not persisted", output)
+        self.assertEqual(gateway.calls, [])
+
     def test_status_plan_progress_current_and_blockers_use_state_facts(self):
         state = make_project_state()
         blocked = replace(state.tasks[0], status=TaskStatus.BLOCKED)

@@ -13,11 +13,60 @@ from code_mule.presentation import (
     status_label,
 )
 from code_mule.git_delivery import GitCommitResult
+from code_mule.project_verification import (
+    FinalReviewDecision,
+    ProjectVerificationCategory,
+    ProjectVerificationCheck,
+    ProjectVerificationResult,
+    ProjectVerificationStatus,
+)
 from state import CREATED
 from state import make_project_state
 
 
 class PresentationModelTests(unittest.TestCase):
+    def test_final_verification_is_boss_readable_and_keeps_details_bounded(self):
+        state = make_project_state()
+        result = ProjectVerificationResult(
+            "verification-1", state.project.id, state.project.active_plan_id,
+            "a" * 40, "a" * 40,
+            (
+                ProjectVerificationCheck(
+                    "Tests", ProjectVerificationCategory.TEST,
+                    ("python", "-m", "unittest"),
+                    ProjectVerificationStatus.PASS, 0,
+                    "Verification command passed.", True,
+                ),
+                ProjectVerificationCheck(
+                    "Git clean", ProjectVerificationCategory.GIT_CLEAN,
+                    ("git", "status"), ProjectVerificationStatus.PASS, 0,
+                    "Repository is clean.", True,
+                ),
+            ),
+            CREATED, CREATED,
+            FinalReviewDecision.APPROVE,
+            "Delivery evidence supports completion.",
+        )
+        done = replace(
+            state,
+            project=replace(state.project, status=ProjectStatus.DONE),
+            tasks=(replace(state.tasks[0], status=TaskStatus.COMPLETED),),
+            project_verification_results=(result,),
+        )
+
+        output = "\n".join(render_project(done))
+
+        self.assertIn("FINAL VERIFICATION", output)
+        self.assertIn("✓ Tests", output)
+        self.assertIn("✓ Git clean", output)
+        self.assertIn("✓ Supervisor final review", output)
+        self.assertIn("PROJECT COMPLETED", output)
+        self.assertNotIn("verification-1", output)
+        self.assertNotIn("python -m unittest", output)
+        verbose = "\n".join(render_project(done, verbose=True))
+        self.assertIn("project_verification_result_id: verification-1", verbose)
+        self.assertIn("final_review_decision: approve", verbose)
+
     def test_human_readable_status_and_decision_mapping(self):
         expected = {
             ProjectStatus.RUNNING: "Running",

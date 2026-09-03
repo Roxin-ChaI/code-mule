@@ -1,7 +1,17 @@
 import unittest
 from dataclasses import replace
+from datetime import UTC, datetime
 
+from code_mule.project_verification import (
+    FinalReviewDecision,
+    ProjectVerificationCategory,
+    ProjectVerificationCheck,
+    ProjectVerificationResult,
+    ProjectVerificationStatus,
+)
 from code_mule.supervisor.contracts import (
+    FinalReviewRequest,
+    FinalReviewResult,
     ImpactAnalysisRequest,
     ImpactAnalysisResult,
     PlanProposal,
@@ -16,12 +26,14 @@ from code_mule.supervisor.contracts import (
     SupervisorRetryPolicy,
 )
 from code_mule.supervisor.prompts import (
+    build_final_review_prompt,
     build_impact_analysis_prompt,
     build_plan_prompt,
     build_progress_report_prompt,
     build_review_prompt,
 )
 from code_mule.supervisor.schemas import (
+    final_review_response_schema,
     impact_analysis_response_schema,
     plan_response_schema,
     progress_report_response_schema,
@@ -76,7 +88,57 @@ def review_payload():
     }
 
 
+def final_review_request(state):
+    now = datetime(2026, 9, 3, tzinfo=UTC)
+    result = ProjectVerificationResult(
+        "verification-1",
+        state.project.id,
+        state.project.active_plan_id,
+        "a" * 40,
+        "a" * 40,
+        (
+            ProjectVerificationCheck(
+                "Tests",
+                ProjectVerificationCategory.TEST,
+                ("python", "-m", "unittest"),
+                ProjectVerificationStatus.PASS,
+                0,
+                "Verification command passed.",
+                True,
+            ),
+        ),
+        now,
+        now,
+    )
+    return FinalReviewRequest(state, result)
+
+
 class SupervisorServiceTests(unittest.TestCase):
+    def test_final_review_uses_strict_contract_and_bounded_regeneration(self):
+        state = make_project_state()
+        request = final_review_request(state)
+        valid = {
+            "decision": "approve",
+            "rationale": "All evidence supports completion.",
+            "issues": [],
+        }
+        client = FakeSupervisorModelClient(
+            [{"decision": "rework", "rationale": "invalid", "issues": []}, valid]
+        )
+        service = SupervisorService(client)
+
+        result = service.final_review(request)
+
+        self.assertIsInstance(result, FinalReviewResult)
+        self.assertIs(result.decision, FinalReviewDecision.APPROVE)
+        self.assertEqual(len(client.calls), 2)
+        self.assertIs(client.calls[0]["operation"], SupervisorOperation.FINAL_REVIEW)
+        self.assertEqual(client.calls[0]["schema"], final_review_response_schema())
+        self.assertEqual(
+            (client.calls[0]["system_prompt"], client.calls[0]["user_prompt"]),
+            build_final_review_prompt(request),
+        )
+
     def test_plan_calls_client_once_with_protocol_and_returns_typed_result(self):
         state = make_project_state()
         original = replace(state)

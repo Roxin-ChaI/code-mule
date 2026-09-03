@@ -36,6 +36,8 @@ class BossRoutingTests(unittest.TestCase):
             "现在做到哪了？": BossIntent.QUERY_PROGRESS,
             "当前在做什么？": BossIntent.QUERY_CURRENT_WORK,
             "有什么问题？": BossIntent.QUERY_BLOCKERS,
+            "最终验证结果是什么？": BossIntent.QUERY_STATUS,
+            "为什么项目还没完成？": BossIntent.QUERY_STATUS,
             "增加 multiply": BossIntent.CHANGE,
             "先暂停": BossIntent.PAUSE,
             "继续": BossIntent.RESUME,
