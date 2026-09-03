@@ -107,6 +107,10 @@ class ChangeReplanningService:
                 ImpactAnalysisRequest(replanning, analyzing_change)
             )
         except BaseException as error:
+            if self._store.load().project.status is ProjectStatus.CANCELLED:
+                raise InvalidReplanningState(
+                    "replanning was cancelled by the Boss"
+                ) from error
             self._fail(
                 replanning,
                 analyzing_change,
@@ -116,6 +120,9 @@ class ChangeReplanningService:
             raise SupervisorReplanningError(
                 "Supervisor Impact Analysis failed"
             ) from error
+
+        if self._store.load().project.status is ProjectStatus.CANCELLED:
+            raise InvalidReplanningState("replanning was cancelled by the Boss")
 
         self._emit(
             replanning,
@@ -205,6 +212,8 @@ class ChangeReplanningService:
             ),
         )
         # This is the only save that exposes the replacement graph as RUNNING.
+        if self._store.load().project.status is ProjectStatus.CANCELLED:
+            raise InvalidReplanningState("replanning was cancelled by the Boss")
         self._store.save(final)
         self._emit(
             final,

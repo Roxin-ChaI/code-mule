@@ -68,6 +68,9 @@ identity when applicable:
 - `pause`: applies the existing Boss PAUSE transition.
 - `resume`: resumes only PAUSED_BY_BOSS after workspace, Plan, and task ownership
   recovery checks. It never bypasses HUMAN_REQUIRED.
+- `stop`: records whole-project cancellation. With no active Task it completes
+  immediately; otherwise the current Task reaches a Safe Point and no next Task
+  is dispatched. Completed work is preserved and no rollback is performed.
 - `inspect`: reads the unique pending typed HumanAction and shows its request,
   risk, scope, and action-specific next command. `--verbose` adds internal IDs.
 - `approve ACTION_ID` / `reject ACTION_ID`: closes one exact approval action;

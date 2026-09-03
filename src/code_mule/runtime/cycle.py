@@ -130,6 +130,10 @@ class TaskCycleService:
         prompt = request.initial_prompt
         baseline: GitBaseline | None = None
 
+        if state.project.status is ProjectStatus.CANCEL_REQUESTED:
+            self._cancel_current_task(task.id)
+            return self._cancelled_outcome(task.id, reports, decisions)
+
         if self._git_delivery is not None:
             try:
                 baseline = self._git_delivery.capture_baseline(task.id)
@@ -150,6 +154,10 @@ class TaskCycleService:
         session = self._worker_session_factory()
 
         try:
+            latest = self._store.load()
+            if latest.project.status is ProjectStatus.CANCEL_REQUESTED:
+                self._cancel_current_task(task.id)
+                return self._cancelled_outcome(task.id, reports, decisions)
             try:
                 self._emit_progress(
                     state,
@@ -425,6 +433,10 @@ class TaskCycleService:
                     attempt=report.attempt,
                     metadata={"decision": review.decision.value},
                 )
+                if self._store.load().project.status is ProjectStatus.CANCEL_REQUESTED:
+                    self._cancel_current_task(task.id)
+                    self._clear_worker_identity(task.id)
+                    return self._cancelled_outcome(task.id, reports, decisions)
                 if len(reports) >= self._config.max_attempts:
                     self._transition_human_required(
                         state,
@@ -554,8 +566,11 @@ class TaskCycleService:
             raise InvalidTaskCycleState("task is not the current project task")
         if task.status is not TaskStatus.IN_PROGRESS:
             raise InvalidTaskCycleState("current task must be IN_PROGRESS")
-        if state.project.status is not ProjectStatus.RUNNING:
-            raise InvalidTaskCycleState("project must be RUNNING")
+        if state.project.status not in {
+            ProjectStatus.RUNNING,
+            ProjectStatus.CANCEL_REQUESTED,
+        }:
+            raise InvalidTaskCycleState("project must be RUNNING or CANCEL_REQUESTED")
         return task
 
     @staticmethod
@@ -883,6 +898,7 @@ class TaskCycleService:
         requested_action: str,
         risk: str,
     ) -> ProjectState:
+        state, task = self._reload_task_state(task.id)
         operation_time = self._clock()
         new_state = request_human_action(
             state,
@@ -899,6 +915,32 @@ class TaskCycleService:
         )
         self._store.save(new_state)
         return new_state
+
+    def _cancel_current_task(self, task_id: str) -> ProjectState:
+        state, task = self._reload_task_state(task_id)
+        if state.project.status is not ProjectStatus.CANCEL_REQUESTED:
+            raise InvalidTaskCycleState("Task cancellation requires CANCEL_REQUESTED")
+        if state.project.current_task_id != task.id:
+            raise InvalidTaskCycleState("Task cancellation requires the current Task")
+        if task.status is not TaskStatus.IN_PROGRESS:
+            raise InvalidTaskCycleState("Task cancellation requires IN_PROGRESS")
+        now = self._clock()
+        cancelled = replace(task, status=TaskStatus.CANCELLED, updated_at=now)
+        event = self._event(
+            state,
+            task,
+            "task.cancelled",
+            now,
+            {"reason": "project_cancellation"},
+        )
+        updated = replace(
+            state,
+            project=replace(state.project, current_task_id=None, updated_at=now),
+            tasks=self._replace_task(state.tasks, cancelled),
+            events=state.events + (event,),
+        )
+        self._store.save(updated)
+        return updated
 
     def _event(
         self,
@@ -941,6 +983,23 @@ class TaskCycleService:
             decisions=decisions,
             final_prompt=final_prompt,
             human_action_required=True,
+        )
+
+    @staticmethod
+    def _cancelled_outcome(
+        task_id: str,
+        reports: tuple[ExecutionReport, ...],
+        decisions: tuple[Decision, ...],
+    ) -> TaskCycleOutcome:
+        return TaskCycleOutcome(
+            task_id=task_id,
+            attempts=len(reports),
+            final_decision=SupervisorDecisionType.CONTINUE,
+            execution_reports=reports,
+            decisions=decisions,
+            final_prompt=None,
+            human_action_required=False,
+            cancelled=True,
         )
 
 

@@ -11,10 +11,12 @@ _PROJECT_STATUS_LABELS = {
     ProjectStatus.RUNNING.value: "Running",
     ProjectStatus.CHANGE_REQUESTED.value: "Change requested",
     ProjectStatus.REPLANNING.value: "Replanning",
+    ProjectStatus.CANCEL_REQUESTED.value: "Cancellation requested",
     ProjectStatus.PAUSED_BY_BOSS.value: "Paused",
     ProjectStatus.HUMAN_REQUIRED.value: "Action required",
     ProjectStatus.DONE.value: "Completed",
     ProjectStatus.FAILED.value: "Failed",
+    ProjectStatus.CANCELLED.value: "Cancelled",
 }
 
 _DECISION_LABELS = {

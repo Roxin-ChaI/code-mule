@@ -33,6 +33,7 @@ class BossCommandGateway(Protocol):
     def change(self, request: str, verbose: bool = False) -> CliCommandResult: ...
     def pause(self, verbose: bool = False) -> CliCommandResult: ...
     def resume(self, verbose: bool = False) -> CliCommandResult: ...
+    def stop(self, verbose: bool = False) -> CliCommandResult: ...
     def inspect(self, verbose: bool = False) -> CliCommandResult: ...
     def approve(self, action_id: str, verbose: bool = False) -> CliCommandResult: ...
     def reject(self, action_id: str, verbose: bool = False) -> CliCommandResult: ...
@@ -101,6 +102,8 @@ class BossConversationService:
             return self._command_reply(intent, self._commands.pause)
         if intent is BossIntent.RESUME:
             return self._command_reply(intent, self._commands.resume)
+        if intent is BossIntent.STOP:
+            return self._command_reply(intent, self._commands.stop)
         if intent is BossIntent.INSPECT:
             return self._inspect_reply(state)
         if intent is BossIntent.APPROVE:
@@ -118,7 +121,7 @@ class BossConversationService:
                 intent,
                 (
                     "You can ask about status, plan, progress, current work, or blockers.",
-                    "You can also request a change, pause, resume, inspect, approve, reject, or retry.",
+                    "You can also request a change, pause, resume, stop, inspect, approve, reject, or retry.",
                     "Ambiguous requests are clarified before any state change.",
                 ),
             )
@@ -126,7 +129,7 @@ class BossConversationService:
             BossIntent.UNKNOWN,
             (
                 "I could not determine a safe intent from that request.",
-                "Please clarify whether you want a query, change, pause, resume, or Human Action decision.",
+                "Please clarify whether you want a query, change, pause, resume, stop, or Human Action decision.",
                 "No project state was changed.",
             ),
         )

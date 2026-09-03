@@ -37,6 +37,12 @@ _EXACT: dict[str, BossIntent] = {
     "先暂停": BossIntent.PAUSE,
     "stop for now": BossIntent.PAUSE,
     "pause": BossIntent.PAUSE,
+    "停止项目": BossIntent.STOP,
+    "不做了": BossIntent.STOP,
+    "这个项目不做了": BossIntent.STOP,
+    "取消这个项目": BossIntent.STOP,
+    "stop project": BossIntent.STOP,
+    "cancel project": BossIntent.STOP,
     "继续": BossIntent.RESUME,
     "恢复": BossIntent.RESUME,
     "resume": BossIntent.RESUME,
@@ -114,6 +120,7 @@ _SIDE_EFFECT_INTENTS = frozenset(
         BossIntent.CHANGE,
         BossIntent.PAUSE,
         BossIntent.RESUME,
+        BossIntent.STOP,
         BossIntent.APPROVE,
         BossIntent.REJECT,
         BossIntent.RESOLVE,
@@ -264,7 +271,8 @@ class StructuredBossIntentRouter:
                 "Classify the Boss message into exactly one schema intent. "
                 "You only route; never propose or perform a state change. "
                 "Use UNKNOWN for ambiguous requests, especially possible state-changing "
-                "requests. Read-only examples: '还有几个任务' -> query_progress; "
+                "requests. STOP means explicit whole-project cancellation; do not confuse "
+                "it with PAUSE. Read-only examples: '还有几个任务' -> query_progress; "
                 "'有什么需要我处理的吗' -> query_blockers; '接下来准备怎么做' -> "
                 "query_plan; '现在忙什么' -> query_current_work. normalized_request "
                 "must preserve the Boss meaning without adding facts. Never execute a "

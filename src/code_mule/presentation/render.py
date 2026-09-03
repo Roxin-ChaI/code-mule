@@ -198,9 +198,44 @@ def render_human_action(
     return lines
 
 
+def render_project_cancellation_requested(
+    state: ProjectState, *, verbose: bool = False
+) -> tuple[str, ...]:
+    lines = (
+        "PROJECT CANCELLATION REQUESTED",
+        "",
+        "Current task will finish safely.",
+        "No new tasks will be dispatched.",
+        "Completed work will be preserved.",
+    )
+    if verbose:
+        lines += (
+            "",
+            f"project_status: {state.project.status.value}",
+            f"current_task_id: {state.project.current_task_id or '-'}",
+        )
+    return lines
+
+
+def render_project_cancelled(
+    state: ProjectState, *, verbose: bool = False
+) -> tuple[str, ...]:
+    lines = (
+        "PROJECT CANCELLED",
+        "",
+        "Completed work was preserved.",
+        "No rollback was performed.",
+    )
+    if verbose:
+        lines += ("", f"project_status: {state.project.status.value}")
+    return lines
+
+
 __all__ = [
     "render_change_applied",
     "render_change_requested",
     "render_human_action",
     "render_project",
+    "render_project_cancelled",
+    "render_project_cancellation_requested",
 ]

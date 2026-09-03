@@ -60,6 +60,9 @@ def build_parser() -> argparse.ArgumentParser:
     resume = commands.add_parser("resume", help="resume a Boss-paused project")
     _state_file(resume)
 
+    stop = commands.add_parser("stop", help="cancel the project at a safe boundary")
+    _state_file(stop)
+
     inspect = commands.add_parser("inspect", help="inspect the pending human action")
     _state_file(inspect)
 

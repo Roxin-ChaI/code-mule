@@ -45,6 +45,7 @@ from code_mule.orchestrator import (
     PauseCommand,
     QueryCommand,
     ResumeCommand,
+    StopCommand,
 )
 from code_mule.planning import ProjectPlanningRequest, ProjectPlanningService
 from code_mule.progress import ConsoleProgressRenderer
@@ -57,6 +58,8 @@ from code_mule.presentation import (
     render_change_requested,
     render_human_action,
     render_project,
+    render_project_cancelled,
+    render_project_cancellation_requested,
     status_label,
 )
 from code_mule.replanning import (
@@ -353,6 +356,19 @@ class ProductionCliComposition:
             ("EXECUTION RESUMED", result.message, "")
             + render_project(self._load(), verbose=verbose),
         )
+
+    def stop(self, verbose: bool = False) -> CliCommandResult:
+        state = self._load()
+        try:
+            result = self._orchestrator().stop(StopCommand(state.project.id))
+        except InvalidBossCommand as error:
+            raise InvalidCliProjectState("stop is invalid for current state") from error
+        latest = self._load()
+        if result.current_status is ProjectStatus.CANCEL_REQUESTED:
+            lines = render_project_cancellation_requested(latest, verbose=verbose)
+        else:
+            lines = render_project_cancelled(latest, verbose=verbose)
+        return CliCommandResult(CliExitCode.SUCCESS, lines)
 
     def inspect(self, verbose: bool = False) -> CliCommandResult:
         state = self._load()

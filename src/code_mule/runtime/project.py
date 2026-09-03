@@ -12,6 +12,7 @@ from code_mule.domain.enums import (
 )
 from code_mule.domain.models import Milestone, ProjectEvent, Task
 from code_mule.human import pending_action, request_human_action
+from code_mule.orchestrator import OrchestratorService
 from code_mule.progress import (
     ProgressEvent,
     ProgressEventType,
@@ -113,6 +114,12 @@ class ProjectExecutionService:
         self._config = config
         self._progress = resilient_progress_sink(progress_sink)
         self._finalizer = finalizer
+        self._cancellation = OrchestratorService(
+            store,
+            clock=clock,
+            event_id_factory=event_id_factory,
+            progress_sink=progress_sink,
+        )
 
     @property
     def progress_errors(self) -> tuple[BaseException, ...]:
@@ -156,6 +163,12 @@ class ProjectExecutionService:
 
         while True:
             state = self._store.load()
+            if (
+                state.project.status is ProjectStatus.CANCEL_REQUESTED
+                and state.project.current_task_id is None
+            ):
+                self._cancellation.complete_cancellation()
+                state = self._store.load()
             boundary = self._boundary_outcome(state, started, completed, task_ids)
             if boundary is not None:
                 self._emit_stopped(state, boundary.stop_reason)
@@ -298,6 +311,16 @@ class ProjectExecutionService:
                 TaskCycleRequest(current, prompt)
             )
             latest = self._store.load()
+            if cycle_outcome.cancelled:
+                if (
+                    latest.project.status is not ProjectStatus.CANCEL_REQUESTED
+                    or latest.project.current_task_id is not None
+                    or self._task(latest, task.id).status is not TaskStatus.CANCELLED
+                ):
+                    raise InvalidProjectExecutionState(
+                        "cancelled TaskCycle must persist a cancellation Safe Point"
+                    )
+                continue
             if cycle_outcome.human_action_required:
                 latest = self._ensure_human_required(latest, task.id)
                 self._emit_stopped(
@@ -352,6 +375,8 @@ class ProjectExecutionService:
             ProjectStatus.HUMAN_REQUIRED: ProjectExecutionStopReason.HUMAN_REQUIRED,
             ProjectStatus.DONE: ProjectExecutionStopReason.PLAN_COMPLETED,
             ProjectStatus.FAILED: ProjectExecutionStopReason.TASK_CYCLE_STOPPED,
+            ProjectStatus.CANCEL_REQUESTED: ProjectExecutionStopReason.CANCEL_REQUESTED,
+            ProjectStatus.CANCELLED: ProjectExecutionStopReason.CANCELLED,
         }
         if status not in reasons:
             raise InvalidProjectExecutionState(

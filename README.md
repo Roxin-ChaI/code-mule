@@ -84,7 +84,7 @@ export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
 ```
 
 The formal Boss CLI also provides `ask`, `change`, `change --apply`, `pause`,
-`resume`, `inspect`, `approve`, `reject`, and `resolve`. See
+`resume`, `stop`, `inspect`, `approve`, `reject`, and `resolve`. See
 [Boss CLI](docs/cli.md) and [Human Resolution](docs/human-resolution.md) for
 action-scoped approval, state behavior, Human Gates,
 environment variables, exit codes, and the manual real E2E.
@@ -205,6 +205,17 @@ enters `DONE` only when every required check passes and that review approves.
 See [Project-Level Final Verification](docs/project-verification.md) for the
 completion boundary, safe command execution, failure handling, evidence model,
 and disposable local E2E.
+
+## Project Cancellation
+
+Phase 18 adds an explicit Boss STOP lifecycle. An idle project cancels
+immediately; an active Task is allowed to reach its normal safe completion
+boundary before Code Mule cancels all remaining active-Plan Tasks. Completed
+work and local delivery commits are preserved, and cancellation never runs
+project final verification or rolls work back.
+
+See [Project Cancellation](docs/project-cancellation.md) for STOP versus PAUSE
+and failure, Safe Point behavior, preservation rules, and local E2E coverage.
 
 ## Status
 

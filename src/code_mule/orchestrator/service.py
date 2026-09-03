@@ -178,7 +178,7 @@ class OrchestratorService:
                         event_type="project.cancel_requested",
                         entity_id=state.project.id,
                         timestamp=now,
-                        metadata={"command": "stop", "reason": command.reason},
+                        metadata={"command": "stop", "reason": "boss_requested"},
                     ),
                 ),
             )
@@ -199,7 +199,7 @@ class OrchestratorService:
             state,
             previous_status=previous,
             requested_event_id=requested_id,
-            reason=command.reason,
+            reason="boss_requested",
         )
 
     def complete_cancellation(self) -> StopResult:

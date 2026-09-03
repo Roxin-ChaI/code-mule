@@ -92,12 +92,19 @@ class ProjectPlanningService:
                 PlanRequest(project_state=planning, objective=request.objective)
             )
         except Exception as error:
+            if self._store.load().project.status is ProjectStatus.CANCELLED:
+                raise ProjectPlanningStateError(
+                    "planning was cancelled by the Boss"
+                ) from error
             self._fail_planning(
                 planning,
                 event_type="planning.failed",
                 failure_metadata=supervisor_failure_metadata(error),
             )
             raise SupervisorPlanningError("Supervisor PLAN failed") from error
+
+        if self._store.load().project.status is ProjectStatus.CANCELLED:
+            raise ProjectPlanningStateError("planning was cancelled by the Boss")
 
         self._emit(
             planning,
@@ -171,6 +178,8 @@ class ProjectPlanningService:
             materialized,
             events=materialized.events + (completed_event, materialized_event),
         )
+        if self._store.load().project.status is ProjectStatus.CANCELLED:
+            raise ProjectPlanningStateError("planning was cancelled by the Boss")
         self._store.save(final_state)
         self._emit(
             final_state,

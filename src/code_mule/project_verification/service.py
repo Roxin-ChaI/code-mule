@@ -282,20 +282,28 @@ class ProjectFinalizationService:
         return self._progress.errors
 
     def finalize(self, state: ProjectState) -> ProjectState:
+        state = self._store.load()
+        if state.project.status is ProjectStatus.CANCELLED:
+            return state
         if state.project.status is ProjectStatus.DONE:
             return state
         state = self._event_save(state, "project.verification_started", {})
         try:
             result = self._verification.run(state)
         except Exception as error:
+            latest = self._store.load()
+            if latest.project.status is ProjectStatus.CANCELLED:
+                return latest
             return self._human(
-                self._store.load(),
+                latest,
                 HumanActionCategory.RECOVERY_UNCERTAIN,
                 "Project verification could not start safely",
                 "Inspect verification configuration and repository state",
                 {"error_type": type(error).__name__},
             )
         state = self._store.load()
+        if state.project.status is ProjectStatus.CANCELLED:
+            return state
         state = replace(
             state,
             project_verification_results=state.project_verification_results + (result,),
@@ -322,8 +330,11 @@ class ProjectFinalizationService:
         try:
             review = self._supervisor.final_review(FinalReviewRequest(state, result))
         except Exception as error:
+            latest = self._store.load()
+            if latest.project.status is ProjectStatus.CANCELLED:
+                return latest
             return self._human(
-                self._store.load(),
+                latest,
                 HumanActionCategory.SUPERVISOR_FAILURE,
                 "Final Supervisor review failed",
                 "Inspect the typed Supervisor failure and choose an explicit resolution",
@@ -336,6 +347,8 @@ class ProjectFinalizationService:
             final_review_summary=review.rationale,
         )
         latest = self._store.load()
+        if latest.project.status is ProjectStatus.CANCELLED:
+            return latest
         results = tuple(
             result if item.id == result.id else item
             for item in latest.project_verification_results
@@ -358,6 +371,9 @@ class ProjectFinalizationService:
         return self._complete(self._store.load(), result)
 
     def _complete(self, state: ProjectState, result: ProjectVerificationResult) -> ProjectState:
+        state = self._store.load()
+        if state.project.status is ProjectStatus.CANCELLED:
+            return state
         plan = next(item for item in state.plans if item.id == state.project.active_plan_id)
         operation_time = self._clock()
         validate_transition(state.project.status, ProjectStatus.DONE)
@@ -386,6 +402,9 @@ class ProjectFinalizationService:
         *,
         source_event_type: str = "project.verification_failed",
     ) -> ProjectState:
+        state = self._store.load()
+        if state.project.status is ProjectStatus.CANCELLED:
+            return state
         if state.project.status is ProjectStatus.HUMAN_REQUIRED:
             return state
         updated = request_human_action(

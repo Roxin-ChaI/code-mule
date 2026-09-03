@@ -239,7 +239,8 @@ class ExecutionOwnershipService:
         updated_state = state
         if (
             interrupted
-            and state.project.status is ProjectStatus.RUNNING
+            and state.project.status
+            in {ProjectStatus.RUNNING, ProjectStatus.CANCEL_REQUESTED}
             and state.project.current_task_id is not None
         ):
             if pending_action(state) is None:
@@ -362,6 +363,7 @@ class ExecutionOwnershipService:
             ProjectStatus.PLANNING,
             ProjectStatus.RUNNING,
             ProjectStatus.REPLANNING,
+            ProjectStatus.CANCEL_REQUESTED,
         }:
             return RecoveryClassification.STALE_IDLE_LEASE
         if state.project.current_task_id is None:
