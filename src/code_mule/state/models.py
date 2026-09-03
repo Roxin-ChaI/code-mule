@@ -18,6 +18,7 @@ from code_mule.domain.models import (
     Task,
 )
 from code_mule.execution.contracts import ExecutionLease
+from code_mule.git_delivery.contracts import GitBaseline, GitChangeSet, GitCommitResult
 
 
 @dataclass
@@ -36,6 +37,9 @@ class ProjectState:
     human_actions: tuple[HumanAction, ...] = ()
     human_resolutions: tuple[HumanResolution, ...] = ()
     execution_leases: tuple[ExecutionLease, ...] = ()
+    git_baselines: tuple[GitBaseline, ...] = ()
+    git_change_sets: tuple[GitChangeSet, ...] = ()
+    git_commit_results: tuple[GitCommitResult, ...] = ()
 
 
 __all__ = ["ProjectState"]

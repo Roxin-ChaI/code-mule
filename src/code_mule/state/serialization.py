@@ -31,11 +31,12 @@ from code_mule.domain.models import (
     Task,
 )
 from code_mule.execution.contracts import ExecutionLease, ExecutionLeaseStatus
+from code_mule.git_delivery.contracts import GitBaseline, GitChangeSet, GitCommitResult
 
 from .models import ProjectState
 
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 
 
 class UnsupportedStateSchema(ValueError):
@@ -305,6 +306,39 @@ def _execution_lease_to_payload(lease: ExecutionLease) -> dict[str, object]:
     }
 
 
+def _git_baseline_to_payload(baseline: GitBaseline) -> dict[str, object]:
+    return {
+        "task_id": baseline.task_id,
+        "repository_root": baseline.repository_root,
+        "baseline_head": baseline.baseline_head,
+        "status_entries": list(baseline.status_entries),
+    }
+
+
+def _git_change_set_to_payload(change_set: GitChangeSet) -> dict[str, object]:
+    return {
+        "task_id": change_set.task_id,
+        "repository_root": change_set.repository_root,
+        "baseline_head": change_set.baseline_head,
+        "changed_paths": list(change_set.changed_paths),
+        "untracked_paths": list(change_set.untracked_paths),
+        "staged_paths": list(change_set.staged_paths),
+    }
+
+
+def _git_commit_result_to_payload(result: GitCommitResult) -> dict[str, object]:
+    return {
+        "task_id": result.task_id,
+        "repository_root": result.repository_root,
+        "baseline_head": result.baseline_head,
+        "commit_sha": result.commit_sha,
+        "commit_message": result.commit_message,
+        "changed_paths": list(result.changed_paths),
+        "staged_paths": list(result.staged_paths),
+        "committed_at": result.committed_at.isoformat(),
+    }
+
+
 def serialize_project_state(state: ProjectState) -> dict[str, object]:
     """Convert a complete snapshot to a JSON-compatible object."""
 
@@ -339,6 +373,15 @@ def serialize_project_state(state: ProjectState) -> dict[str, object]:
         ],
         "execution_leases": [
             _execution_lease_to_payload(item) for item in state.execution_leases
+        ],
+        "git_baselines": [
+            _git_baseline_to_payload(item) for item in state.git_baselines
+        ],
+        "git_change_sets": [
+            _git_change_set_to_payload(item) for item in state.git_change_sets
+        ],
+        "git_commit_results": [
+            _git_commit_result_to_payload(item) for item in state.git_commit_results
         ],
     }
 
@@ -570,8 +613,19 @@ def _migrate_v5_to_v6(root: dict[str, object]) -> dict[str, object]:
     """Add durable local execution ownership history."""
 
     migrated = dict(root)
-    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
+    migrated["schema_version"] = 6
     migrated["execution_leases"] = []
+    return migrated
+
+
+def _migrate_v6_to_v7(root: dict[str, object]) -> dict[str, object]:
+    """Add durable per-Task Git delivery evidence."""
+
+    migrated = dict(root)
+    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
+    migrated["git_baselines"] = []
+    migrated["git_change_sets"] = []
+    migrated["git_commit_results"] = []
     return migrated
 
 
@@ -933,6 +987,95 @@ def _execution_lease_from_payload(value: object) -> ExecutionLease:
     )
 
 
+def _git_baseline_from_payload(value: object) -> GitBaseline:
+    payload = _expect_object(value, "git_baseline")
+    return GitBaseline(
+        task_id=_expect_str(
+            _field(payload, "task_id", "git_baseline"), "git_baseline.task_id"
+        ),
+        repository_root=_expect_str(
+            _field(payload, "repository_root", "git_baseline"),
+            "git_baseline.repository_root",
+        ),
+        baseline_head=_expect_str(
+            _field(payload, "baseline_head", "git_baseline"),
+            "git_baseline.baseline_head",
+        ),
+        status_entries=_strings(
+            _field(payload, "status_entries", "git_baseline"),
+            "git_baseline.status_entries",
+        ),
+    )
+
+
+def _git_change_set_from_payload(value: object) -> GitChangeSet:
+    payload = _expect_object(value, "git_change_set")
+    return GitChangeSet(
+        task_id=_expect_str(
+            _field(payload, "task_id", "git_change_set"),
+            "git_change_set.task_id",
+        ),
+        repository_root=_expect_str(
+            _field(payload, "repository_root", "git_change_set"),
+            "git_change_set.repository_root",
+        ),
+        baseline_head=_expect_str(
+            _field(payload, "baseline_head", "git_change_set"),
+            "git_change_set.baseline_head",
+        ),
+        changed_paths=_strings(
+            _field(payload, "changed_paths", "git_change_set"),
+            "git_change_set.changed_paths",
+        ),
+        untracked_paths=_strings(
+            _field(payload, "untracked_paths", "git_change_set"),
+            "git_change_set.untracked_paths",
+        ),
+        staged_paths=_strings(
+            _field(payload, "staged_paths", "git_change_set"),
+            "git_change_set.staged_paths",
+        ),
+    )
+
+
+def _git_commit_result_from_payload(value: object) -> GitCommitResult:
+    payload = _expect_object(value, "git_commit_result")
+    return GitCommitResult(
+        task_id=_expect_str(
+            _field(payload, "task_id", "git_commit_result"),
+            "git_commit_result.task_id",
+        ),
+        repository_root=_expect_str(
+            _field(payload, "repository_root", "git_commit_result"),
+            "git_commit_result.repository_root",
+        ),
+        baseline_head=_expect_str(
+            _field(payload, "baseline_head", "git_commit_result"),
+            "git_commit_result.baseline_head",
+        ),
+        commit_sha=_expect_str(
+            _field(payload, "commit_sha", "git_commit_result"),
+            "git_commit_result.commit_sha",
+        ),
+        commit_message=_expect_str(
+            _field(payload, "commit_message", "git_commit_result"),
+            "git_commit_result.commit_message",
+        ),
+        changed_paths=_strings(
+            _field(payload, "changed_paths", "git_commit_result"),
+            "git_commit_result.changed_paths",
+        ),
+        staged_paths=_strings(
+            _field(payload, "staged_paths", "git_commit_result"),
+            "git_commit_result.staged_paths",
+        ),
+        committed_at=_datetime(
+            _field(payload, "committed_at", "git_commit_result"),
+            "git_commit_result.committed_at",
+        ),
+    )
+
+
 def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     """Restore a complete snapshot, rejecting unknown or corrupt payloads."""
 
@@ -942,7 +1085,7 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     schema_version = root["schema_version"]
     if type(schema_version) is not int:
         raise UnsupportedStateSchema("schema_version must be an integer")
-    if schema_version not in {1, 2, 3, 4, 5, CURRENT_SCHEMA_VERSION}:
+    if schema_version not in {1, 2, 3, 4, 5, 6, CURRENT_SCHEMA_VERSION}:
         raise UnsupportedStateSchema(
             f"unsupported schema_version: {schema_version!r}"
         )
@@ -960,6 +1103,9 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
         schema_version = 5
     if schema_version == 5:
         root = _migrate_v5_to_v6(root)
+        schema_version = 6
+    if schema_version == 6:
+        root = _migrate_v6_to_v7(root)
 
     try:
         quality_value = _field(root, "quality_status", "project state")
@@ -1032,6 +1178,21 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
                 _field(root, "execution_leases", "project state"),
                 "execution_leases",
                 _execution_lease_from_payload,
+            ),
+            git_baselines=_tuple_of(
+                _field(root, "git_baselines", "project state"),
+                "git_baselines",
+                _git_baseline_from_payload,
+            ),
+            git_change_sets=_tuple_of(
+                _field(root, "git_change_sets", "project state"),
+                "git_change_sets",
+                _git_change_set_from_payload,
+            ),
+            git_commit_results=_tuple_of(
+                _field(root, "git_commit_results", "project state"),
+                "git_commit_results",
+                _git_commit_result_from_payload,
             ),
         )
     except InvalidProjectState:

@@ -76,7 +76,7 @@ class HumanActionContractTests(unittest.TestCase):
         del legacy["human_actions"]
         del legacy["human_resolutions"]
         migrated = deserialize_project_state(legacy)
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 6)
+        self.assertEqual(CURRENT_SCHEMA_VERSION, 7)
         self.assertEqual(migrated.human_actions, ())
         self.assertEqual(migrated.human_resolutions, ())
 
