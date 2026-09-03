@@ -8,12 +8,13 @@ class InvalidProjectTransition(ValueError):
 
 
 _ALLOWED_TRANSITIONS: dict[ProjectStatus, frozenset[ProjectStatus]] = {
-    ProjectStatus.IDLE: frozenset({ProjectStatus.PLANNING}),
+    ProjectStatus.IDLE: frozenset({ProjectStatus.PLANNING, ProjectStatus.CANCELLED}),
     ProjectStatus.PLANNING: frozenset(
         {
             ProjectStatus.RUNNING,
             ProjectStatus.HUMAN_REQUIRED,
             ProjectStatus.FAILED,
+            ProjectStatus.CANCELLED,
         }
     ),
     ProjectStatus.RUNNING: frozenset(
@@ -24,6 +25,8 @@ _ALLOWED_TRANSITIONS: dict[ProjectStatus, frozenset[ProjectStatus]] = {
             ProjectStatus.HUMAN_REQUIRED,
             ProjectStatus.DONE,
             ProjectStatus.FAILED,
+            ProjectStatus.CANCEL_REQUESTED,
+            ProjectStatus.CANCELLED,
         }
     ),
     ProjectStatus.CHANGE_REQUESTED: frozenset(
@@ -31,6 +34,8 @@ _ALLOWED_TRANSITIONS: dict[ProjectStatus, frozenset[ProjectStatus]] = {
             ProjectStatus.REPLANNING,
             ProjectStatus.HUMAN_REQUIRED,
             ProjectStatus.FAILED,
+            ProjectStatus.CANCEL_REQUESTED,
+            ProjectStatus.CANCELLED,
         }
     ),
     ProjectStatus.REPLANNING: frozenset(
@@ -38,12 +43,15 @@ _ALLOWED_TRANSITIONS: dict[ProjectStatus, frozenset[ProjectStatus]] = {
             ProjectStatus.RUNNING,
             ProjectStatus.HUMAN_REQUIRED,
             ProjectStatus.FAILED,
+            ProjectStatus.CANCELLED,
         }
     ),
     ProjectStatus.PAUSED_BY_BOSS: frozenset(
         {
             ProjectStatus.RUNNING,
             ProjectStatus.CHANGE_REQUESTED,
+            ProjectStatus.CANCEL_REQUESTED,
+            ProjectStatus.CANCELLED,
         }
     ),
     ProjectStatus.HUMAN_REQUIRED: frozenset(
@@ -51,10 +59,15 @@ _ALLOWED_TRANSITIONS: dict[ProjectStatus, frozenset[ProjectStatus]] = {
             ProjectStatus.RUNNING,
             ProjectStatus.PAUSED_BY_BOSS,
             ProjectStatus.FAILED,
+            ProjectStatus.CANCELLED,
         }
+    ),
+    ProjectStatus.CANCEL_REQUESTED: frozenset(
+        {ProjectStatus.CANCELLED, ProjectStatus.HUMAN_REQUIRED}
     ),
     ProjectStatus.DONE: frozenset(),
     ProjectStatus.FAILED: frozenset(),
+    ProjectStatus.CANCELLED: frozenset(),
 }
 
 

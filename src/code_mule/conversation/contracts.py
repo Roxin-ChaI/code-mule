@@ -15,6 +15,7 @@ class BossIntent(StrEnum):
     CHANGE = "change"
     PAUSE = "pause"
     RESUME = "resume"
+    STOP = "stop"
     INSPECT = "inspect"
     APPROVE = "approve"
     REJECT = "reject"

@@ -31,6 +31,11 @@ class ProgressContractTests(unittest.TestCase):
             "supervisor.review_completed",
         )
         self.assertEqual(ProgressEventType.HUMAN_GATE, "runtime.human_gate")
+        self.assertEqual(
+            ProgressEventType.PROJECT_CANCELLATION_REQUESTED,
+            "project.cancel_requested",
+        )
+        self.assertEqual(ProgressEventType.PROJECT_CANCELLED, "project.cancelled")
 
     def test_event_preserves_caller_timestamp_and_typed_metadata(self):
         event = ProgressEvent(

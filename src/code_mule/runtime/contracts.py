@@ -35,6 +35,8 @@ class ProjectExecutionStopReason(StrEnum):
     TASK_LIMIT_REACHED = "task_limit_reached"
     NO_RUNNABLE_TASK = "no_runnable_task"
     TASK_CYCLE_STOPPED = "task_cycle_stopped"
+    CANCEL_REQUESTED = "cancel_requested"
+    CANCELLED = "cancelled"
 
 
 @dataclass(frozen=True)
@@ -65,6 +67,7 @@ class TaskCycleOutcome:
     decisions: tuple[Decision, ...]
     final_prompt: str | None
     human_action_required: bool
+    cancelled: bool = False
 
 
 @dataclass(frozen=True)

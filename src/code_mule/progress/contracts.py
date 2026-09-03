@@ -26,6 +26,8 @@ class ProgressEventType(StrEnum):
     PROJECT_FINAL_REVIEW_STARTED = "project.final_review_started"
     PROJECT_FINAL_REVIEW_COMPLETED = "project.final_review_completed"
     PROJECT_STOPPED = "project.stopped"
+    PROJECT_CANCELLATION_REQUESTED = "project.cancel_requested"
+    PROJECT_CANCELLED = "project.cancelled"
     TASK_DISPATCHED = "task.dispatched"
     TASK_STARTED = "task.started"
     TASK_COMPLETED = "task.completed"

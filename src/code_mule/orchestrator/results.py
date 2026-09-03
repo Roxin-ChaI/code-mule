@@ -41,4 +41,15 @@ class ChangeResult:
     event_id: str
 
 
-__all__ = ["ChangeResult", "CommandResult", "ProjectStatusView"]
+@dataclass(frozen=True)
+class StopResult:
+    project_id: str
+    previous_status: ProjectStatus
+    current_status: ProjectStatus
+    state_changed: bool
+    safe_point_required: bool
+    event_ids: tuple[str, ...]
+    message: str
+
+
+__all__ = ["ChangeResult", "CommandResult", "ProjectStatusView", "StopResult"]

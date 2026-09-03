@@ -46,4 +46,20 @@ class ResumeCommand:
         _require_non_empty(self.project_id, "project_id")
 
 
-__all__ = ["ChangeCommand", "PauseCommand", "QueryCommand", "ResumeCommand"]
+@dataclass(frozen=True)
+class StopCommand:
+    project_id: str
+    reason: str = "Boss requested project cancellation"
+
+    def __post_init__(self) -> None:
+        _require_non_empty(self.project_id, "project_id")
+        _require_non_empty(self.reason, "reason")
+
+
+__all__ = [
+    "ChangeCommand",
+    "PauseCommand",
+    "QueryCommand",
+    "ResumeCommand",
+    "StopCommand",
+]

@@ -1,7 +1,7 @@
 """Public contracts for deterministic Code Mule orchestration."""
 
-from .commands import ChangeCommand, PauseCommand, QueryCommand, ResumeCommand
-from .results import ChangeResult, CommandResult, ProjectStatusView
+from .commands import ChangeCommand, PauseCommand, QueryCommand, ResumeCommand, StopCommand
+from .results import ChangeResult, CommandResult, ProjectStatusView, StopResult
 from .service import (
     DuplicateChangeRequest,
     InvalidBossCommand,
@@ -23,4 +23,6 @@ __all__ = [
     "ProjectStateStore",
     "QueryCommand",
     "ResumeCommand",
+    "StopCommand",
+    "StopResult",
 ]

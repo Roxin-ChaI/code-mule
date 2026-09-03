@@ -8,11 +8,13 @@ from code_mule.orchestrator.commands import (
     PauseCommand,
     QueryCommand,
     ResumeCommand,
+    StopCommand,
 )
 from code_mule.orchestrator.results import (
     ChangeResult,
     CommandResult,
     ProjectStatusView,
+    StopResult,
 )
 
 
@@ -22,6 +24,7 @@ class BossCommandContractTests(unittest.TestCase):
         change = ChangeCommand("project-1", "Add requirement", "boss", "change-1")
         pause = PauseCommand("project-1")
         resume = ResumeCommand("project-1")
+        stop = StopCommand("project-1")
 
         self.assertEqual(query.project_id, "project-1")
         self.assertEqual(change.change_request_id, "change-1")
@@ -29,6 +32,7 @@ class BossCommandContractTests(unittest.TestCase):
         self.assertEqual(change.created_by, "boss")
         self.assertEqual(pause.project_id, "project-1")
         self.assertEqual(resume.project_id, "project-1")
+        self.assertEqual(stop.reason, "Boss requested project cancellation")
 
     def test_empty_project_id_is_rejected_for_every_command(self):
         constructors = (
@@ -36,6 +40,7 @@ class BossCommandContractTests(unittest.TestCase):
             lambda: ChangeCommand("", "description", "boss", "change-1"),
             lambda: PauseCommand(""),
             lambda: ResumeCommand(""),
+            lambda: StopCommand(""),
         )
         for construct in constructors:
             with self.subTest(command=construct):
@@ -109,6 +114,11 @@ class ResultContractTests(unittest.TestCase):
         self.assertEqual(command_result.current_status, ProjectStatus.PAUSED_BY_BOSS)
         self.assertEqual(change_result.change_request_id, "change-1")
         self.assertEqual(change_result.current_status, ProjectStatus.CHANGE_REQUESTED)
+        stop_result = StopResult(
+            "project-1", ProjectStatus.RUNNING, ProjectStatus.CANCEL_REQUESTED,
+            True, True, ("event-3",), "Cancellation requested",
+        )
+        self.assertTrue(stop_result.safe_point_required)
 
 
 if __name__ == "__main__":

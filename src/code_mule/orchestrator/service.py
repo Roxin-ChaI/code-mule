@@ -20,8 +20,8 @@ from code_mule.progress import (
 )
 from code_mule.state.models import ProjectState
 
-from .commands import ChangeCommand, PauseCommand, QueryCommand, ResumeCommand
-from .results import ChangeResult, CommandResult, ProjectStatusView
+from .commands import ChangeCommand, PauseCommand, QueryCommand, ResumeCommand, StopCommand
+from .results import ChangeResult, CommandResult, ProjectStatusView, StopResult
 
 
 class ProjectIdentityMismatch(ValueError):
@@ -122,6 +122,207 @@ class OrchestratorService:
             event_type="boss.resume",
             command_name="resume",
             message="Project resumed by Boss",
+        )
+
+    def stop(self, command: StopCommand) -> StopResult:
+        """Record STOP and cancel now or at the current Task Safe Point."""
+
+        state = self._store.load()
+        self._validate_identity(command.project_id, state)
+        previous = state.project.status
+        if previous is ProjectStatus.CANCELLED:
+            return StopResult(
+                state.project.id,
+                previous,
+                previous,
+                False,
+                False,
+                (),
+                "Project is already cancelled",
+            )
+        if previous in {ProjectStatus.DONE, ProjectStatus.FAILED}:
+            raise InvalidBossCommand(f"stop is not allowed from {previous}")
+        if previous is ProjectStatus.CANCEL_REQUESTED:
+            if state.project.current_task_id is None:
+                return self.complete_cancellation()
+            return StopResult(
+                state.project.id,
+                previous,
+                previous,
+                False,
+                True,
+                (),
+                "Project cancellation is already waiting for a Task Safe Point",
+            )
+
+        safe_point_required = (
+            state.project.current_task_id is not None
+            and previous is not ProjectStatus.HUMAN_REQUIRED
+        )
+        if safe_point_required:
+            validate_transition(previous, ProjectStatus.CANCEL_REQUESTED)
+            now = self._clock()
+            event_id = self._event_id_factory()
+            updated = replace(
+                state,
+                project=replace(
+                    state.project,
+                    status=ProjectStatus.CANCEL_REQUESTED,
+                    updated_at=now,
+                ),
+                events=state.events
+                + (
+                    ProjectEvent(
+                        id=event_id,
+                        project_id=state.project.id,
+                        event_type="project.cancel_requested",
+                        entity_id=state.project.id,
+                        timestamp=now,
+                        metadata={"command": "stop", "reason": command.reason},
+                    ),
+                ),
+            )
+            self._store.save(updated)
+            self._emit_cancellation_progress(updated, requested=True)
+            return StopResult(
+                state.project.id,
+                previous,
+                ProjectStatus.CANCEL_REQUESTED,
+                True,
+                True,
+                (event_id,),
+                "Project cancellation requested",
+            )
+
+        requested_id = self._event_id_factory()
+        return self._cancel_now(
+            state,
+            previous_status=previous,
+            requested_event_id=requested_id,
+            reason=command.reason,
+        )
+
+    def complete_cancellation(self) -> StopResult:
+        """Finalize an already-requested cancellation at a Task Safe Point."""
+
+        state = self._store.load()
+        if state.project.status is not ProjectStatus.CANCEL_REQUESTED:
+            raise InvalidBossCommand(
+                f"cancellation completion is not allowed from {state.project.status}"
+            )
+        if state.project.current_task_id is not None:
+            raise InvalidBossCommand("cancellation requires a Task Safe Point")
+        return self._cancel_now(
+            state,
+            previous_status=ProjectStatus.CANCEL_REQUESTED,
+            requested_event_id=None,
+            reason="Boss requested project cancellation",
+        )
+
+    def _cancel_now(
+        self,
+        state: ProjectState,
+        *,
+        previous_status: ProjectStatus,
+        requested_event_id: str | None,
+        reason: str,
+    ) -> StopResult:
+        validate_transition(previous_status, ProjectStatus.CANCELLED)
+        now = self._clock()
+        cancelled_id = self._event_id_factory()
+        events: tuple[ProjectEvent, ...] = ()
+        event_ids: tuple[str, ...] = ()
+        if requested_event_id is not None:
+            events += (
+                ProjectEvent(
+                    id=requested_event_id,
+                    project_id=state.project.id,
+                    event_type="project.cancel_requested",
+                    entity_id=state.project.id,
+                    timestamp=now,
+                    metadata={"command": "stop", "reason": reason},
+                ),
+            )
+            event_ids += (requested_event_id,)
+        events += (
+            ProjectEvent(
+                id=cancelled_id,
+                project_id=state.project.id,
+                event_type="project.cancelled",
+                entity_id=state.project.id,
+                timestamp=now,
+                metadata={"rollback": "not_performed"},
+            ),
+        )
+        event_ids += (cancelled_id,)
+        active_task_ids = self._active_plan_task_ids(state)
+        tasks = tuple(
+            replace(task, status=TaskStatus.CANCELLED, updated_at=now)
+            if task.id in active_task_ids
+            and task.status not in {TaskStatus.COMPLETED, TaskStatus.CANCELLED}
+            else task
+            for task in state.tasks
+        )
+        updated = replace(
+            state,
+            project=replace(
+                state.project,
+                status=ProjectStatus.CANCELLED,
+                current_task_id=None,
+                updated_at=now,
+            ),
+            tasks=tasks,
+            events=state.events + events,
+        )
+        self._store.save(updated)
+        self._emit_cancellation_progress(updated, requested=False)
+        return StopResult(
+            state.project.id,
+            previous_status,
+            ProjectStatus.CANCELLED,
+            True,
+            False,
+            event_ids,
+            "Project cancelled; completed work was preserved",
+        )
+
+    @staticmethod
+    def _active_plan_task_ids(state: ProjectState) -> frozenset[str]:
+        plan_id = state.project.active_plan_id
+        if plan_id is None:
+            return frozenset()
+        plan = next((item for item in state.plans if item.id == plan_id), None)
+        if plan is None:
+            return frozenset()
+        milestone_ids = set(plan.milestone_ids)
+        return frozenset(
+            task_id
+            for milestone in state.milestones
+            if milestone.plan_id == plan.id and milestone.id in milestone_ids
+            for task_id in milestone.task_ids
+        )
+
+    def _emit_cancellation_progress(
+        self, state: ProjectState, *, requested: bool
+    ) -> None:
+        self._progress.emit(
+            ProgressEvent(
+                type=(
+                    ProgressEventType.PROJECT_CANCELLATION_REQUESTED
+                    if requested
+                    else ProgressEventType.PROJECT_CANCELLED
+                ),
+                timestamp=self._clock(),
+                project_id=state.project.id,
+                task_id=state.project.current_task_id,
+                attempt=None,
+                message=(
+                    "Project cancellation requested"
+                    if requested
+                    else "Project cancelled"
+                ),
+                metadata={"project_status": state.project.status.value},
+            )
         )
 
     def change(self, command: ChangeCommand) -> ChangeResult:

@@ -23,10 +23,12 @@ class EnumContractTests(unittest.TestCase):
                 "RUNNING": "running",
                 "CHANGE_REQUESTED": "change_requested",
                 "REPLANNING": "replanning",
+                "CANCEL_REQUESTED": "cancel_requested",
                 "PAUSED_BY_BOSS": "paused_by_boss",
                 "HUMAN_REQUIRED": "human_required",
                 "DONE": "done",
                 "FAILED": "failed",
+                "CANCELLED": "cancelled",
             },
         )
 
@@ -55,7 +57,7 @@ class EnumContractTests(unittest.TestCase):
         )
         self.assertEqual(
             {member.name: member.value for member in BossCommandType},
-            {"QUERY": "query", "CHANGE": "change", "PAUSE": "pause", "RESUME": "resume"},
+            {"QUERY": "query", "CHANGE": "change", "PAUSE": "pause", "RESUME": "resume", "STOP": "stop"},
         )
 
     def test_requirement_plan_and_change_status_values(self):

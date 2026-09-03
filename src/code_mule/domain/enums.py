@@ -9,10 +9,12 @@ class ProjectStatus(StrEnum):
     RUNNING = "running"
     CHANGE_REQUESTED = "change_requested"
     REPLANNING = "replanning"
+    CANCEL_REQUESTED = "cancel_requested"
     PAUSED_BY_BOSS = "paused_by_boss"
     HUMAN_REQUIRED = "human_required"
     DONE = "done"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class TaskStatus(StrEnum):
@@ -36,6 +38,7 @@ class BossCommandType(StrEnum):
     CHANGE = "change"
     PAUSE = "pause"
     RESUME = "resume"
+    STOP = "stop"
 
 
 class RequirementStatus(StrEnum):
