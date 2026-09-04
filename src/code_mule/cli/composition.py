@@ -29,7 +29,11 @@ from code_mule.human import (
     HumanResolutionService,
     pending_action,
 )
-from code_mule.git_delivery import GitDeliveryService
+from code_mule.git_delivery import (
+    GitDeliveryService,
+    GitWorkspaceIsolationError,
+    register_state_exclusion,
+)
 from code_mule.execution import (
     ExecutionAlreadyOwned,
     ExecutionRecoveryRequired,
@@ -183,6 +187,12 @@ class ProductionCliComposition:
             )
         resolved_workspace = workspace.expanduser().resolve()
         self._validate_workspace_path(resolved_workspace)
+        try:
+            register_state_exclusion(resolved_workspace, self._state_file)
+        except GitWorkspaceIsolationError as error:
+            raise InvalidCliProjectState(
+                "Code Mule state could not be isolated from the Git workspace"
+            ) from error
         self._state_file.parent.mkdir(parents=True, exist_ok=True)
         state = _empty_state(project_id, name, resolved_workspace)
         self._store.save(state)

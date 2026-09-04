@@ -19,6 +19,7 @@ from .service import (
     commit_message,
     run_git_command,
 )
+from .isolation import GitWorkspaceIsolationError, register_state_exclusion
 
 __all__ = [
     "DirtyGitBaseline",
@@ -30,10 +31,12 @@ __all__ = [
     "GitDeliveryError",
     "GitOwnershipError",
     "GitStagingError",
+    "GitWorkspaceIsolationError",
     "UnexpectedGitHead",
     "GitCommandResult",
     "GitCommandRunner",
     "GitDeliveryService",
     "commit_message",
     "run_git_command",
+    "register_state_exclusion",
 ]
