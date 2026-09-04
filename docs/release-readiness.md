@@ -31,6 +31,8 @@ automatic. Push, force-push, tag, release, deployment, paid actions, secrets,
 destructive changes, and irreversible external mutations remain Human Gates.
 Worker approval and input requests fail closed. Git commands use argv lists,
 never shell interpolation, and delivery never uses `git add .` or `git add -A`.
+The Codex app-server child environment removes API key, token, secret, password,
+and credential variables inherited from the Supervisor/CLI process.
 
 ## Residual low-severity limitations
 

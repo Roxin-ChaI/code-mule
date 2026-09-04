@@ -1,11 +1,13 @@
 import io
 import json
+import os
 import queue
 import subprocess
 import threading
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from code_mule.progress import ProgressEventType, RecordingProgressSink
 from code_mule.worker.client import CodexAppServerClient
@@ -402,6 +404,34 @@ class CodexAppServerClientTests(unittest.TestCase):
             self.assertEqual(holder["kwargs"]["cwd"], "/tmp/project")
         finally:
             client.close()
+
+    def test_worker_process_environment_excludes_parent_credentials(self):
+        environment = {
+            "PATH": "/usr/bin",
+            "CODEX_HOME": "/tmp/codex-home",
+            "DEEPSEEK_API_KEY": "deepseek-secret",
+            "OPENAI_API_KEY": "openai-secret",
+            "GITHUB_TOKEN": "github-secret",
+            "AWS_ACCESS_KEY_ID": "aws-key-id",
+            "SERVICE_PASSWORD": "password-secret",
+            "GOOGLE_APPLICATION_CREDENTIALS": "/tmp/credentials.json",
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            client, holder = make_client()
+            try:
+                client.start()
+                child = holder["kwargs"]["env"]
+                self.assertEqual(child["PATH"], "/usr/bin")
+                self.assertEqual(child["CODEX_HOME"], "/tmp/codex-home")
+                self.assertNotIn("DEEPSEEK_API_KEY", child)
+                self.assertNotIn("OPENAI_API_KEY", child)
+                self.assertNotIn("GITHUB_TOKEN", child)
+                self.assertNotIn("AWS_ACCESS_KEY_ID", child)
+                self.assertNotIn("SERVICE_PASSWORD", child)
+                self.assertNotIn("GOOGLE_APPLICATION_CREDENTIALS", child)
+                self.assertNotIn("deepseek-secret", repr(child))
+            finally:
+                client.close()
 
     def test_supports_two_turns_on_one_thread(self):
         turn_number = 0

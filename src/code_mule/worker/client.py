@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import subprocess
 import threading
@@ -65,6 +66,24 @@ _PopenFactory = Callable[..., _Process]
 _EOF = object()
 
 
+def _worker_environment() -> dict[str, str]:
+    """Keep the local runtime usable without exposing parent-process secrets."""
+
+    secret_segments = {
+        "KEY",
+        "TOKEN",
+        "SECRET",
+        "PASSWORD",
+        "CREDENTIAL",
+        "CREDENTIALS",
+    }
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if secret_segments.isdisjoint(key.upper().split("_"))
+    }
+
+
 class CodexAppServerClient:
     """One local app-server process with one request in flight at a time."""
 
@@ -110,6 +129,7 @@ class CodexAppServerClient:
                 encoding="utf-8",
                 bufsize=1,
                 shell=False,
+                env=_worker_environment(),
             )
         except OSError as error:
             raise CodexAppServerStartError(

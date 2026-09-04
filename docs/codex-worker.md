@@ -58,7 +58,12 @@ CodexWorkerConfig(
 ```
 
 The workspace must be an absolute path. The contract contains no API key or
-token field and does not read credentials.
+token field and does not read credentials. The app-server child environment
+removes API key, token, secret, password, and credential variables inherited
+from the Supervisor/CLI process. In particular, the DeepSeek key is never
+inherited by the Worker. Local Codex authentication continues through its
+configured local app environment; provider credentials are not placed in
+prompts or protocol payloads.
 
 ## Execution Reports
 
