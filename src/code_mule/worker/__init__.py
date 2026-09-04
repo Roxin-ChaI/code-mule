@@ -10,6 +10,7 @@ from .contracts import (
     CodexUserInputRequired,
     CodexWorkerConfig,
     CodexWorkerError,
+    WorkerInputRequest,
     WorkerTaskRequest,
     WorkerTurnResult,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "CodexWorkerConfig",
     "CodexWorkerError",
     "CodexWorkerService",
+    "WorkerInputRequest",
     "CodexWorkerSession",
     "InvalidWorkerReport",
     "StructuredWorkerReport",

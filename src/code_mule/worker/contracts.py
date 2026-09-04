@@ -35,8 +35,40 @@ class CodexApprovalRequired(CodexWorkerError):
     """Raised when app-server requests an approval Code Mule cannot grant."""
 
 
+@dataclass(frozen=True)
+class WorkerInputRequest:
+    """Bounded safe projection of one app-server human-input request."""
+
+    method: str
+    request_id: str | None
+    question: str
+    choices: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _require_non_empty(self.method, "method")
+        _require_non_empty(self.question, "question")
+        if len(self.method) > 128:
+            raise ValueError("method must not exceed 128 characters")
+        if self.request_id is not None:
+            _require_non_empty(self.request_id, "request_id")
+            if len(self.request_id) > 128:
+                raise ValueError("request_id must not exceed 128 characters")
+        if len(self.question) > 2_000:
+            raise ValueError("question must not exceed 2000 characters")
+        if len(self.choices) > 20:
+            raise ValueError("choices must not contain more than 20 values")
+        if any(choice == "" or len(choice) > 500 for choice in self.choices):
+            raise ValueError("choices must contain bounded non-empty values")
+
+
 class CodexUserInputRequired(CodexWorkerError):
     """Raised when app-server requests interactive user input."""
+
+    def __init__(self, request: WorkerInputRequest) -> None:
+        self.request = request
+        super().__init__(
+            f"Codex app-server requested user input via {request.method}"
+        )
 
 
 @dataclass(frozen=True)
@@ -94,6 +126,7 @@ __all__ = [
     "CodexUserInputRequired",
     "CodexWorkerConfig",
     "CodexWorkerError",
+    "WorkerInputRequest",
     "WorkerTaskRequest",
     "WorkerTurnResult",
 ]

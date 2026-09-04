@@ -18,11 +18,13 @@ from code_mule.worker.contracts import (
     CodexTurnTimeout,
     CodexUserInputRequired,
     CodexWorkerConfig,
+    WorkerInputRequest,
 )
 from code_mule.worker.protocol import (
     MessageKind,
     classify_message,
     notification_message,
+    parse_worker_input_request,
     request_message,
     response_result,
 )
@@ -190,6 +192,82 @@ class ProtocolHelperTests(unittest.TestCase):
             with self.subTest(message=message):
                 with self.assertRaises(CodexProtocolError):
                     response_result(message, 2)
+
+    def test_user_input_requests_are_bounded_safe_projections(self):
+        tool_request = parse_worker_input_request(
+            {
+                "id": 88,
+                "method": "item/tool/requestUserInput",
+                "params": {
+                    "threadId": "thread-1",
+                    "questions": [
+                        {
+                            "id": "framework",
+                            "question": "Which framework should be used?",
+                            "options": [
+                                {"label": "Flask", "description": "Small"},
+                                {"label": "FastAPI", "description": "Typed"},
+                            ],
+                        }
+                    ],
+                    "token": "must-not-be-projected",
+                },
+            }
+        )
+        self.assertEqual(
+            tool_request,
+            WorkerInputRequest(
+                "item/tool/requestUserInput",
+                "88",
+                "Which framework should be used?",
+                ("Flask", "FastAPI"),
+            ),
+        )
+        self.assertNotIn("must-not-be-projected", repr(tool_request))
+
+        elicitation = parse_worker_input_request(
+            {
+                "id": "mcp-1",
+                "method": "mcpServer/elicitation/request",
+                "params": {
+                    "message": "Choose a deployment region",
+                    "requestedSchema": {
+                        "type": "object",
+                        "properties": {
+                            "region": {"type": "string", "enum": ["eu", "us"]}
+                        },
+                    },
+                    "credential": "must-not-be-projected",
+                },
+            }
+        )
+        self.assertEqual(elicitation.question, "Choose a deployment region")
+        self.assertEqual(elicitation.choices, ("eu", "us"))
+        self.assertNotIn("must-not-be-projected", repr(elicitation))
+
+    def test_user_input_request_rejects_malformed_or_unbounded_params(self):
+        invalid = (
+            {"id": 1, "method": "item/tool/requestUserInput", "params": {}},
+            {
+                "id": 1,
+                "method": "item/tool/requestUserInput",
+                "params": {"questions": [{"question": "Q", "options": "bad"}]},
+            },
+            {
+                "id": 1,
+                "method": "mcpServer/elicitation/request",
+                "params": {"message": "Q", "requestedSchema": "bad"},
+            },
+            {
+                "id": 1,
+                "method": "mcpServer/elicitation/request",
+                "params": {"message": "x" * 2_001},
+            },
+        )
+        for message in invalid:
+            with self.subTest(message=message):
+                with self.assertRaises(CodexProtocolError):
+                    parse_worker_input_request(message)
 
 
 class CodexAppServerClientTests(unittest.TestCase):
@@ -540,21 +618,37 @@ class CodexAppServerClientTests(unittest.TestCase):
 
     def test_approval_and_user_input_requests_are_not_answered(self):
         cases = (
-            ("item/commandExecution/requestApproval", CodexApprovalRequired),
-            ("item/fileChange/requestApproval", CodexApprovalRequired),
-            ("item/tool/requestUserInput", CodexUserInputRequired),
+            ("item/commandExecution/requestApproval", CodexApprovalRequired, {}),
+            ("item/fileChange/requestApproval", CodexApprovalRequired, {}),
+            (
+                "item/tool/requestUserInput",
+                CodexUserInputRequired,
+                {"questions": [{"question": "Continue?", "options": []}]},
+            ),
+            (
+                "mcpServer/elicitation/request",
+                CodexUserInputRequired,
+                {"message": "Provide a value"},
+            ),
         )
-        for method, expected_error in cases:
+        for method, expected_error, params in cases:
             with self.subTest(method=method):
                 client, holder = make_client()
                 client.initialize()
                 thread_id = client.start_thread()
                 turn_id = client.start_turn(thread_id, "prompt")
                 holder["process"].stdout.emit(
-                    {"id": 88, "method": method, "params": {"threadId": thread_id}}
+                    {
+                        "id": 88,
+                        "method": method,
+                        "params": {"threadId": thread_id, **params},
+                    }
                 )
-                with self.assertRaises(expected_error):
+                with self.assertRaises(expected_error) as raised:
                     client.wait_for_turn(thread_id, turn_id)
+                if isinstance(raised.exception, CodexUserInputRequired):
+                    self.assertEqual(raised.exception.request.method, method)
+                    self.assertEqual(raised.exception.request.request_id, "88")
                 client.close()
 
     def test_explicit_failed_and_interrupted_turns_raise(self):

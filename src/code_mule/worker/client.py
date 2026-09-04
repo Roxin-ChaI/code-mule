@@ -43,6 +43,7 @@ from .protocol import (
     USER_INPUT_REQUEST_METHODS,
     classify_message,
     notification_message,
+    parse_worker_input_request,
     request_message,
     response_result,
 )
@@ -515,9 +516,7 @@ class CodexAppServerClient:
                 f"Codex app-server requested approval via {method}"
             )
         if method in USER_INPUT_REQUEST_METHODS:
-            raise CodexUserInputRequired(
-                f"Codex app-server requested user input via {method}"
-            )
+            raise CodexUserInputRequired(parse_worker_input_request(message))
         raise CodexProtocolError(f"unsupported app-server request method {method!r}")
 
     @staticmethod
