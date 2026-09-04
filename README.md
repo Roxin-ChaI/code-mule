@@ -104,27 +104,38 @@ bound to one typed HumanAction and cannot be reused.
 Clone and install the Code Mule tool with Python 3.12:
 
 ```bash
-git clone https://github.com/Roxin-ChaI/code-mule.git
-cd code-mule
+git clone https://github.com/Roxin-ChaI/code-mule.git /path/to/code-mule
+cd /path/to/code-mule
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e .
+which code-mule
 code-mule --help
 ```
 
-The activated virtual environment keeps `code-mule` available after you change
-to the target project's directory.
+`/path/to/code-mule` is the Code Mule tool repository, and its `.venv` contains
+the installed CLI. Keep this virtual environment activated when you change to
+the target project. In each new terminal, activate it again with
+`source /path/to/code-mule/.venv/bin/activate`, or invoke the CLI by its absolute
+path: `/path/to/code-mule/.venv/bin/code-mule`.
 
 ### 2. Prepare a project workspace
 
 Code Mule repository is the tool itself; `--workspace` points to the target Git
-repository that Code Mule will modify.
+repository that Code Mule will modify. The two directories serve different
+purposes:
+
+- `/path/to/code-mule`: the Code Mule tool and its virtual environment.
+- `/path/to/my-project`: the target Git workspace that Code Mule modifies.
+
+Do not create Code Mule's `.venv` in the target workspace. If the target project
+needs its own `.venv`, that project must manage it in its own `.gitignore`.
 
 The target repository must have at least one commit and a clean working tree.
 For an existing project, change to its directory and check the baseline:
 
 ```bash
-cd /path/to/your-project
+cd /path/to/my-project
 git status --short
 ```
 
@@ -132,8 +143,8 @@ Proceed only when `git status --short` prints nothing. For a new project, create
 the minimum Git baseline first:
 
 ```bash
-mkdir my-project
-cd my-project
+mkdir -p /path/to/my-project
+cd /path/to/my-project
 git init
 printf "# My Project\n" > README.md
 git add -- README.md
@@ -153,7 +164,10 @@ code-mule init --project-id my-project --name "My Project" --workspace "$PWD"
 ```
 
 Here, `$PWD` is the current target project—not the Code Mule source repository.
-The default state file is `.code-mule/project-state.json`.
+The default state file is `.code-mule/project-state.json`. The `.code-mule/`
+directory is Code Mule runtime state; `code-mule init` registers that managed
+directory in the repository-local Git exclude so it does not break the clean
+baseline or modify the project's tracked `.gitignore`.
 
 ### 4. Configure DeepSeek
 
@@ -195,6 +209,26 @@ You > Stop this project.
 
 Commands discover `.code-mule/project-state.json` by default. `run` and
 `change --apply` are blocking; use another terminal for live control.
+
+### Troubleshooting
+
+Verify which installation provides the CLI:
+
+```bash
+which code-mule
+```
+
+The expected path is `/path/to/code-mule/.venv/bin/code-mule`. If it is missing,
+activate the Code Mule virtual environment again. Then, from
+`/path/to/my-project`, check Git cleanliness:
+
+```bash
+git status --short
+```
+
+The expected result is no output, including immediately after `code-mule init`.
+Any ordinary untracked, modified, or staged project file remains visible and
+must be handled explicitly; Code Mule never stashes, resets, or cleans it.
 
 ## Boss Controls
 

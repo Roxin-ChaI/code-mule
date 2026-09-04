@@ -102,26 +102,36 @@ HumanAction，并且不可复用。
 克隆 Code Mule 工具仓库，并使用 Python 3.12 安装：
 
 ```bash
-git clone https://github.com/Roxin-ChaI/code-mule.git
-cd code-mule
+git clone https://github.com/Roxin-ChaI/code-mule.git /path/to/code-mule
+cd /path/to/code-mule
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e .
+which code-mule
 code-mule --help
 ```
 
-激活虚拟环境后，即使切换到目标项目目录，仍可直接使用 `code-mule`。
+`/path/to/code-mule` 是 Code Mule 工具仓库，其中的 `.venv` 安装了 CLI。
+切换到目标项目后仍需保持这个虚拟环境处于激活状态。每次打开新 Terminal，
+都要重新执行 `source /path/to/code-mule/.venv/bin/activate`，也可以直接使用
+绝对路径 `/path/to/code-mule/.venv/bin/code-mule`。
 
 ### 2. 准备目标项目 workspace
 
 Code Mule 源码仓库只是工具本身；`--workspace` 指向 Code Mule 将要修改的目标
-Git repository。
+Git repository。两个目录的职责不同：
+
+- `/path/to/code-mule`：Code Mule 工具及其虚拟环境。
+- `/path/to/my-project`：Code Mule 实际修改的目标 Git workspace。
+
+不要为了运行 Code Mule 而在目标 workspace 中创建 Code Mule 自己的 `.venv`。
+如果目标项目本身需要 `.venv`，应由该项目自己的 `.gitignore` 管理。
 
 目标仓库必须至少已有一个 commit，且 working tree 必须 clean。对于现有项目，
 先进入其目录并检查基线：
 
 ```bash
-cd /path/to/your-project
+cd /path/to/my-project
 git status --short
 ```
 
@@ -129,8 +139,8 @@ git status --short
 基线：
 
 ```bash
-mkdir my-project
-cd my-project
+mkdir -p /path/to/my-project
+cd /path/to/my-project
 git init
 printf "# My Project\n" > README.md
 git add -- README.md
@@ -149,7 +159,9 @@ code-mule init --project-id my-project --name "My Project" --workspace "$PWD"
 ```
 
 这里的 `$PWD` 是当前目标项目，不是 Code Mule 源码仓库。默认状态文件为
-`.code-mule/project-state.json`。
+`.code-mule/project-state.json`。`.code-mule/` 是 Code Mule 的 runtime state；
+`code-mule init` 会把这个受管理目录登记到 repository-local Git exclude，既不
+破坏 clean baseline，也不修改项目中 tracked 的 `.gitignore`。
 
 ### 4. 配置 DeepSeek
 
@@ -191,6 +203,25 @@ You > 这个项目不做了。
 
 命令默认发现 `.code-mule/project-state.json`。`run` 和 `change --apply` 会阻塞；
 运行期间请从另一个终端执行控制命令。
+
+### 故障排查
+
+先确认 CLI 来自哪个安装位置：
+
+```bash
+which code-mule
+```
+
+预期路径为 `/path/to/code-mule/.venv/bin/code-mule`。如果没有输出该路径，
+请重新激活 Code Mule 的虚拟环境。然后在 `/path/to/my-project` 中检查 Git：
+
+```bash
+git status --short
+```
+
+预期没有任何输出，包括刚执行完 `code-mule init` 时。普通 untracked、modified
+或 staged 项目文件仍会正常显示，必须由用户明确处理；Code Mule 不会自动
+stash、reset 或 clean 这些文件。
 
 ## Boss 控制命令
 
