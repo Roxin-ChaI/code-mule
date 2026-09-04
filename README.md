@@ -99,38 +99,98 @@ bound to one typed HumanAction and cannot be reused.
 
 ## Quick Start
 
-Install with Python 3.12:
+### 1. Install Code Mule
+
+Clone and install the Code Mule tool with Python 3.12:
 
 ```bash
+git clone https://github.com/Roxin-ChaI/code-mule.git
+cd code-mule
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e .
+code-mule --help
 ```
 
-Initialize a clean Git workspace with an initial commit, then run Code Mule:
+The activated virtual environment keeps `code-mule` available after you change
+to the target project's directory.
+
+### 2. Prepare a project workspace
+
+Code Mule repository is the tool itself; `--workspace` points to the target Git
+repository that Code Mule will modify.
+
+The target repository must have at least one commit and a clean working tree.
+For an existing project, change to its directory and check the baseline:
 
 ```bash
-mkdir -p /tmp/code-mule-demo
-cd /tmp/code-mule-demo
+cd /path/to/your-project
+git status --short
+```
+
+Proceed only when `git status --short` prints nothing. For a new project, create
+the minimum Git baseline first:
+
+```bash
+mkdir my-project
+cd my-project
 git init
-git config user.name "Code Mule Boss"
-git config user.email "boss@example.invalid"
-touch README.md
+printf "# My Project\n" > README.md
 git add -- README.md
-git commit -m "chore: initialize workspace"
+git commit -m "chore: initial commit"
+```
 
-code-mule init --project-id demo --name "Demo" --workspace "$PWD"
+This clean baseline lets Code Mule identify the changes produced by each Task.
+Code Mule does not automatically stash, reset, or overwrite unrelated local
+changes.
 
-export DEEPSEEK_API_KEY="..."
+### 3. Initialize Code Mule
+
+Run initialization from inside the target project directory:
+
+```bash
+code-mule init --project-id my-project --name "My Project" --workspace "$PWD"
+```
+
+Here, `$PWD` is the current target project—not the Code Mule source repository.
+The default state file is `.code-mule/project-state.json`.
+
+### 4. Configure DeepSeek
+
+```bash
+export DEEPSEEK_API_KEY="<your-deepseek-api-key>"
 export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
+```
+
+Do not commit the API key to the target project or any configuration file.
+
+### 5. Run
+
+Start the real CLI workflow with an objective:
+
+```bash
 code-mule run --objective "Create a tested calculator"
 ```
 
-From the same directory, inspect or control the persisted project:
+Code Mule drives the lifecycle:
+
+`Objective → PLAN → Tasks → REVIEW → Git Commit → Final Verification → DONE`
+
+### 6. Inspect / Control
+
+From the target project directory, inspect state or start a persistent Boss chat:
 
 ```bash
 code-mule status
 code-mule chat
+```
+
+For example, ask about progress, request a change, or stop the project:
+
+```text
+You > How far have you got?
+You > Add JSON export support.
+You > Stop this project.
 ```
 
 Commands discover `.code-mule/project-state.json` by default. `run` and

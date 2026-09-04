@@ -97,38 +97,96 @@ HumanAction，并且不可复用。
 
 ## 快速开始
 
-使用 Python 3.12 安装：
+### 1. 安装 Code Mule
+
+克隆 Code Mule 工具仓库，并使用 Python 3.12 安装：
 
 ```bash
+git clone https://github.com/Roxin-ChaI/code-mule.git
+cd code-mule
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e .
+code-mule --help
 ```
 
-创建具有初始 commit 的 clean Git workspace，然后运行 Code Mule：
+激活虚拟环境后，即使切换到目标项目目录，仍可直接使用 `code-mule`。
+
+### 2. 准备目标项目 workspace
+
+Code Mule 源码仓库只是工具本身；`--workspace` 指向 Code Mule 将要修改的目标
+Git repository。
+
+目标仓库必须至少已有一个 commit，且 working tree 必须 clean。对于现有项目，
+先进入其目录并检查基线：
 
 ```bash
-mkdir -p /tmp/code-mule-demo
-cd /tmp/code-mule-demo
+cd /path/to/your-project
+git status --short
+```
+
+只有当 `git status --short` 没有输出时才继续。对于新项目，先建立最小 Git
+基线：
+
+```bash
+mkdir my-project
+cd my-project
 git init
-git config user.name "Code Mule Boss"
-git config user.email "boss@example.invalid"
-touch README.md
+printf "# My Project\n" > README.md
 git add -- README.md
-git commit -m "chore: initialize workspace"
+git commit -m "chore: initial commit"
+```
 
-code-mule init --project-id demo --name "Demo" --workspace "$PWD"
+clean baseline 用于准确识别每个 Task 自己产生的修改。Code Mule 不会自动
+stash、reset，也不会覆盖无关的本地修改。
 
-export DEEPSEEK_API_KEY="..."
+### 3. 初始化 Code Mule
+
+必须在目标项目目录中执行初始化：
+
+```bash
+code-mule init --project-id my-project --name "My Project" --workspace "$PWD"
+```
+
+这里的 `$PWD` 是当前目标项目，不是 Code Mule 源码仓库。默认状态文件为
+`.code-mule/project-state.json`。
+
+### 4. 配置 DeepSeek
+
+```bash
+export DEEPSEEK_API_KEY="<your-deepseek-api-key>"
 export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
+```
+
+不要把 API key 提交到目标项目或任何配置文件中。
+
+### 5. 运行
+
+使用目标描述启动真实 CLI 流程：
+
+```bash
 code-mule run --objective "创建一个有测试的计算器"
 ```
 
-在同一目录查看或控制持久项目：
+Code Mule 将依次推进：
+
+`Objective → PLAN → Tasks → REVIEW → Git Commit → Final Verification → DONE`
+
+### 6. 查看 / 控制
+
+在目标项目目录中查看状态，或启动持续的 Boss 对话：
 
 ```bash
 code-mule status
 code-mule chat
+```
+
+例如，可以询问进度、提出变更或停止项目：
+
+```text
+You > 现在做到哪一步了？
+You > 再加一个 JSON 导出功能。
+You > 这个项目不做了。
 ```
 
 命令默认发现 `.code-mule/project-state.json`。`run` 和 `change --apply` 会阻塞；
