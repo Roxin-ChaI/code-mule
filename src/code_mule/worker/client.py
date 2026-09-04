@@ -489,10 +489,18 @@ class CodexAppServerClient:
         except CodexTurnTimeout as error:
             if hard_deadline <= inactivity_deadline:
                 raise CodexTurnHardTimeout(
-                    "Codex turn reached its hard timeout"
+                    "Codex turn reached its hard timeout",
+                    inactivity_timeout_seconds=(
+                        self._config.inactivity_timeout_seconds
+                    ),
+                    max_turn_seconds=self._config.max_turn_seconds,
                 ) from error
             raise CodexTurnInactivityTimeout(
-                "Codex turn reached its inactivity timeout"
+                "Codex turn reached its inactivity timeout",
+                inactivity_timeout_seconds=(
+                    self._config.inactivity_timeout_seconds
+                ),
+                max_turn_seconds=self._config.max_turn_seconds,
             ) from error
 
     def _read_new_message(self, deadline: float) -> dict[str, object]:

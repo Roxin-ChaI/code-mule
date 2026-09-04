@@ -37,7 +37,12 @@ from code_mule.runtime import (
     TaskCycleService,
 )
 from code_mule.supervisor.contracts import ReviewResult
-from code_mule.worker import CodexApprovalRequired, CodexTurnTimeout, InvalidWorkerReport
+from code_mule.worker import (
+    CodexApprovalRequired,
+    CodexTurnHardTimeout,
+    CodexTurnTimeout,
+    InvalidWorkerReport,
+)
 from code_mule.worker import CodexUserInputRequired, WorkerInputRequest
 
 from tests.state import make_project_state
@@ -825,7 +830,15 @@ class TaskCycleFlowTests(unittest.TestCase):
 
 class TaskCycleFailureTests(unittest.TestCase):
     def test_worker_turn_timeout_requires_recovery_without_second_worker(self):
-        session = FakeWorkerSession([CodexTurnTimeout("deadline exceeded")])
+        session = FakeWorkerSession(
+            [
+                CodexTurnHardTimeout(
+                    "deadline exceeded with private payload",
+                    inactivity_timeout_seconds=120,
+                    max_turn_seconds=900,
+                )
+            ]
+        )
         progress = RecordingProgressSink()
         service, request, store, _, supervisor, sessions = build_cycle(
             session=session,
@@ -847,6 +860,17 @@ class TaskCycleFailureTests(unittest.TestCase):
         event_types = tuple(event.type for event in progress.events)
         self.assertIn(ProgressEventType.WORKER_FAILED, event_types)
         self.assertEqual(event_types[-1], ProgressEventType.HUMAN_GATE)
+        failure_events = tuple(
+            event
+            for event in store.current.events
+            if event.event_type == "task.execution_failed"
+        )
+        self.assertEqual(failure_events[-1].metadata["timeout_kind"], "hard")
+        self.assertEqual(
+            failure_events[-1].metadata["inactivity_timeout_seconds"], "120"
+        )
+        self.assertEqual(failure_events[-1].metadata["max_turn_seconds"], "900")
+        self.assertNotIn("private payload", str(failure_events[-1].metadata))
 
     def test_worker_failure_preserves_persisted_recovery_identity(self):
         base = cycle_state()

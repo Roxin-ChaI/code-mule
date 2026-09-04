@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from code_mule.cli import DEFAULT_STATE_FILE, build_parser
 from code_mule.progress import ProgressEvent, ProgressEventType, RecordingProgressSink
-from code_mule.worker import CodexTurnTimeout
+from code_mule.worker import CodexTurnHardTimeout, CodexTurnTimeout
 from scripts import manual_release_e2e
 from scripts.local_release_readiness_e2e import (
     ReleaseInterruption,
@@ -64,10 +64,30 @@ class _InterruptedReleaseSession(_FailingReleaseSession):
     failure = KeyboardInterrupt()
 
 
+class _PartialHardTimeoutSession(_FailingReleaseSession):
+    instances = []
+    failure = CodexTurnHardTimeout(
+        "hard timeout",
+        inactivity_timeout_seconds=120,
+        max_turn_seconds=900,
+    )
+
+    def __init__(self, repository, *, progress=None):
+        super().__init__(repository, progress=progress)
+        self.repository = repository
+
+    def execute(self, *_args, **_kwargs):
+        (self.repository / "partial-worker-output.txt").write_text(
+            "partial\n", encoding="utf-8"
+        )
+        return super().execute(*_args, **_kwargs)
+
+
 class ReleaseReadinessE2ETests(unittest.TestCase):
     def setUp(self):
         _FailingReleaseSession.instances.clear()
         _InterruptedReleaseSession.instances.clear()
+        _PartialHardTimeoutSession.instances.clear()
 
     def test_full_local_change_delivery_finalization_and_cancellation(self):
         completed = subprocess.run(
@@ -171,6 +191,23 @@ class ReleaseReadinessE2ETests(unittest.TestCase):
         projected = repr(progress.events)
         self.assertNotIn("prompt", projected.lower())
         self.assertNotIn("secret", projected.lower())
+
+    def test_partial_workspace_hard_timeout_is_preserved_without_commit_or_retry(self):
+        result = run_release_scenario(
+            real_worker=False,
+            worker_timeout_seconds=0.01,
+            worker_session_factory=_PartialHardTimeoutSession,
+        )
+        self.assertEqual(result["final_status"], "human_required")
+        self.assertEqual(result["session_count"], 1)
+        self.assertEqual(result["delivery_commit_count"], 0)
+        self.assertEqual(result["repository_commit_count"], 0)
+        self.assertFalse(result["workspace_clean"])
+        self.assertEqual(
+            result["pending_action_categories"], ["recovery_uncertain"]
+        )
+        self.assertIn("CodexTurnHardTimeout", result["failure_types"])
+        self.assertTrue(_PartialHardTimeoutSession.instances[0].closed)
 
     def test_active_worker_interrupt_persists_typed_recovery_and_closes(self):
         with self.assertRaises(ReleaseScenarioInterrupted) as raised:

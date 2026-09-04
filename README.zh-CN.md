@@ -289,8 +289,10 @@ all Tasks complete → tests/lint/typecheck/build/git-clean → FINAL_REVIEW →
 
 - 每个项目只允许一个 execution owner 派发工作。
 - 恢复前会先分类 stale lease 与 interrupted Task。
-- 每个 Worker turn 都有可配置的有界 deadline；结果不确定时进入
-  `HUMAN_REQUIRED`，不会自动重跑。
+- 每个 Worker turn 都有可配置的 inactivity timeout 和不可刷新的 hard maximum
+  duration；只有当前 turn 的可信 activity 才刷新空闲时限。
+- 任一 timeout 都会 fail-closed 进入 `HUMAN_REQUIRED`；局部修改不会被删除、
+  reset 或自动重跑。
 - 可重试的 Supervisor 结构错误进行有界全新生成，不做 JSON repair 或绕过
   validator。
 - app-server process 与 reader thread 在成功、timeout 或 Ctrl+C 后都会关闭。

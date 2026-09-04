@@ -43,6 +43,7 @@ from code_mule.worker.contracts import (
     CodexUserInputRequired,
     CodexWorkerError,
     WorkerTaskRequest,
+    worker_failure_metadata,
 )
 
 from .contracts import (
@@ -546,7 +547,7 @@ class TaskCycleService:
             ProgressEventType.WORKER_FAILED,
             "Codex Worker failed",
             attempt=attempt,
-            metadata={"error_type": type(error).__name__},
+            metadata=worker_failure_metadata(error),
         )
         self._emit_human_gate(
             state, task, "worker_failure", attempt=attempt
@@ -962,7 +963,7 @@ class TaskCycleService:
             state,
             task,
             event_types=("task.execution_failed", "task.human_required"),
-            metadata={"error_type": type(error).__name__},
+            metadata=worker_failure_metadata(error),
             category=category,
             summary=summary,
             requested_action=requested_action,

@@ -7,10 +7,14 @@ from code_mule.domain.models import Task
 from code_mule.worker.contracts import (
     CodexApprovalRequired,
     CodexProtocolError,
+    CodexTurnHardTimeout,
+    CodexTurnInactivityTimeout,
+    CodexTurnTimeout,
     CodexWorkerConfig,
     CodexWorkerError,
     WorkerTaskRequest,
     WorkerTurnResult,
+    worker_failure_metadata,
 )
 
 
@@ -103,6 +107,29 @@ class WorkerContractTests(unittest.TestCase):
     def test_boundary_errors_share_one_public_base(self):
         self.assertTrue(issubclass(CodexProtocolError, CodexWorkerError))
         self.assertTrue(issubclass(CodexApprovalRequired, CodexWorkerError))
+
+    def test_timeout_metadata_is_typed_bounded_and_payload_free(self):
+        error = CodexTurnHardTimeout(
+            "safe message",
+            inactivity_timeout_seconds=120,
+            max_turn_seconds=900,
+        )
+        self.assertIsInstance(error, CodexTurnTimeout)
+        self.assertEqual(
+            worker_failure_metadata(error),
+            {
+                "error_type": "CodexTurnHardTimeout",
+                "timeout_kind": "hard",
+                "inactivity_timeout_seconds": "120",
+                "max_turn_seconds": "900",
+            },
+        )
+        idle = CodexTurnInactivityTimeout(
+            "secret raw payload must-not-appear",
+            inactivity_timeout_seconds=120,
+            max_turn_seconds=900,
+        )
+        self.assertNotIn("must-not-appear", str(worker_failure_metadata(idle)))
 
 
 if __name__ == "__main__":

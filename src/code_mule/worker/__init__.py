@@ -15,6 +15,7 @@ from .contracts import (
     WorkerInputRequest,
     WorkerTaskRequest,
     WorkerTurnResult,
+    worker_failure_metadata,
 )
 from .parsing import build_execution_report
 from .service import CodexWorkerService, CodexWorkerSession
@@ -50,6 +51,7 @@ __all__ = [
     "WorkerExecutionStatus",
     "WorkerTaskRequest",
     "WorkerTurnResult",
+    "worker_failure_metadata",
     "build_execution_report",
     "parse_structured_worker_report",
     "structured_worker_report_schema",

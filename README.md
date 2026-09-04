@@ -298,8 +298,11 @@ than invented. Task `COMPLETED` does not imply Project `DONE`.
 
 - Exactly one execution owner may dispatch work for a project.
 - Stale leases and interrupted Tasks are classified before recovery.
-- Every Worker turn has a configurable bounded deadline; an uncertain result
-  becomes `HUMAN_REQUIRED` and is not automatically rerun.
+- Every Worker turn has a configurable inactivity timeout plus a non-refreshable
+  hard maximum duration. Trusted current-turn activity refreshes only the idle
+  limit.
+- Either timeout fails closed to `HUMAN_REQUIRED`; partial work is not deleted,
+  reset, or automatically rerun.
 - Retryable structural Supervisor failures receive bounded fresh regeneration,
   never JSON repair or validator bypass.
 - App-server processes and reader threads close on success, timeout, or Ctrl+C.

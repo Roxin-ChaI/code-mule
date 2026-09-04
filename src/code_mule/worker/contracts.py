@@ -30,13 +30,45 @@ class CodexTurnFailed(CodexWorkerError):
 class CodexTurnTimeout(CodexWorkerError):
     """Raised when a Codex response or turn exceeds its configured deadline."""
 
+    timeout_kind = "operation"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        inactivity_timeout_seconds: float | None = None,
+        max_turn_seconds: float | None = None,
+    ) -> None:
+        self.inactivity_timeout_seconds = inactivity_timeout_seconds
+        self.max_turn_seconds = max_turn_seconds
+        super().__init__(message)
+
 
 class CodexTurnInactivityTimeout(CodexTurnTimeout):
     """Raised when a turn produces no trusted activity before its idle limit."""
 
+    timeout_kind = "inactivity"
+
 
 class CodexTurnHardTimeout(CodexTurnTimeout):
     """Raised when a turn reaches its non-refreshable maximum duration."""
+
+    timeout_kind = "hard"
+
+
+def worker_failure_metadata(error: CodexWorkerError) -> dict[str, str]:
+    """Return bounded diagnostic metadata without model or environment content."""
+
+    metadata = {"error_type": type(error).__name__}
+    if isinstance(error, CodexTurnTimeout):
+        metadata["timeout_kind"] = error.timeout_kind
+        if error.inactivity_timeout_seconds is not None:
+            metadata["inactivity_timeout_seconds"] = format(
+                error.inactivity_timeout_seconds, "g"
+            )
+        if error.max_turn_seconds is not None:
+            metadata["max_turn_seconds"] = format(error.max_turn_seconds, "g")
+    return metadata
 
 
 class CodexApprovalRequired(CodexWorkerError):
@@ -146,4 +178,5 @@ __all__ = [
     "WorkerInputRequest",
     "WorkerTaskRequest",
     "WorkerTurnResult",
+    "worker_failure_metadata",
 ]
