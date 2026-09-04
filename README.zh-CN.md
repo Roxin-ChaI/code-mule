@@ -1,25 +1,115 @@
 # Code Mule（赛博码农）
 
+[English](README.md)
+
+> Powered by prompts. Paid in tokens.
+
 > 你定义目标，牛马负责写代码。
 
-Code Mule v0.1.0 是一个由人类监督、确定性编排的本地软件开发系统。
-Boss 保留目标、需求变更、关键决策和 Human Gate 的最终权限；Supervisor
-只负责结构化推理，Orchestrator 控制状态机，Codex Worker 执行任务，
-ProjectState schema v8 是唯一持久化事实来源。
+Code Mule 是一个在明确人类控制下，完成规划、执行、审查、验证与任务交付的
+自主软件工程 runtime。
 
-## 本地安装
+## 为什么需要 Code Mule
+
+传统 Agent 工作流仍由人类机械地协调：
+
+```text
+Human → ChatGPT → 复制 prompt → Codex → 复制结果 → ChatGPT
+```
+
+Code Mule 运行完整工程循环，同时让 Boss 保留最终权限：
+
+```text
+Boss → Supervisor → Runtime → Codex Worker → Review → Git Delivery → Verification
+```
+
+它的区别不是增加一个自由对话包装，而是使用持久 `ProjectState`、确定性编排、
+结构化 Supervisor contract、明确 Human Gate，以及安全中断与恢复。
+
+## 工作流
+
+```text
+Boss Objective
+  → PLAN → Task Execution → Supervisor REVIEW → Verification → Git Commit
+  → Next Task → Final Verification → DONE
+
+CHANGE         → Safe Point → IMPACT_ANALYSIS → Plan vN+1 → Resume
+STOP           → Safe Point → CANCELLED
+HUMAN_REQUIRED → inspect → approve / reject / resolve
+```
+
+## 核心能力
+
+- 结构化 DeepSeek `PLAN`、`REVIEW`、`IMPACT_ANALYSIS` 和 `FINAL_REVIEW`
+  支持自主规划、多任务调度与版本化 replanning。
+- 本地 Codex Worker 每次执行一个有边界的 Task；确定性 runtime 负责派发、
+  状态迁移、验证和 Safe Point。
+- Boss CLI 与自然语言 Chat 提供查询、CHANGE、PAUSE/RESUME、STOP 和绑定具体
+  action 的 Human Resolution，不把状态权限交给模型。
+- 单 execution owner、stale lease 检测、有界 Worker deadline 与 crash recovery
+  guard 防止重复或结果不确定的 Worker 执行。
+- 可重试的 Supervisor 输出结构错误使用有界完整重新生成；domain validation
+  失败保持 fail-closed，不做模糊修复。
+- 实时终端进度只投影安全的 Worker/Supervisor activity，不显示 prompt、推理、
+  凭据或 raw model response。
+- 仅精确 stage 并 commit Task 拥有的路径；Project 完成还要求配置检查、Git clean
+  和 final review 全部通过。
+
+## 架构
+
+```text
+Boss CLI / Chat
+       ↓
+Deterministic Orchestrator
+       ↓
+Supervisor ───── ProjectState
+       ↓
+Task Runtime
+       ↓
+Codex Worker
+       ↓
+Verification
+       ↓
+Git Delivery
+```
+
+`ProjectState` 是 source of truth，模型 conversation history 不是。Supervisor
+只返回 typed proposal 和 decision，不直接修改状态或执行 Git 命令。
+
+## 安全模型
+
+自动允许：
+
+- 本地 workspace 修改与已配置的本地验证；
+- 使用 `git add -- <owned paths>` 精确 staging；
+- 本地 Task commit。
+
+必须经过 Human Gate：
+
+- push、force-push、tag 和 release；
+- deployment 与远端基础设施变更；
+- 操作需要的 secret 或 API key；
+- 付费外部操作；
+- 破坏性或不可逆外部副作用。
+
+高风险副作用不会通过解析模型自由文本获得授权。批准只绑定一个 typed
+HumanAction，并且不可复用。
+
+## 快速开始
+
+使用 Python 3.12 安装：
 
 ```bash
 python3.12 -m venv .venv
-.venv/bin/python -m pip install -e .
-CODE_MULE_BIN="$(pwd)/.venv/bin/code-mule"
+source .venv/bin/activate
+pip install -e .
 ```
 
-## 从零开始
+创建具有初始 commit 的 clean Git workspace，然后运行 Code Mule：
 
 ```bash
-mkdir -p /tmp/code-mule-calculator
-cd /tmp/code-mule-calculator
+mkdir -p /tmp/code-mule-demo
+cd /tmp/code-mule-demo
 git init
 git config user.name "Code Mule Boss"
 git config user.email "boss@example.invalid"
@@ -27,46 +117,122 @@ touch README.md
 git add -- README.md
 git commit -m "chore: initialize workspace"
 
-"$CODE_MULE_BIN" init \
-  --project-id calculator \
-  --name "Calculator" \
-  --workspace "$PWD"
+code-mule init --project-id demo --name "Demo" --workspace "$PWD"
 
 export DEEPSEEK_API_KEY="..."
 export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
-# 终端 A（阻塞执行）
-"$CODE_MULE_BIN" run --objective "创建一个有测试的计算器"
-
-# 执行期间，在同一目录的终端 B 中运行
-"$CODE_MULE_BIN" status
-"$CODE_MULE_BIN" chat
-"$CODE_MULE_BIN" change "增加 multiply 功能"
-
-# 终端 A 到达 CHANGE Safe Point 后
-"$CODE_MULE_BIN" change --apply
-
-# 或者取消仍在执行的项目
-"$CODE_MULE_BIN" stop
+code-mule run --objective "创建一个有测试的计算器"
 ```
 
-默认状态文件是当前目录下的 `.code-mule/project-state.json`，因此后续命令
-会自动发现项目；只有使用非默认位置时才需要 `--state-file`。执行前 workspace
-必须是拥有初始 commit 的 clean Git repository。
-`run` 是阻塞命令；控制命令应由另一个终端读取同一个持久化状态。`stop`
-是取消路径，不是在 Project 已经 DONE 后执行的步骤。
+在同一目录查看或控制持久项目：
 
-## 安全边界
+```bash
+code-mule status
+code-mule chat
+```
 
-- 自动允许：本地文件修改、本地测试、精确路径 `git add`、本地 commit。
-- 必须人工批准：push、force-push、tag、release、部署、付费调用、secret
-  使用、破坏性删除/迁移以及不可逆外部副作用。
-- `resume` 不会绕过 `HUMAN_REQUIRED`；批准只绑定一个具体 HumanAction，
-  且不可复用。
-- STOP 在 Safe Point 取消项目，保留历史与已完成 commit，不 reset/revert。
+命令默认发现 `.code-mule/project-state.json`。`run` 和 `change --apply` 会阻塞；
+运行期间请从另一个终端执行控制命令。
+
+## Boss 控制命令
+
+| 命令 | 用途 |
+| --- | --- |
+| `run --objective "..."` | 规划新项目；`run` 继续 RUNNING 工作 |
+| `status` | 显示确定性的 Project 与 Task 状态 |
+| `chat` | 启动自然语言 Boss 界面 |
+| `ask "..."` | 只读项目查询 |
+| `change "..."` | 记录需求变更 |
+| `change --apply` | 执行影响分析、物化 Plan vN+1 并恢复运行 |
+| `pause` / `resume` | 在控制边界暂停或安全恢复 |
+| `stop` | 在 Safe Point 取消且不回滚 |
+| `inspect` | 查看 pending HumanAction |
+| `approve ID` / `reject ID` | 处理一个明确的 approval action |
+| `resolve ID --strategy ...` | 处理 typed 非 approval action |
+
+命令加 `--verbose` 可查看 ID 与 raw control value；全局 `--debug` 显示经过清理的
+traceback。
+
+## CHANGE 示例
+
+```text
+You > 增加 JSON 导出功能。
+
+Code Mule 记录 CHANGE，让当前 Task 到达 Safe Point，执行 IMPACT_ANALYSIS，
+物化 Plan v2，并且只在显式执行 `change --apply` 后恢复。
+```
+
+## Boss Chat
+
+`code-mule chat` 支持例如：
+
+- “现在做到哪一步了？”
+- “还有几个任务？”
+- “当前有什么问题？”
+- “再加一个 JSON 导出功能。”
+- “这个项目不做了。”
+
+只读事实来自 `ProjectState`；模型不估算进度，也不直接修改项目状态。存在歧义的
+副作用请求会要求 Boss 澄清。
+
+## 验证与交付
+
+```text
+Task:
+Worker → verification → REVIEW → git add -- <owned paths> → local commit
+       → COMPLETED
+
+Project:
+all Tasks complete → tests/lint/typecheck/build/git-clean → FINAL_REVIEW → DONE
+```
+
+只运行项目已配置的检查；没有配置的检查类别会跳过，而不会猜测命令。Task
+`COMPLETED` 不代表 Project `DONE`。
+
+## 可靠性
+
+- 每个项目只允许一个 execution owner 派发工作。
+- 恢复前会先分类 stale lease 与 interrupted Task。
+- 每个 Worker turn 都有可配置的有界 deadline；结果不确定时进入
+  `HUMAN_REQUIRED`，不会自动重跑。
+- 可重试的 Supervisor 结构错误进行有界全新生成，不做 JSON repair 或绕过
+  validator。
+- app-server process 与 reader thread 在成功、timeout 或 Ctrl+C 后都会关闭。
+
+## v0.1.0 验证基线
+
+Release candidate baseline：
+
+- Python 3.12.13 上 441 个 automated tests PASS；
+- `code-mule==0.1.0` fresh editable install 与 `pip check` PASS；
+- real local Codex full-system E2E PASS；
+- real DeepSeek + real Codex release E2E PASS。
+
+Authenticated release E2E 已验证：
+
+```text
+Objective → real PLAN → real Codex Worker → real REVIEW → CHANGE → Safe Point
+→ real IMPACT_ANALYSIS → Plan v2 → Task commits → Project Verification
+→ real FINAL_REVIEW → DONE
+```
+
+最终证据：Plan v2、3/3 Tasks completed、3 个 Task commits、3 个 unique Codex
+sessions、verification PASS、`FINAL_REVIEW` APPROVE、workspace clean、execution
+leases released，并且没有 duplicate Worker。
+
+## 当前范围与限制
+
+- 单个本地 Worker 和本机 execution ownership；不包含 distributed scheduler、
+  daemon、parallel Worker 或 Web UI。
+- interrupted Codex turn 不会透明重连；不确定工作需要检查并显式处理。
+- push、tag、release、deployment 与其他 gated external effect 仍是手动 Human
+  Gate 操作。
+- verification command 是可信的确定性项目配置，不是 OS-level network sandbox。
 
 ## 文档
 
-- [CLI](docs/cli.md)
+- [架构](docs/architecture.md)
+- [Boss CLI](docs/cli.md)
 - [Boss Chat](docs/boss-chat.md)
 - [Human Resolution](docs/human-resolution.md)
 - [Execution Recovery](docs/execution-recovery.md)
@@ -75,8 +241,3 @@ export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
 - [Project Cancellation](docs/project-cancellation.md)
 - [Release Readiness](docs/release-readiness.md)
 - [Troubleshooting](docs/troubleshooting.md)
-
-自动化测试和本地发布 E2E 不调用 DeepSeek。完整真实 DeepSeek + Codex
-发布链仍由 Boss 手动执行 `scripts/manual_release_e2e.py`，该流程会产生真实
-API 请求和费用。v0.1.0 是单项目、单 Worker 的本地 MVP，不包含 daemon、
-并行 Worker、Web GUI 或自动 push/tag/release。
