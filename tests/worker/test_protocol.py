@@ -5,6 +5,7 @@ import queue
 import subprocess
 import threading
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -15,6 +16,8 @@ from code_mule.worker.contracts import (
     CodexApprovalRequired,
     CodexProtocolError,
     CodexTurnFailed,
+    CodexTurnHardTimeout,
+    CodexTurnInactivityTimeout,
     CodexTurnTimeout,
     CodexUserInputRequired,
     CodexWorkerConfig,
@@ -95,6 +98,17 @@ class FakeProcess:
     def exit(self, code=1):
         self.exit_code = code
         self.stdout.close()
+
+
+class ScriptedMonotonic:
+    def __init__(self, *values):
+        self.values = list(values)
+        self.last = values[-1] if values else 0.0
+
+    def __call__(self):
+        if self.values:
+            self.last = self.values.pop(0)
+        return self.last
 
 
 def config(timeout=0.2):
@@ -272,6 +286,169 @@ class ProtocolHelperTests(unittest.TestCase):
 
 
 class CodexAppServerClientTests(unittest.TestCase):
+    @staticmethod
+    def _activity(thread_id, turn_id, item_id):
+        return {
+            "method": "item/started",
+            "params": {
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "item": {
+                    "id": item_id,
+                    "type": "commandExecution",
+                    "commandActions": [{"type": "read"}],
+                },
+            },
+        }
+
+    @staticmethod
+    def _completed(thread_id, turn_id):
+        return {
+            "method": "turn/completed",
+            "params": {
+                "threadId": thread_id,
+                "turn": {"id": turn_id, "status": "completed"},
+            },
+        }
+
+    def test_valid_activity_refreshes_idle_limit_beyond_old_fixed_deadline(self):
+        client, holder = make_client(timeout=0.2)
+        client.initialize()
+        thread_id = client.start_thread()
+        turn_id = client.start_turn(thread_id, "prompt")
+        client._config = CodexWorkerConfig(
+            command=("codex", "app-server"),
+            workspace=Path("/tmp/project"),
+            approval_policy="on-request",
+            sandbox="read-only",
+            inactivity_timeout_seconds=120,
+            max_turn_seconds=900,
+        )
+        times = [0]
+        for value in range(60, 421, 60):
+            times.extend((value, value))
+        times.append(421)
+        client._monotonic = ScriptedMonotonic(*times)
+        for index in range(7):
+            holder["process"].stdout.emit(
+                self._activity(thread_id, turn_id, f"item-{index}")
+            )
+        holder["process"].stdout.emit(self._completed(thread_id, turn_id))
+        result = client.wait_for_turn(thread_id, turn_id)
+        self.assertTrue(result.completed)
+        client.close()
+
+    def test_no_activity_uses_inactivity_timeout_and_cleans_up(self):
+        client, holder = make_client(timeout=0.2)
+        client.initialize()
+        thread_id = client.start_thread()
+        turn_id = client.start_turn(thread_id, "prompt")
+        client._config = replace(
+            client._config,
+            inactivity_timeout_seconds=120,
+            max_turn_seconds=900,
+        )
+        client._monotonic = ScriptedMonotonic(0, 121)
+        with self.assertRaises(CodexTurnInactivityTimeout):
+            client.wait_for_turn(thread_id, turn_id)
+        self.assertTrue(holder["process"].terminated)
+        self.assertEqual(client._reader_threads, [])
+
+    def test_continuous_activity_still_stops_at_hard_deadline(self):
+        client, holder = make_client(timeout=0.2)
+        client.initialize()
+        thread_id = client.start_thread()
+        turn_id = client.start_turn(thread_id, "prompt")
+        client._config = replace(
+            client._config,
+            inactivity_timeout_seconds=120,
+            max_turn_seconds=300,
+        )
+        client._monotonic = ScriptedMonotonic(
+            0, 60, 60, 120, 120, 180, 180, 240, 240, 300
+        )
+        for index in range(5):
+            holder["process"].stdout.emit(
+                self._activity(thread_id, turn_id, f"item-{index}")
+            )
+        with self.assertRaises(CodexTurnHardTimeout):
+            client.wait_for_turn(thread_id, turn_id)
+        self.assertTrue(holder["process"].terminated)
+
+    def test_unrelated_activity_does_not_refresh_but_retryable_current_error_does(self):
+        client, holder = make_client(timeout=0.2)
+        client.initialize()
+        thread_id = client.start_thread()
+        turn_id = client.start_turn(thread_id, "prompt")
+        client._config = replace(
+            client._config,
+            inactivity_timeout_seconds=120,
+            max_turn_seconds=900,
+        )
+        holder["process"].stdout.emit(
+            self._activity("other-thread", turn_id, "unrelated")
+        )
+        client._monotonic = ScriptedMonotonic(0, 60, 121)
+        with self.assertRaises(CodexTurnInactivityTimeout):
+            client.wait_for_turn(thread_id, turn_id)
+
+        client, holder = make_client(timeout=0.2)
+        client.initialize()
+        thread_id = client.start_thread()
+        turn_id = client.start_turn(thread_id, "prompt")
+        client._config = replace(
+            client._config,
+            inactivity_timeout_seconds=120,
+            max_turn_seconds=900,
+        )
+        holder["process"].stdout.emit(
+            {
+                "method": "error",
+                "params": {
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "willRetry": True,
+                    "error": {"message": "temporary"},
+                },
+            }
+        )
+        holder["process"].stdout.emit(self._completed(thread_id, turn_id))
+        client._monotonic = ScriptedMonotonic(0, 100, 100, 121)
+        self.assertTrue(client.wait_for_turn(thread_id, turn_id).completed)
+        client.close()
+
+    def test_wrong_turn_activity_does_not_refresh_inactivity_deadline(self):
+        client, holder = make_client(timeout=0.2)
+        client.initialize()
+        thread_id = client.start_thread()
+        turn_id = client.start_turn(thread_id, "prompt")
+        client._config = replace(
+            client._config,
+            inactivity_timeout_seconds=120,
+            max_turn_seconds=900,
+        )
+        holder["process"].stdout.emit(
+            self._activity(thread_id, "other-turn", "unrelated")
+        )
+        client._monotonic = ScriptedMonotonic(0, 60, 121)
+        with self.assertRaises(CodexTurnInactivityTimeout):
+            client.wait_for_turn(thread_id, turn_id)
+
+    def test_malformed_trusted_activity_fails_closed(self):
+        client, holder = make_client(timeout=0.2)
+        client.initialize()
+        thread_id = client.start_thread()
+        turn_id = client.start_turn(thread_id, "prompt")
+        holder["process"].stdout.emit(
+            {
+                "method": "item/started",
+                "params": {"threadId": thread_id, "turnId": turn_id},
+            }
+        )
+        with self.assertRaises(CodexProtocolError):
+            client.wait_for_turn(thread_id, turn_id)
+        client.close()
+
     def test_projects_only_schema_backed_safe_worker_activity(self):
         progress = RecordingProgressSink()
         client, holder = make_client(progress_sink=progress)

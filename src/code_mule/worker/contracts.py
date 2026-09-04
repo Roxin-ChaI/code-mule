@@ -31,6 +31,14 @@ class CodexTurnTimeout(CodexWorkerError):
     """Raised when a Codex response or turn exceeds its configured deadline."""
 
 
+class CodexTurnInactivityTimeout(CodexTurnTimeout):
+    """Raised when a turn produces no trusted activity before its idle limit."""
+
+
+class CodexTurnHardTimeout(CodexTurnTimeout):
+    """Raised when a turn reaches its non-refreshable maximum duration."""
+
+
 class CodexApprovalRequired(CodexWorkerError):
     """Raised when app-server requests an approval Code Mule cannot grant."""
 
@@ -129,6 +137,8 @@ __all__ = [
     "CodexApprovalRequired",
     "CodexProtocolError",
     "CodexTurnFailed",
+    "CodexTurnHardTimeout",
+    "CodexTurnInactivityTimeout",
     "CodexTurnTimeout",
     "CodexUserInputRequired",
     "CodexWorkerConfig",

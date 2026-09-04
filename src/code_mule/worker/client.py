@@ -26,6 +26,8 @@ from .contracts import (
     CodexApprovalRequired,
     CodexProtocolError,
     CodexTurnFailed,
+    CodexTurnHardTimeout,
+    CodexTurnInactivityTimeout,
     CodexTurnTimeout,
     CodexUserInputRequired,
     CodexWorkerConfig,
@@ -95,6 +97,7 @@ class CodexAppServerClient:
         popen_factory: _PopenFactory = subprocess.Popen,
         progress_sink: ProgressSink | None = None,
         clock: Callable[[], datetime] | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._config = config
         self._popen_factory = popen_factory
@@ -107,6 +110,7 @@ class CodexAppServerClient:
         self._initialized = False
         self._progress = resilient_progress_sink(progress_sink)
         self._clock = clock
+        self._monotonic = monotonic
 
     @property
     def stderr_tail(self) -> tuple[str, ...]:
@@ -223,14 +227,18 @@ class CodexAppServerClient:
     def wait_for_turn(self, thread_id: str, turn_id: str) -> WorkerTurnResult:
         if thread_id == "" or turn_id == "":
             raise ValueError("thread_id and turn_id must not be empty")
-        deadline = time.monotonic() + self._config.inactivity_timeout_seconds
+        started = self._monotonic()
+        hard_deadline = started + self._config.max_turn_seconds
+        inactivity_deadline = started + self._config.inactivity_timeout_seconds
         event_count = 0
         final_message: str | None = None
         issues: list[str] = []
 
         while True:
             try:
-                message = self._next_message(deadline)
+                message = self._next_turn_message(
+                    hard_deadline, inactivity_deadline
+                )
             except CodexTurnTimeout:
                 self.close()
                 raise
@@ -248,6 +256,14 @@ class CodexAppServerClient:
             turn = params.get("turn")
             if isinstance(turn, dict) and turn.get("id") == turn_id:
                 matches_turn = True
+
+            if self._is_trusted_turn_activity(
+                method, params, thread_id, turn_id
+            ):
+                inactivity_deadline = (
+                    self._monotonic()
+                    + self._config.inactivity_timeout_seconds
+                )
 
             if matches_thread and matches_turn:
                 self._project_activity(method, params)
@@ -437,7 +453,7 @@ class CodexAppServerClient:
         request_id = self._next_request_id
         self._next_request_id += 1
         self._write_message(request_message(request_id, method, params))
-        deadline = time.monotonic() + self._config.inactivity_timeout_seconds
+        deadline = self._monotonic() + self._config.inactivity_timeout_seconds
         while True:
             try:
                 message = self._read_new_message(deadline)
@@ -465,8 +481,22 @@ class CodexAppServerClient:
             return self._pending_messages.popleft()
         return self._read_new_message(deadline)
 
+    def _next_turn_message(
+        self, hard_deadline: float, inactivity_deadline: float
+    ) -> dict[str, object]:
+        try:
+            return self._next_message(min(hard_deadline, inactivity_deadline))
+        except CodexTurnTimeout as error:
+            if hard_deadline <= inactivity_deadline:
+                raise CodexTurnHardTimeout(
+                    "Codex turn reached its hard timeout"
+                ) from error
+            raise CodexTurnInactivityTimeout(
+                "Codex turn reached its inactivity timeout"
+            ) from error
+
     def _read_new_message(self, deadline: float) -> dict[str, object]:
-        timeout = deadline - time.monotonic()
+        timeout = deadline - self._monotonic()
         if timeout <= 0:
             raise CodexTurnTimeout("timed out waiting for Codex app-server")
         try:
@@ -490,6 +520,40 @@ class CodexAppServerClient:
         ):
             raise CodexProtocolError("Codex app-server JSON must be an object")
         return cast(dict[str, object], payload)
+
+    def _is_trusted_turn_activity(
+        self,
+        method: str,
+        params: dict[str, object],
+        thread_id: str,
+        turn_id: str,
+    ) -> bool:
+        if method == "turn/started":
+            turn = params.get("turn")
+            if not isinstance(params.get("threadId"), str) or not isinstance(
+                turn, dict
+            ):
+                raise CodexProtocolError("turn/started has invalid identity")
+            identity = turn.get("id")
+            if not isinstance(identity, str):
+                raise CodexProtocolError("turn/started has invalid identity")
+            return params["threadId"] == thread_id and identity == turn_id
+        if method in {"item/started", "item/completed"}:
+            self._require_event_identity(params, method)
+            if not isinstance(params.get("item"), dict):
+                raise CodexProtocolError(f"{method} is missing item")
+            return (
+                params["threadId"] == thread_id
+                and params["turnId"] == turn_id
+            )
+        if method == "error":
+            self._require_event_identity(params, method)
+            return (
+                params["threadId"] == thread_id
+                and params["turnId"] == turn_id
+                and params.get("willRetry") is True
+            )
+        return False
 
     def _read_stdout(self, stream: IO[str]) -> None:
         try:
