@@ -8,6 +8,7 @@ from pathlib import Path
 from code_mule.domain import PlanStatus, ProjectStatus, TaskStatus
 from code_mule.git_delivery import GitCommitResult
 from code_mule.progress import ProgressEventType, RecordingProgressSink
+from code_mule.orchestrator import OrchestratorService, StopCommand
 from code_mule.project_verification import (
     FinalReviewDecision,
     ProjectVerificationCategory,
@@ -186,6 +187,26 @@ class ProjectVerificationServiceTests(FinalVerificationCase):
 
 
 class ProjectFinalizationTests(FinalVerificationCase):
+    def test_stop_during_checks_prevents_final_review_and_done(self):
+        supervisor = FakeFinalSupervisor()
+        holder = {}
+
+        def runner(command, **kwargs):
+            store = holder["store"]
+            OrchestratorService(
+                store,
+                clock=lambda: NOW,
+                event_id_factory=iter((f"cancel-{index}" for index in range(4))).__next__,
+            ).stop(StopCommand(store.load().project.id))
+            return 0, False
+
+        service, store = self.finalizer(self.state(), supervisor, runner=runner)
+        holder["store"] = store
+        final = service.finalize(store.state)
+        self.assertIs(final.project.status, ProjectStatus.CANCELLED)
+        self.assertEqual(supervisor.requests, [])
+        self.assertNotIn("project.completed", (event.event_type for event in final.events))
+
     def test_unfinished_reentry_does_not_reuse_stale_git_evidence(self):
         state = self.state()
         supervisor = FakeFinalSupervisor()

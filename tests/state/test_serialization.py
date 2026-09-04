@@ -1,5 +1,6 @@
 import copy
 import unittest
+from dataclasses import replace
 
 from code_mule.domain.enums import ProjectStatus, TaskStatus
 from code_mule.state.serialization import (
@@ -59,6 +60,15 @@ class ProjectStateSerializationTests(unittest.TestCase):
         restored = deserialize_project_state(serialize_project_state(state))
         self.assertIsNone(restored.quality_status)
         self.assertEqual(restored, state)
+
+    def test_cancellation_statuses_round_trip_without_schema_shape_change(self):
+        for status in (ProjectStatus.CANCEL_REQUESTED, ProjectStatus.CANCELLED):
+            with self.subTest(status=status):
+                state = make_project_state()
+                state = replace(state, project=replace(state.project, status=status))
+                payload = serialize_project_state(state)
+                self.assertEqual(payload["schema_version"], 8)
+                self.assertIs(deserialize_project_state(payload).project.status, status)
 
 
 class InvalidProjectStateTests(unittest.TestCase):

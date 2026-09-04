@@ -55,6 +55,7 @@ class FakeGateway:
     def change(self, *values): return self._call("change", *values)
     def pause(self, *values): return self._call("pause", *values)
     def resume(self, *values): return self._call("resume", *values)
+    def stop(self, *values): return self._call("stop", *values)
     def inspect(self, *values): return self._call("inspect", *values)
     def approve(self, *values): return self._call("approve", *values)
     def reject(self, *values): return self._call("reject", *values)
@@ -79,6 +80,13 @@ def service(state, intent, *, gateway=None, verbose=False, normalized="request")
 
 
 class BossConversationServiceTests(unittest.TestCase):
+    def test_stop_delegates_typed_command_and_preserves_cli_result(self):
+        state = make_project_state()
+        instance, gateway = service(state, BossIntent.STOP)
+        reply = instance.handle("停止项目")
+        self.assertEqual(gateway.calls, [("stop", ())])
+        self.assertEqual(reply.lines, ("stop complete",))
+
     def test_final_verification_questions_use_persisted_facts(self):
         state = make_project_state()
         result = ProjectVerificationResult(

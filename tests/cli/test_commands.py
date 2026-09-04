@@ -48,6 +48,7 @@ class _FakeCommands:
     def apply_change(self, *values): return self._call("apply_change", *values)
     def pause(self, *values): return self._call("pause", *values)
     def resume(self, *values): return self._call("resume", *values)
+    def stop(self, *values): return self._call("stop", *values)
     def inspect(self, *values): return self._call("inspect", *values)
     def approve(self, *values): return self._call("approve", *values)
     def reject(self, *values): return self._call("reject", *values)
@@ -136,6 +137,19 @@ class ProductionCommandTests(unittest.TestCase):
         value = composition or self.composition()
         value.init_project("project-1", "Project", self.workspace)
         return value
+
+    def test_stop_is_keyless_typed_and_idempotent(self):
+        composition = self.init()
+        first = composition.stop()
+        state = JsonProjectStateStore(self.state_file).load()
+        self.assertEqual(first.exit_code, CliExitCode.SUCCESS)
+        self.assertIn("PROJECT CANCELLED", first.output)
+        self.assertIs(state.project.status, ProjectStatus.CANCELLED)
+        self.assertIn("No rollback was performed.", first.output)
+        before = self.state_file.read_bytes()
+        second = composition.stop()
+        self.assertEqual(second.exit_code, CliExitCode.SUCCESS)
+        self.assertEqual(self.state_file.read_bytes(), before)
 
     def runtime_factory(self, state):
         store = JsonProjectStateStore(self.state_file)
@@ -459,6 +473,7 @@ class CliProcessBoundaryTests(unittest.TestCase):
 
     def test_dispatches_human_resolution_commands(self):
         cases = (
+            (["stop"], "stop"),
             (["inspect", "--verbose"], "inspect"),
             (["approve", "action-1"], "approve"),
             (["reject", "action-1"], "reject"),

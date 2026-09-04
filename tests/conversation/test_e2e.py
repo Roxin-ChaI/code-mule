@@ -40,6 +40,29 @@ class FixedChangeRouter:
 
 
 class LocalBossChatE2E(unittest.TestCase):
+    def test_natural_language_stop_matches_cli_cancellation(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            state_file = root / "project-state.json"
+            composition = ProductionCliComposition(
+                state_file, environment={}, stdout=StringIO(), stderr=StringIO()
+            )
+            composition.init_project("stop-chat", "Stop Chat", workspace)
+            before = JsonProjectStateStore(state_file).load()
+            reply = BossConversationService(
+                state_loader=JsonProjectStateStore(state_file).load,
+                commands=composition,
+                router=DeterministicBossIntentRouter(),
+                session=BossSession(before.project.id),
+            ).handle("这个项目不做了")
+            after = JsonProjectStateStore(state_file).load()
+            self.assertIs(reply.intent, BossIntent.STOP)
+            self.assertIn("PROJECT CANCELLED", reply.lines)
+            self.assertIn("Completed work was preserved.", reply.lines)
+            self.assertIs(after.project.status, ProjectStatus.CANCELLED)
+
     def test_chat_matches_real_cli_change_and_fail_closed_pause_semantics(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

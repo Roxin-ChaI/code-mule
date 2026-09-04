@@ -41,6 +41,9 @@ class BossRoutingTests(unittest.TestCase):
             "增加 multiply": BossIntent.CHANGE,
             "先暂停": BossIntent.PAUSE,
             "继续": BossIntent.RESUME,
+            "停止项目": BossIntent.STOP,
+            "这个项目不做了": BossIntent.STOP,
+            "取消这个项目": BossIntent.STOP,
             "发生什么了？": BossIntent.INSPECT,
             "批准": BossIntent.APPROVE,
             "拒绝": BossIntent.REJECT,
@@ -86,7 +89,10 @@ class BossRoutingTests(unittest.TestCase):
 
     def test_ambiguous_side_effect_language_remains_unknown(self):
         router = CompositeBossIntentRouter()
-        for message in ("也许先停一下", "要不要调整一下功能", "考虑批准它"):
+        for message in (
+            "也许先停一下", "也许不做了", "删掉项目",
+            "要不要调整一下功能", "考虑批准它",
+        ):
             with self.subTest(message=message):
                 self.assertIs(
                     router.route(message, self.session).intent,
@@ -170,6 +176,20 @@ class BossRoutingTests(unittest.TestCase):
         self.assertIs(
             StructuredBossIntentRouter(effect_client)
             .route("也许调整功能", self.session)
+            .intent,
+            BossIntent.UNKNOWN,
+        )
+        stop_client = FakeClient(
+            {
+                "intent": "stop",
+                "normalized_request": "也许取消项目",
+                "confidence": 0.9,
+                "reason": "ambiguous destructive intent",
+            }
+        )
+        self.assertIs(
+            StructuredBossIntentRouter(stop_client)
+            .route("也许取消项目", self.session)
             .intent,
             BossIntent.UNKNOWN,
         )
