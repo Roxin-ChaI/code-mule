@@ -126,6 +126,26 @@ class CodexWorkerServiceTests(unittest.TestCase):
         self.assertTrue(fake.closed)
         self.assertEqual(fake.calls, [("initialize",), ("close",)])
 
+    def test_execute_closes_client_when_boss_interrupts_active_turn(self):
+        class InterruptingClient(FakeClient):
+            def wait_for_turn(self, thread_id, turn_id):
+                self.calls.append(("wait_for_turn", thread_id, turn_id))
+                raise KeyboardInterrupt
+
+        fake = InterruptingClient()
+        service = CodexWorkerService(worker_config(), client_factory=lambda _: fake)
+        request = WorkerTaskRequest(make_task(), "Inspect", "Read-only")
+
+        with self.assertRaises(KeyboardInterrupt):
+            service.execute(
+                request,
+                report_id="report-1",
+                created_at=datetime.now(UTC),
+            )
+
+        self.assertTrue(fake.closed)
+        self.assertEqual(fake.calls[-1], ("close",))
+
 
 if __name__ == "__main__":
     unittest.main()

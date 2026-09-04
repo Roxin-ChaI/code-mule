@@ -611,6 +611,18 @@ class CodexAppServerClientTests(unittest.TestCase):
             client.initialize()
         self.assertTrue(holder["process"].terminated)
 
+    def test_turn_deadline_terminates_child_and_reader_threads(self):
+        client, holder = make_client(timeout=0.02)
+        client.initialize()
+        thread_id = client.start_thread()
+        turn_id = client.start_turn(thread_id, "prompt")
+
+        with self.assertRaises(CodexTurnTimeout):
+            client.wait_for_turn(thread_id, turn_id)
+
+        self.assertTrue(holder["process"].terminated)
+        self.assertEqual(client._reader_threads, [])
+
     def test_child_exit_is_a_protocol_failure(self):
         def exiting(process, message):
             process.exit(7)

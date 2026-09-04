@@ -35,7 +35,7 @@ from code_mule.runtime import (
     TaskCycleService,
 )
 from code_mule.supervisor.contracts import ReviewResult
-from code_mule.worker import CodexApprovalRequired, InvalidWorkerReport
+from code_mule.worker import CodexApprovalRequired, CodexTurnTimeout, InvalidWorkerReport
 
 from tests.state import make_project_state
 
@@ -703,6 +703,30 @@ class TaskCycleFlowTests(unittest.TestCase):
 
 
 class TaskCycleFailureTests(unittest.TestCase):
+    def test_worker_turn_timeout_requires_recovery_without_second_worker(self):
+        session = FakeWorkerSession([CodexTurnTimeout("deadline exceeded")])
+        progress = RecordingProgressSink()
+        service, request, store, _, supervisor, sessions = build_cycle(
+            session=session,
+            progress_sink=progress,
+        )
+
+        outcome = service.execute(request)
+
+        self.assertTrue(outcome.human_action_required)
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(session.started, 1)
+        self.assertEqual(session.closed, 1)
+        self.assertEqual(supervisor.requests, [])
+        self.assertIs(store.current.project.status, ProjectStatus.HUMAN_REQUIRED)
+        self.assertEqual(
+            store.current.human_actions[-1].category.value,
+            "recovery_uncertain",
+        )
+        event_types = tuple(event.type for event in progress.events)
+        self.assertIn(ProgressEventType.WORKER_FAILED, event_types)
+        self.assertEqual(event_types[-1], ProgressEventType.HUMAN_GATE)
+
     def test_worker_failure_preserves_persisted_recovery_identity(self):
         base = cycle_state()
         lease = ExecutionLease(
