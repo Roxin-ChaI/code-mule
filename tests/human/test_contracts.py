@@ -97,6 +97,27 @@ class HumanActionContractTests(unittest.TestCase):
             deserialize_project_state(serialize_project_state(gated)), gated
         )
 
+        workspace_ids = iter(("workspace-source", "workspace-requested"))
+        workspace_block = request_human_action(
+            make_project_state(),
+            category=HumanActionCategory.WORKSPACE_BLOCK,
+            summary="Workspace blocked",
+            requested_action="Clean the workspace and retry",
+            risk="Unrelated changes must be preserved",
+            task_id="task-1",
+            operation_time=NOW,
+            action_id="action-workspace",
+            event_id_factory=lambda: next(workspace_ids),
+            source_event_types=("git.baseline_failed",),
+        )
+        restored = deserialize_project_state(
+            serialize_project_state(workspace_block)
+        )
+        self.assertIs(
+            restored.human_actions[-1].category,
+            HumanActionCategory.WORKSPACE_BLOCK,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

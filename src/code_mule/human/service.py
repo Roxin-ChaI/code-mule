@@ -44,6 +44,7 @@ _RETRYABLE = frozenset(
     {
         HumanActionCategory.ATTEMPT_LIMIT,
         HumanActionCategory.DEPENDENCY_BLOCK,
+        HumanActionCategory.WORKSPACE_BLOCK,
     }
 )
 

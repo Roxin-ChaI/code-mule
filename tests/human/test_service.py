@@ -97,6 +97,16 @@ class HumanResolutionServiceTests(unittest.TestCase):
         self.assertEqual(updated.human_resolutions[0].action_id, "action-1")
         self.assertEqual(updated.events[-1].event_type, "human_action.resolved")
 
+    def test_workspace_block_can_retry_without_weakening_uncertain_recovery(self):
+        store = MemoryStore(gated_state(HumanActionCategory.WORKSPACE_BLOCK))
+        updated = service(store).resolve(
+            "action-1", HumanResolutionStrategy.RETRY_TASK
+        )
+        self.assertIs(updated.project.status, ProjectStatus.RUNNING)
+        self.assertIsNone(updated.project.current_task_id)
+        self.assertIs(updated.tasks[0].status, TaskStatus.REOPENED)
+        self.assertIs(updated.human_actions[0].status, HumanActionStatus.RESOLVED)
+
     def test_uncertain_recovery_cannot_be_converted_to_retry(self):
         store = MemoryStore(gated_state(HumanActionCategory.RECOVERY_UNCERTAIN))
         with self.assertRaisesRegex(InvalidHumanResolution, "not safe"):

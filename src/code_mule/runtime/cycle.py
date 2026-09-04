@@ -145,7 +145,7 @@ class TaskCycleService:
                     "Clean Git baseline captured",
                 )
             except GitDeliveryError as error:
-                self._record_git_failure(state, task, error, "baseline")
+                self._record_workspace_block(state, task, error)
                 self._emit_git_failure(state, task, error, "baseline", attempt=1)
                 return self._human_outcome(
                     task.id, reports, decisions, final_prompt=None
@@ -706,6 +706,25 @@ class TaskCycleService:
             summary="Task Git delivery could not be completed safely",
             requested_action="Inspect repository ownership and choose an explicit resolution",
             risk="Committing may include unrelated work or duplicate an uncertain delivery",
+        )
+
+    def _record_workspace_block(
+        self,
+        state: ProjectState,
+        task: Task,
+        error: GitDeliveryError,
+    ) -> ProjectState:
+        return self._transition_human_required(
+            state,
+            task,
+            event_types=("git.baseline_failed", "task.human_required"),
+            metadata={"error_type": type(error).__name__, "stage": "baseline"},
+            category=HumanActionCategory.WORKSPACE_BLOCK,
+            summary="Task workspace precondition was not satisfied",
+            requested_action=(
+                "Restore a clean Git workspace, then resolve this action with retry_task"
+            ),
+            risk="No Worker was started; unrelated workspace changes must be preserved",
         )
 
     def _persist_report(

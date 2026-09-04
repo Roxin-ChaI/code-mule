@@ -66,6 +66,7 @@ class HumanActionCategory(StrEnum):
     ATTEMPT_LIMIT = "attempt_limit"
     SUPERVISOR_FAILURE = "supervisor_failure"
     DEPENDENCY_BLOCK = "dependency_block"
+    WORKSPACE_BLOCK = "workspace_block"
     RECOVERY_UNCERTAIN = "recovery_uncertain"
     EXTERNAL_SIDE_EFFECT = "external_side_effect"
     UNKNOWN = "unknown"

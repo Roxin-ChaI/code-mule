@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from code_mule.domain.enums import (
     ChangeRequestStatus,
+    HumanActionCategory,
     ProjectStatus,
     SupervisorDecisionType,
     TaskStatus,
@@ -312,6 +313,14 @@ class TaskCycleGitDeliveryTests(unittest.TestCase):
         self.assertEqual(session.started, 0)
         self.assertEqual(supervisor.requests, [])
         self.assertEqual(delivery.commit_calls, [])
+        self.assertIs(
+            store.current.human_actions[-1].category,
+            HumanActionCategory.WORKSPACE_BLOCK,
+        )
+        self.assertIn(
+            "workspace precondition", store.current.human_actions[-1].summary
+        )
+        self.assertEqual(store.current.tasks[0].execution_attempts, 0)
 
     def test_worker_human_gate_and_supervisor_failure_never_commit(self):
         delivery = FakeGitDelivery()
@@ -341,6 +350,10 @@ class TaskCycleGitDeliveryTests(unittest.TestCase):
         self.assertIs(store.current.tasks[0].status, TaskStatus.IN_PROGRESS)
         self.assertEqual(store.current.git_commit_results, ())
         self.assertEqual(len(delivery.commit_calls), 1)
+        self.assertIs(
+            store.current.human_actions[-1].category,
+            HumanActionCategory.RECOVERY_UNCERTAIN,
+        )
 
 
 class TaskCycleFlowTests(unittest.TestCase):
