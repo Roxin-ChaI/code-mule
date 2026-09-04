@@ -9,7 +9,7 @@ from code_mule.domain.enums import (
     HumanActionStatus,
     ProjectStatus,
 )
-from code_mule.domain.models import HumanAction, ProjectEvent
+from code_mule.domain.models import HumanAction, ProjectEvent, WorkerInputDetails
 from code_mule.domain.state_machine import validate_transition
 from code_mule.state.models import ProjectState
 
@@ -40,6 +40,7 @@ def request_human_action(
     event_id_factory: Callable[[], str],
     source_event_types: tuple[str, ...],
     source_metadata: dict[str, str] | None = None,
+    worker_input: WorkerInputDetails | None = None,
 ) -> ProjectState:
     """Persist a single typed action and enter HUMAN_REQUIRED atomically."""
 
@@ -59,6 +60,7 @@ def request_human_action(
         risk=risk,
         status=HumanActionStatus.PENDING,
         created_at=operation_time,
+        worker_input=worker_input,
     )
     source_events = tuple(
         ProjectEvent(

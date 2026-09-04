@@ -37,6 +37,7 @@ from code_mule.runtime import (
 )
 from code_mule.supervisor.contracts import ReviewResult
 from code_mule.worker import CodexApprovalRequired, CodexTurnTimeout, InvalidWorkerReport
+from code_mule.worker import CodexUserInputRequired, WorkerInputRequest
 
 from tests.state import make_project_state
 
@@ -828,6 +829,36 @@ class TaskCycleFailureTests(unittest.TestCase):
         self.assertIn(ProgressEventType.WORKER_FAILED, progress_types)
         self.assertIn(ProgressEventType.TASK_HUMAN_REQUIRED, progress_types)
         self.assertIn(ProgressEventType.HUMAN_GATE, progress_types)
+
+    def test_worker_input_preserves_actionable_request_without_raw_payload(self):
+        request_details = WorkerInputRequest(
+            "item/tool/requestUserInput",
+            "request-7",
+            "Which rendering mode should be used?",
+            ("Canvas", "DOM"),
+        )
+        session = FakeWorkerSession([CodexUserInputRequired(request_details)])
+        supervisor = FakeSupervisor([])
+        service, request, store, _, _, _ = build_cycle(
+            session=session,
+            supervisor=supervisor,
+        )
+
+        outcome = service.execute(request)
+
+        self.assertTrue(outcome.human_action_required)
+        action = store.current.human_actions[-1]
+        self.assertIs(action.category, HumanActionCategory.WORKER_INPUT)
+        self.assertEqual(action.task_id, request.task.id)
+        self.assertEqual(action.worker_input.question, request_details.question)
+        self.assertEqual(action.worker_input.choices, request_details.choices)
+        self.assertEqual(action.worker_input.request_method, request_details.method)
+        self.assertEqual(action.worker_input.request_id, request_details.request_id)
+        self.assertEqual(action.worker_input.worker_attempt, 1)
+        self.assertEqual(supervisor.requests, [])
+        event_types = tuple(event.event_type for event in store.current.events)
+        self.assertIn("task.execution_failed", event_types)
+        self.assertIn("task.human_required", event_types)
 
     def test_malformed_worker_report_returns_human_without_prose_fallback(self):
         session = FakeWorkerSession([InvalidWorkerReport("malformed JSON")])

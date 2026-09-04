@@ -164,11 +164,16 @@ def render_human_action(
         "",
         f"Category    {view.category}",
         f"Task        {view.task or 'None'}",
-        f"Request     {view.request}",
-        f"Risk        {view.risk}",
-        "",
-        "No action has been executed.",
     )
+    if view.question is not None:
+        lines += (f"Question    {view.question}",)
+        if view.choices:
+            lines += ("", "Choices") + tuple(
+                f"- {choice}" for choice in view.choices
+            )
+    else:
+        lines += (f"Request     {view.request}",)
+    lines += (f"Risk        {view.risk}", "", "No action has been executed.")
     if view.approvable:
         lines += (
             "",
@@ -195,6 +200,11 @@ def render_human_action(
             f"created_at: {view.created}",
             f"summary: {view.summary}",
         )
+        if view.worker_request_method is not None:
+            lines += (
+                f"worker_request_method: {view.worker_request_method}",
+                f"worker_request_id: {view.worker_request_id or '-'}",
+            )
     return lines
 
 

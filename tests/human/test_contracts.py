@@ -9,6 +9,7 @@ from code_mule.domain import (
     HumanResolution,
     HumanResolutionStrategy,
     ProjectStatus,
+    WorkerInputDetails,
 )
 from code_mule.human import pending_action, request_human_action
 from code_mule.state.serialization import (
@@ -76,7 +77,7 @@ class HumanActionContractTests(unittest.TestCase):
         del legacy["human_actions"]
         del legacy["human_resolutions"]
         migrated = deserialize_project_state(legacy)
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 8)
+        self.assertEqual(CURRENT_SCHEMA_VERSION, 9)
         self.assertEqual(migrated.human_actions, ())
         self.assertEqual(migrated.human_resolutions, ())
 
@@ -117,6 +118,38 @@ class HumanActionContractTests(unittest.TestCase):
             restored.human_actions[-1].category,
             HumanActionCategory.WORKSPACE_BLOCK,
         )
+
+    def test_worker_input_round_trip_and_v8_migration(self):
+        identifiers = iter(("source-input", "requested-input"))
+        gated = request_human_action(
+            make_project_state(),
+            category=HumanActionCategory.WORKER_INPUT,
+            summary="Worker needs input",
+            requested_action="Answer the question",
+            risk="Partial changes may exist",
+            task_id="task-1",
+            operation_time=NOW,
+            action_id="action-input",
+            event_id_factory=lambda: next(identifiers),
+            source_event_types=("task.human_required",),
+            worker_input=WorkerInputDetails(
+                "item/tool/requestUserInput",
+                "request-1",
+                "Choose a framework",
+                ("Flask", "FastAPI"),
+                1,
+            ),
+        )
+        payload = serialize_project_state(gated)
+        restored = deserialize_project_state(payload)
+        self.assertEqual(restored, gated)
+        self.assertEqual(restored.human_actions[-1].worker_input.question, "Choose a framework")
+
+        payload["schema_version"] = 8
+        for action in payload["human_actions"]:
+            action.pop("worker_input")
+        migrated = deserialize_project_state(payload)
+        self.assertIsNone(migrated.human_actions[-1].worker_input)
 
 
 if __name__ == "__main__":

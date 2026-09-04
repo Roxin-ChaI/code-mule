@@ -29,6 +29,7 @@ from code_mule.domain.models import (
     QualityStatus,
     Requirement,
     Task,
+    WorkerInputDetails,
 )
 from code_mule.execution.contracts import ExecutionLease, ExecutionLeaseStatus
 from code_mule.git_delivery.contracts import GitBaseline, GitChangeSet, GitCommitResult
@@ -45,7 +46,7 @@ from code_mule.project_verification.contracts import (
 from .models import ProjectState
 
 
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 
 class UnsupportedStateSchema(ValueError):
@@ -293,6 +294,24 @@ def _human_action_to_payload(action: HumanAction) -> dict[str, object]:
         "resolved_at": (
             None if action.resolved_at is None else action.resolved_at.isoformat()
         ),
+        "worker_input": (
+            None
+            if action.worker_input is None
+            else _worker_input_to_payload(action.worker_input)
+        ),
+    }
+
+
+def _worker_input_to_payload(details: WorkerInputDetails) -> dict[str, object]:
+    return {
+        "request_method": details.request_method,
+        "request_id": details.request_id,
+        "question": details.question,
+        "choices": list(details.choices),
+        "worker_attempt": details.worker_attempt,
+        "baseline_head": details.baseline_head,
+        "partial_paths": list(details.partial_paths),
+        "answer": details.answer,
     }
 
 
@@ -722,10 +741,26 @@ def _migrate_v7_to_v8(root: dict[str, object]) -> dict[str, object]:
     )
     project["objective"] = None
     migrated = dict(root)
-    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
+    migrated["schema_version"] = 8
     migrated["project"] = project
     migrated["project_verification_spec"] = None
     migrated["project_verification_results"] = []
+    return migrated
+
+
+def _migrate_v8_to_v9(root: dict[str, object]) -> dict[str, object]:
+    """Add bounded Worker input details to durable HumanActions."""
+
+    actions: list[dict[str, object]] = []
+    for item in _expect_list(
+        _field(root, "human_actions", "project state"), "human_actions"
+    ):
+        action = dict(_expect_object(item, "human_action"))
+        action["worker_input"] = None
+        actions.append(action)
+    migrated = dict(root)
+    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
+    migrated["human_actions"] = actions
     return migrated
 
 
@@ -1004,6 +1039,48 @@ def _human_action_from_payload(value: object) -> HumanAction:
             None
             if resolved_value is None
             else _datetime(resolved_value, "human_action.resolved_at")
+        ),
+        worker_input=(
+            None
+            if _field(payload, "worker_input", "human_action") is None
+            else _worker_input_from_payload(
+                _field(payload, "worker_input", "human_action")
+            )
+        ),
+    )
+
+
+def _worker_input_from_payload(value: object) -> WorkerInputDetails:
+    payload = _expect_object(value, "worker_input")
+    return WorkerInputDetails(
+        request_method=_expect_str(
+            _field(payload, "request_method", "worker_input"),
+            "worker_input.request_method",
+        ),
+        request_id=_expect_optional_str(
+            _field(payload, "request_id", "worker_input"),
+            "worker_input.request_id",
+        ),
+        question=_expect_str(
+            _field(payload, "question", "worker_input"), "worker_input.question"
+        ),
+        choices=_strings(
+            _field(payload, "choices", "worker_input"), "worker_input.choices"
+        ),
+        worker_attempt=_expect_int(
+            _field(payload, "worker_attempt", "worker_input"),
+            "worker_input.worker_attempt",
+        ),
+        baseline_head=_expect_optional_str(
+            _field(payload, "baseline_head", "worker_input"),
+            "worker_input.baseline_head",
+        ),
+        partial_paths=_strings(
+            _field(payload, "partial_paths", "worker_input"),
+            "worker_input.partial_paths",
+        ),
+        answer=_expect_optional_str(
+            _field(payload, "answer", "worker_input"), "worker_input.answer"
         ),
     )
 
@@ -1325,7 +1402,7 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     schema_version = root["schema_version"]
     if type(schema_version) is not int:
         raise UnsupportedStateSchema("schema_version must be an integer")
-    if schema_version not in {1, 2, 3, 4, 5, 6, 7, CURRENT_SCHEMA_VERSION}:
+    if schema_version not in {1, 2, 3, 4, 5, 6, 7, 8, CURRENT_SCHEMA_VERSION}:
         raise UnsupportedStateSchema(
             f"unsupported schema_version: {schema_version!r}"
         )
@@ -1349,6 +1426,9 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
         schema_version = 7
     if schema_version == 7:
         root = _migrate_v7_to_v8(root)
+        schema_version = 8
+    if schema_version == 8:
+        root = _migrate_v8_to_v9(root)
 
     try:
         quality_value = _field(root, "quality_status", "project state")

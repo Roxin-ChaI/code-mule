@@ -2,14 +2,19 @@ from dataclasses import replace
 import unittest
 
 from code_mule.domain import (
+    HumanAction,
+    HumanActionCategory,
+    HumanActionStatus,
     ProjectStatus,
     SupervisorDecisionType,
     TaskStatus,
+    WorkerInputDetails,
 )
 from code_mule.presentation import (
     decision_label,
     project_view,
     render_project,
+    render_human_action,
     status_label,
 )
 from code_mule.git_delivery import GitCommitResult
@@ -25,6 +30,36 @@ from state import make_project_state
 
 
 class PresentationModelTests(unittest.TestCase):
+    def test_worker_input_action_exposes_question_choices_and_safe_verbose_ids(self):
+        action = HumanAction(
+            "action-1",
+            "project-1",
+            "task-1",
+            HumanActionCategory.WORKER_INPUT,
+            "Worker needs input",
+            "Answer this request",
+            "Worker may already have changed the workspace",
+            HumanActionStatus.PENDING,
+            CREATED,
+            worker_input=WorkerInputDetails(
+                "item/tool/requestUserInput",
+                "request-9",
+                "Which mode should be used?",
+                ("Canvas", "DOM"),
+                1,
+            ),
+        )
+        default = "\n".join(render_human_action(action))
+        self.assertIn("Question    Which mode should be used?", default)
+        self.assertIn("- Canvas", default)
+        self.assertIn("- DOM", default)
+        self.assertNotIn("request-9", default)
+        self.assertNotIn("worker_request_method", default)
+
+        verbose = "\n".join(render_human_action(action, verbose=True))
+        self.assertIn("worker_request_method: item/tool/requestUserInput", verbose)
+        self.assertIn("worker_request_id: request-9", verbose)
+
     def test_final_verification_is_boss_readable_and_keeps_details_bounded(self):
         state = make_project_state()
         result = ProjectVerificationResult(

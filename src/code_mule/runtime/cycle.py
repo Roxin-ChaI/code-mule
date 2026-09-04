@@ -11,7 +11,13 @@ from code_mule.domain.enums import (
     SupervisorDecisionType,
     TaskStatus,
 )
-from code_mule.domain.models import Decision, ExecutionReport, ProjectEvent, Task
+from code_mule.domain.models import (
+    Decision,
+    ExecutionReport,
+    ProjectEvent,
+    Task,
+    WorkerInputDetails,
+)
 from code_mule.domain.state_machine import validate_transition
 from code_mule.human import request_human_action
 from code_mule.human import pending_action
@@ -871,6 +877,16 @@ class TaskCycleService:
         self, state: ProjectState, task: Task, error: CodexWorkerError
     ) -> ProjectState:
         category, summary, requested_action, risk = self._worker_failure_action(error)
+        worker_input = None
+        if isinstance(error, CodexUserInputRequired):
+            request = error.request
+            worker_input = WorkerInputDetails(
+                request_method=request.method,
+                request_id=request.request_id,
+                question=request.question,
+                choices=request.choices,
+                worker_attempt=task.execution_attempts + 1,
+            )
         return self._transition_human_required(
             state,
             task,
@@ -880,6 +896,7 @@ class TaskCycleService:
             summary=summary,
             requested_action=requested_action,
             risk=risk,
+            worker_input=worker_input,
         )
 
     @staticmethod
@@ -895,8 +912,8 @@ class TaskCycleService:
             return (
                 HumanActionCategory.WORKER_INPUT,
                 "Codex Worker requires human input",
-                "Provide the required input, then choose an explicit resolution",
-                "The original Worker session cannot be resumed automatically",
+                "Answer this specific Worker input request",
+                "Worker may already have changed the workspace; the original session cannot be resumed automatically",
             )
         return (
             HumanActionCategory.RECOVERY_UNCERTAIN,
@@ -916,6 +933,7 @@ class TaskCycleService:
         summary: str,
         requested_action: str,
         risk: str,
+        worker_input: WorkerInputDetails | None = None,
     ) -> ProjectState:
         state, task = self._reload_task_state(task.id)
         operation_time = self._clock()
@@ -931,6 +949,7 @@ class TaskCycleService:
             event_id_factory=self._event_id_factory,
             source_event_types=event_types,
             source_metadata=metadata,
+            worker_input=worker_input,
         )
         self._store.save(new_state)
         return new_state

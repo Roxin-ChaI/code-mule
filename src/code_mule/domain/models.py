@@ -187,6 +187,46 @@ class ProjectEvent:
 
 
 @dataclass
+class WorkerInputDetails:
+    request_method: str
+    request_id: str | None
+    question: str
+    choices: tuple[str, ...]
+    worker_attempt: int
+    baseline_head: str | None = None
+    partial_paths: tuple[str, ...] = ()
+    answer: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_non_empty(self.request_method, "request_method")
+        _require_non_empty(self.question, "question")
+        if len(self.request_method) > 128 or len(self.question) > 2_000:
+            raise ValueError("Worker input request exceeds safe bounds")
+        if self.request_id is not None:
+            _require_non_empty(self.request_id, "request_id")
+            if len(self.request_id) > 128:
+                raise ValueError("request_id exceeds safe bounds")
+        if self.worker_attempt < 1:
+            raise ValueError("worker_attempt must be positive")
+        if len(self.choices) > 20 or any(
+            choice == "" or len(choice) > 500 for choice in self.choices
+        ):
+            raise ValueError("choices exceed safe bounds")
+        if len(self.partial_paths) > 1_000 or any(
+            path == "" or len(path) > 1_024 for path in self.partial_paths
+        ):
+            raise ValueError("partial_paths exceed safe bounds")
+        if self.baseline_head is not None:
+            _require_non_empty(self.baseline_head, "baseline_head")
+            if len(self.baseline_head) > 128:
+                raise ValueError("baseline_head exceeds safe bounds")
+        if self.answer is not None:
+            _require_non_empty(self.answer, "answer")
+            if len(self.answer) > 4_000:
+                raise ValueError("answer exceeds safe bounds")
+
+
+@dataclass
 class HumanAction:
     id: str
     project_id: str
@@ -198,6 +238,7 @@ class HumanAction:
     status: HumanActionStatus
     created_at: datetime
     resolved_at: datetime | None = None
+    worker_input: WorkerInputDetails | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty(self.id, "id")
@@ -209,6 +250,11 @@ class HumanAction:
             raise ValueError("pending HumanAction cannot have resolved_at")
         if self.status is not HumanActionStatus.PENDING and self.resolved_at is None:
             raise ValueError("closed HumanAction requires resolved_at")
+        if (
+            self.worker_input is not None
+            and self.category is not HumanActionCategory.WORKER_INPUT
+        ):
+            raise ValueError("worker_input is only valid for WORKER_INPUT actions")
 
 
 @dataclass
@@ -241,4 +287,5 @@ __all__ = [
     "QualityStatus",
     "Requirement",
     "Task",
+    "WorkerInputDetails",
 ]

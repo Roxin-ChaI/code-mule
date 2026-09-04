@@ -38,6 +38,10 @@ class HumanActionView:
     project_id: str
     task_id: str | None
     approvable: bool
+    question: str | None
+    choices: tuple[str, ...]
+    worker_request_method: str | None
+    worker_request_id: str | None
 
 
 def project_view(state: ProjectState) -> ProjectView:
@@ -91,6 +95,7 @@ def project_view(state: ProjectState) -> ProjectView:
 
 
 def human_action_view(action: HumanAction) -> HumanActionView:
+    worker_input = action.worker_input
     return HumanActionView(
         category=humanize_identifier(action.category.value),
         task=action.task_id,
@@ -104,6 +109,14 @@ def human_action_view(action: HumanAction) -> HumanActionView:
         task_id=action.task_id,
         approvable=action.category.value
         in {"worker_approval", "external_side_effect"},
+        question=None if worker_input is None else worker_input.question,
+        choices=() if worker_input is None else worker_input.choices,
+        worker_request_method=(
+            None if worker_input is None else worker_input.request_method
+        ),
+        worker_request_id=(
+            None if worker_input is None else worker_input.request_id
+        ),
     )
 
 

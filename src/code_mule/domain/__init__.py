@@ -26,6 +26,7 @@ from .models import (
     QualityStatus,
     Requirement,
     Task,
+    WorkerInputDetails,
 )
 from .state_machine import InvalidProjectTransition, can_transition, validate_transition
 
@@ -54,6 +55,7 @@ __all__ = [
     "SupervisorDecisionType",
     "Task",
     "TaskStatus",
+    "WorkerInputDetails",
     "can_transition",
     "validate_transition",
 ]
