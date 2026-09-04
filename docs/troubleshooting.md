@@ -48,4 +48,12 @@ export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
 .venv/bin/python scripts/manual_release_e2e.py
 ```
 
-Automated verification and Codex compile this script but never execute it.
+Each Codex turn has a 240-second absolute deadline by default. Boss may choose a
+different bounded deadline with `--worker-timeout-seconds SECONDS`. The live
+dashboard shows the current Task, safe Codex activity, and elapsed time. Ctrl+C
+closes the app-server, releases execution ownership, records recovery uncertainty
+for an active Task, prints a concise interruption summary, and exits non-zero;
+it never automatically retries the Worker turn.
+
+Automated verification and Codex compile this script but never execute its
+authenticated DeepSeek path.

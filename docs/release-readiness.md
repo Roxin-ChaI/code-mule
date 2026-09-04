@@ -24,6 +24,13 @@ DeepSeek API. The authenticated DeepSeek release chain remains manual:
 .venv/bin/python scripts/manual_release_e2e.py
 ```
 
+The manual harness projects the existing live progress dashboard and applies a
+configurable 240-second absolute deadline to each Codex turn. A timeout or Boss
+interrupt is fail-closed: the current result remains uncertain, the app-server
+is closed, execution ownership is released, and no replacement Worker is
+started. Use `--worker-timeout-seconds SECONDS` to select another positive,
+bounded deadline.
+
 ## Security boundary
 
 Local edits, declared local checks, exact-path staging, and local commits are

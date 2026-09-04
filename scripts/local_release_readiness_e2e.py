@@ -1,6 +1,8 @@
 """Disposable full-system release-readiness E2E without model API calls."""
 
 import argparse
+from collections.abc import Callable
+from dataclasses import dataclass
 from dataclasses import replace
 from datetime import UTC, datetime
 import json
@@ -25,6 +27,7 @@ from code_mule.execution.service import ExecutionOwnershipService  # noqa: E402
 from code_mule.git_delivery import GitDeliveryService  # noqa: E402
 from code_mule.orchestrator import ChangeCommand, OrchestratorService  # noqa: E402
 from code_mule.planning import ProjectPlanningRequest, ProjectPlanningService  # noqa: E402
+from code_mule.progress import ConsoleProgressRenderer, ProgressSink  # noqa: E402
 from code_mule.project_verification import (  # noqa: E402
     FinalReviewDecision,
     ProjectVerificationCategory,
@@ -62,6 +65,27 @@ from scripts.local_codex_change_replanning_smoke import (  # noqa: E402
     _FakeChangeSupervisor,
 )
 from scripts.local_project_cancellation_e2e import active_scenario  # noqa: E402
+
+
+DEFAULT_RELEASE_WORKER_TIMEOUT_SECONDS = 240.0
+
+
+@dataclass(frozen=True)
+class ReleaseInterruption:
+    stage: str
+    task_id: str | None
+    project_status: str
+    recovery_required: bool
+    sessions_closed: bool
+    lease_statuses: tuple[str, ...]
+
+
+class ReleaseScenarioInterrupted(RuntimeError):
+    """Safe, typed projection of a Boss interrupt inside the disposable E2E."""
+
+    def __init__(self, details: ReleaseInterruption) -> None:
+        super().__init__("manual release E2E interrupted")
+        self.details = details
 
 
 def git(repository: Path, *arguments: str) -> str:
@@ -179,7 +203,12 @@ def run_release_scenario(
     supervisor=None,
     objective: str = OBJECTIVE,
     change: str = CHANGE,
+    worker_timeout_seconds: float = DEFAULT_RELEASE_WORKER_TIMEOUT_SECONDS,
+    progress_sink: ProgressSink | None = None,
+    worker_session_factory: Callable[[Path], object] | None = None,
 ) -> dict[str, object]:
+    if worker_timeout_seconds <= 0:
+        raise ValueError("worker_timeout_seconds must be positive")
     with TemporaryDirectory(prefix="code-mule-release-e2e-") as directory:
         root = Path(directory)
         repository = _repository(root)
@@ -208,6 +237,7 @@ def run_release_scenario(
             store,
             clock=lambda: datetime.now(UTC),
             event_id_factory=_IdFactory("boss-event"),
+            progress_sink=progress_sink,
         )
         sessions = []
         change_injected = False
@@ -220,7 +250,7 @@ def run_release_scenario(
             workspace=repository,
             approval_policy="on-request",
             sandbox="workspace-write",
-            read_timeout_seconds=360,
+            read_timeout_seconds=worker_timeout_seconds,
         )
 
         ownership = ExecutionOwnershipService(
@@ -245,7 +275,13 @@ def run_release_scenario(
             def cycle_factory():
                 def session_factory():
                     session = (
-                        CodexWorkerSession(worker_config)
+                        worker_session_factory(repository)
+                        if worker_session_factory is not None
+                        else CodexWorkerSession(
+                            worker_config,
+                            progress_sink=progress_sink,
+                            clock=lambda: datetime.now(UTC),
+                        )
                         if real_worker
                         else FakeReleaseWorkerSession(repository)
                     )
@@ -261,6 +297,7 @@ def run_release_scenario(
                     decision_id_factory=decision_ids,
                     event_id_factory=task_event_ids,
                     config=TaskCycleConfig(max_attempts=2),
+                    progress_sink=progress_sink,
                     worker_identity_started=owner.record_worker_identity,
                     worker_identity_cleared=owner.clear_worker_identity,
                     git_delivery=GitDeliveryService(
@@ -277,6 +314,7 @@ def run_release_scenario(
                 clock=lambda: datetime.now(UTC),
                 event_id_factory=execution_event_ids,
                 config=ProjectExecutionConfig(max_tasks_per_run=20),
+                progress_sink=progress_sink,
                 finalizer=ProjectFinalizationService(
                     store=store,
                     verification=ProjectVerificationService(
@@ -287,18 +325,25 @@ def run_release_scenario(
                     supervisor=supervisor,
                     clock=lambda: datetime.now(UTC),
                     event_id_factory=_IdFactory("final-event"),
+                    progress_sink=progress_sink,
                 ),
             )
 
-        with ownership.acquire() as owner:
-            planning = ProjectPlanningService(
-                store=store,
-                supervisor=supervisor,
-                clock=lambda: datetime.now(UTC),
-                plan_id_factory=lambda: "PLAN-1",
-                event_id_factory=_IdFactory("planning-event"),
-            ).plan(ProjectPlanningRequest(state.project.id, objective))
-            first_execution = execution_for(owner, inject=True).run()
+        try:
+            with ownership.acquire() as owner:
+                planning = ProjectPlanningService(
+                    store=store,
+                    supervisor=supervisor,
+                    clock=lambda: datetime.now(UTC),
+                    plan_id_factory=lambda: "PLAN-1",
+                    event_id_factory=_IdFactory("planning-event"),
+                    progress_sink=progress_sink,
+                ).plan(ProjectPlanningRequest(state.project.id, objective))
+                first_execution = execution_for(owner, inject=True).run()
+        except KeyboardInterrupt:
+            raise ReleaseScenarioInterrupted(
+                _interruption_details(store, sessions, "initial execution")
+            ) from None
 
         safe_point = store.load()
         if safe_point.project.status is not ProjectStatus.CHANGE_REQUESTED:
@@ -340,21 +385,27 @@ def run_release_scenario(
                     if "error_type" in event.metadata
                 ],
             }
-        with ownership.acquire() as owner:
-            execution = execution_for(owner, inject=False)
-            replanning = ChangeReplanningService(
-                store=store,
-                supervisor=supervisor,
-                clock=lambda: datetime.now(UTC),
-                plan_id_factory=lambda: "PLAN-2",
-                event_id_factory=_IdFactory("replanning-event"),
-            )
-            changed = ChangeExecutionService(
-                replanning_service=replanning,
-                execution_service=execution,
-            ).apply_and_resume(
-                ChangeReplanningRequest(state.project.id, "CHANGE-MULTIPLY")
-            )
+        try:
+            with ownership.acquire() as owner:
+                execution = execution_for(owner, inject=False)
+                replanning = ChangeReplanningService(
+                    store=store,
+                    supervisor=supervisor,
+                    clock=lambda: datetime.now(UTC),
+                    plan_id_factory=lambda: "PLAN-2",
+                    event_id_factory=_IdFactory("replanning-event"),
+                    progress_sink=progress_sink,
+                )
+                changed = ChangeExecutionService(
+                    replanning_service=replanning,
+                    execution_service=execution,
+                ).apply_and_resume(
+                    ChangeReplanningRequest(state.project.id, "CHANGE-MULTIPLY")
+                )
+        except KeyboardInterrupt:
+            raise ReleaseScenarioInterrupted(
+                _interruption_details(store, sessions, "change replanning")
+            ) from None
 
         final = store.load()
         verification = final.project_verification_results[-1]
@@ -385,11 +436,56 @@ def run_release_scenario(
         }
 
 
+def _interruption_details(
+    store: JsonProjectStateStore,
+    sessions: list[object],
+    fallback_stage: str,
+) -> ReleaseInterruption:
+    state = store.load()
+    task_id = state.project.current_task_id
+    stage = "worker" if task_id is not None else fallback_stage
+    recovery_required = any(
+        action.status.value == "pending"
+        and action.category.value == "recovery_uncertain"
+        for action in state.human_actions
+    )
+    return ReleaseInterruption(
+        stage=stage,
+        task_id=task_id,
+        project_status=state.project.status.value,
+        recovery_required=recovery_required,
+        sessions_closed=all(bool(getattr(session, "closed", False)) for session in sessions),
+        lease_statuses=tuple(item.status.value for item in state.execution_leases),
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--fake-worker", action="store_true")
+    parser.add_argument(
+        "--worker-timeout-seconds",
+        type=float,
+        default=DEFAULT_RELEASE_WORKER_TIMEOUT_SECONDS,
+    )
     arguments = parser.parse_args()
-    release = run_release_scenario(real_worker=not arguments.fake_worker)
+    try:
+        with ConsoleProgressRenderer(sys.stderr) as progress:
+            release = run_release_scenario(
+                real_worker=not arguments.fake_worker,
+                worker_timeout_seconds=arguments.worker_timeout_seconds,
+                progress_sink=progress,
+            )
+    except ReleaseScenarioInterrupted as error:
+        details = error.details
+        print("LOCAL RELEASE E2E INTERRUPTED", file=sys.stderr)
+        print(f"Stage: {details.stage}", file=sys.stderr)
+        print(f"Task: {details.task_id or 'none'}", file=sys.stderr)
+        print(f"Project state: {details.project_status.upper()}", file=sys.stderr)
+        print(
+            f"Recovery required: {'yes' if details.recovery_required else 'no'}",
+            file=sys.stderr,
+        )
+        return 130
     with TemporaryDirectory(prefix="code-mule-release-cancel-") as directory:
         root = Path(directory)
         cancellation = active_scenario(root, real_worker=not arguments.fake_worker)

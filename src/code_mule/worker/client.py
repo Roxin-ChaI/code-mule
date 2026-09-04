@@ -415,8 +415,14 @@ class CodexAppServerClient:
                     process.wait(timeout=2)
                 except subprocess.TimeoutExpired:
                     pass
+        for stream in (process.stdout, process.stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except (OSError, ValueError):
+                    pass
         for thread in self._reader_threads:
-            thread.join(timeout=0.2)
+            thread.join(timeout=1.0)
         self._reader_threads.clear()
         self._initialized = False
 

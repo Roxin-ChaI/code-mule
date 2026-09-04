@@ -59,10 +59,17 @@ class CodexWorkerSession:
         else:
             self._client = client_factory(config)
         self._thread_id: str | None = None
+        self._closed = False
 
     @property
     def thread_id(self) -> str | None:
         return self._thread_id
+
+    @property
+    def closed(self) -> bool:
+        """Whether the local app-server boundary has been closed."""
+
+        return self._closed
 
     def start(self) -> None:
         if self._thread_id is not None:
@@ -96,6 +103,7 @@ class CodexWorkerSession:
 
     def close(self) -> None:
         self._client.close()
+        self._closed = True
 
     def __enter__(self) -> CodexWorkerSession:
         try:
