@@ -250,7 +250,8 @@ def run_release_scenario(
             workspace=repository,
             approval_policy="on-request",
             sandbox="workspace-write",
-            read_timeout_seconds=worker_timeout_seconds,
+            inactivity_timeout_seconds=worker_timeout_seconds,
+            max_turn_seconds=worker_timeout_seconds,
         )
 
         ownership = ExecutionOwnershipService(

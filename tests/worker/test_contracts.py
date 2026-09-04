@@ -37,7 +37,8 @@ class WorkerContractTests(unittest.TestCase):
             workspace=Path("/tmp/project"),
             approval_policy="on-request",
             sandbox="read-only",
-            read_timeout_seconds=30,
+            inactivity_timeout_seconds=30,
+            max_turn_seconds=120,
         )
         self.assertEqual(config.command, ("codex", "app-server"))
         self.assertEqual(config.workspace, Path("/tmp/project"))
@@ -49,7 +50,8 @@ class WorkerContractTests(unittest.TestCase):
             "workspace": Path("/tmp/project"),
             "approval_policy": "on-request",
             "sandbox": "read-only",
-            "read_timeout_seconds": 30,
+            "inactivity_timeout_seconds": 30,
+            "max_turn_seconds": 120,
         }
         for field, value in (
             ("command", ()),
@@ -57,14 +59,25 @@ class WorkerContractTests(unittest.TestCase):
             ("workspace", Path("relative")),
             ("approval_policy", ""),
             ("sandbox", ""),
-            ("read_timeout_seconds", 0),
-            ("read_timeout_seconds", -1),
+            ("inactivity_timeout_seconds", 0),
+            ("inactivity_timeout_seconds", -1),
+            ("max_turn_seconds", 0),
+            ("max_turn_seconds", -1),
         ):
             case = dict(valid)
             case[field] = value
             with self.subTest(field=field, value=value):
                 with self.assertRaises(ValueError):
                     CodexWorkerConfig(**case)
+        with self.assertRaisesRegex(ValueError, "at least"):
+            CodexWorkerConfig(
+                command=("codex", "app-server"),
+                workspace=Path("/tmp/project"),
+                approval_policy="on-request",
+                sandbox="read-only",
+                inactivity_timeout_seconds=31,
+                max_turn_seconds=30,
+            )
 
     def test_task_request_keeps_task_immutable_at_boundary(self):
         task = make_task()

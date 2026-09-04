@@ -581,7 +581,8 @@ class ProductionCliComposition:
             workspace=workspace,
             approval_policy="on-request",
             sandbox="workspace-write",
-            read_timeout_seconds=360,
+            inactivity_timeout_seconds=120,
+            max_turn_seconds=900,
         )
         worker_service = CodexWorkerService(
             worker_config, progress_sink=renderer, clock=clock

@@ -103,7 +103,8 @@ def config(timeout=0.2):
         workspace=Path("/tmp/project"),
         approval_policy="on-request",
         sandbox="read-only",
-        read_timeout_seconds=timeout,
+        inactivity_timeout_seconds=timeout,
+        max_turn_seconds=timeout,
     )
 
 

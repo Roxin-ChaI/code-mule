@@ -77,7 +77,8 @@ class CodexWorkerConfig:
     workspace: Path
     approval_policy: str
     sandbox: str
-    read_timeout_seconds: float
+    inactivity_timeout_seconds: float
+    max_turn_seconds: float
 
     def __post_init__(self) -> None:
         if not self.command or any(part == "" for part in self.command):
@@ -86,8 +87,14 @@ class CodexWorkerConfig:
             raise ValueError("workspace must be absolute")
         _require_non_empty(self.approval_policy, "approval_policy")
         _require_non_empty(self.sandbox, "sandbox")
-        if self.read_timeout_seconds <= 0:
-            raise ValueError("read_timeout_seconds must be positive")
+        if self.inactivity_timeout_seconds <= 0:
+            raise ValueError("inactivity_timeout_seconds must be positive")
+        if self.max_turn_seconds <= 0:
+            raise ValueError("max_turn_seconds must be positive")
+        if self.max_turn_seconds < self.inactivity_timeout_seconds:
+            raise ValueError(
+                "max_turn_seconds must be at least inactivity_timeout_seconds"
+            )
 
 
 @dataclass(frozen=True)

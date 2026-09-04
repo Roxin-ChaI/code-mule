@@ -223,7 +223,7 @@ class CodexAppServerClient:
     def wait_for_turn(self, thread_id: str, turn_id: str) -> WorkerTurnResult:
         if thread_id == "" or turn_id == "":
             raise ValueError("thread_id and turn_id must not be empty")
-        deadline = time.monotonic() + self._config.read_timeout_seconds
+        deadline = time.monotonic() + self._config.inactivity_timeout_seconds
         event_count = 0
         final_message: str | None = None
         issues: list[str] = []
@@ -437,7 +437,7 @@ class CodexAppServerClient:
         request_id = self._next_request_id
         self._next_request_id += 1
         self._write_message(request_message(request_id, method, params))
-        deadline = time.monotonic() + self._config.read_timeout_seconds
+        deadline = time.monotonic() + self._config.inactivity_timeout_seconds
         while True:
             try:
                 message = self._read_new_message(deadline)

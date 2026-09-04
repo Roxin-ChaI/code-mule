@@ -68,7 +68,8 @@ def worker_config():
         workspace=Path("/tmp/project"),
         approval_policy="on-request",
         sandbox="read-only",
-        read_timeout_seconds=30,
+        inactivity_timeout_seconds=30,
+        max_turn_seconds=120,
     )
 
 

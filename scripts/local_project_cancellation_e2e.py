@@ -100,7 +100,8 @@ def active_scenario(root: Path, *, real_worker: bool) -> dict[str, object]:
         workspace=repository,
         approval_policy="on-request",
         sandbox="workspace-write",
-        read_timeout_seconds=360,
+        inactivity_timeout_seconds=120,
+        max_turn_seconds=900,
     )
 
     def cycle():
