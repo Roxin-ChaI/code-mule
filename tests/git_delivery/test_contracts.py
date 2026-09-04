@@ -49,7 +49,7 @@ class GitDeliveryContractTests(unittest.TestCase):
             git_commit_results=(commit,),
         )
         payload = serialize_project_state(state)
-        self.assertEqual(payload["schema_version"], 8)
+        self.assertEqual(payload["schema_version"], 9)
         self.assertEqual(deserialize_project_state(payload), state)
 
     def test_schema_v6_migrates_with_empty_git_evidence(self):
@@ -59,7 +59,7 @@ class GitDeliveryContractTests(unittest.TestCase):
         payload.pop("git_change_sets")
         payload.pop("git_commit_results")
         state = deserialize_project_state(payload)
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 8)
+        self.assertEqual(CURRENT_SCHEMA_VERSION, 9)
         self.assertEqual(state.git_baselines, ())
         self.assertEqual(state.git_change_sets, ())
         self.assertEqual(state.git_commit_results, ())

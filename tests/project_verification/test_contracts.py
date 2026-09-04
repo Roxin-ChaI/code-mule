@@ -87,7 +87,7 @@ class ProjectVerificationContractTests(unittest.TestCase):
             project_verification_results=(result,),
         )
         payload = serialize_project_state(state)
-        self.assertEqual(payload["schema_version"], 8)
+        self.assertEqual(payload["schema_version"], 9)
         self.assertEqual(deserialize_project_state(payload), state)
 
         legacy = serialize_project_state(make_project_state())
@@ -98,7 +98,7 @@ class ProjectVerificationContractTests(unittest.TestCase):
         legacy.pop("project_verification_spec")
         legacy.pop("project_verification_results")
         migrated = deserialize_project_state(legacy)
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 8)
+        self.assertEqual(CURRENT_SCHEMA_VERSION, 9)
         self.assertIsNone(migrated.project.objective)
         self.assertIsNone(migrated.project_verification_spec)
         self.assertEqual(migrated.project_verification_results, ())

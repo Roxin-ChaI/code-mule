@@ -67,7 +67,7 @@ class ProjectStateSerializationTests(unittest.TestCase):
                 state = make_project_state()
                 state = replace(state, project=replace(state.project, status=status))
                 payload = serialize_project_state(state)
-                self.assertEqual(payload["schema_version"], 8)
+                self.assertEqual(payload["schema_version"], 9)
                 self.assertIs(deserialize_project_state(payload).project.status, status)
 
 

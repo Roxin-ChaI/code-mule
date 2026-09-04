@@ -12,7 +12,11 @@ from code_mule.domain.enums import (
     ProjectStatus,
     TaskStatus,
 )
-from code_mule.domain.models import HumanAction, HumanResolution, ProjectEvent
+from code_mule.domain.models import (
+    HumanAction,
+    HumanResolution,
+    ProjectEvent,
+)
 from code_mule.domain.state_machine import validate_transition
 from code_mule.state.models import ProjectState
 
@@ -88,6 +92,80 @@ class HumanResolutionService:
             "human_action.rejected",
             HumanResolutionStrategy.REJECT,
         )
+
+    def answer(self, action_id: str, answer: str) -> ProjectState:
+        state, action = self._target(action_id)
+        if action.category is not HumanActionCategory.WORKER_INPUT:
+            raise InvalidHumanResolution(
+                f"{action.category.value} cannot accept a Worker answer"
+            )
+        details = action.worker_input
+        if details is None or details.baseline_head is None:
+            raise InvalidHumanResolution(
+                "Worker input continuation evidence is incomplete"
+            )
+        if answer.strip() == "":
+            raise InvalidHumanResolution("answer is empty or exceeds safe bounds")
+        try:
+            answered_details = replace(details, answer=answer)
+        except ValueError as error:
+            raise InvalidHumanResolution(
+                "answer is empty or exceeds safe bounds"
+            ) from error
+        if action.task_id is None:
+            raise InvalidHumanResolution("Worker input action has no Task")
+        matches = tuple(task for task in state.tasks if task.id == action.task_id)
+        if len(matches) != 1:
+            raise InvalidHumanResolution("HumanAction task is unavailable")
+        task = matches[0]
+        if task.status is not TaskStatus.IN_PROGRESS:
+            raise InvalidHumanResolution(
+                "Worker input requires a stopped IN_PROGRESS Task"
+            )
+
+        operation_time = self._clock()
+        validate_transition(state.project.status, ProjectStatus.RUNNING)
+        reopened = replace(
+            task, status=TaskStatus.REOPENED, updated_at=operation_time
+        )
+        closed = replace(
+            action,
+            status=HumanActionStatus.RESOLVED,
+            resolved_at=operation_time,
+            worker_input=answered_details,
+        )
+        resolution = HumanResolution(
+            id=self._resolution_id_factory(),
+            action_id=action.id,
+            project_id=state.project.id,
+            strategy=HumanResolutionStrategy.ANSWER,
+            summary="Boss answered the exact pending Worker input request",
+            created_at=operation_time,
+        )
+        event = self._event(
+            state,
+            action,
+            "human_action.answered",
+            operation_time,
+            {"resolution_id": resolution.id, "strategy": "answer"},
+        )
+        updated = replace(
+            state,
+            project=replace(
+                state.project,
+                status=ProjectStatus.RUNNING,
+                current_task_id=None,
+                updated_at=operation_time,
+            ),
+            tasks=tuple(
+                reopened if item.id == reopened.id else item for item in state.tasks
+            ),
+            human_actions=self._replace_action(state.human_actions, closed),
+            human_resolutions=state.human_resolutions + (resolution,),
+            events=state.events + (event,),
+        )
+        self._store.save(updated)
+        return updated
 
     def resolve(
         self, action_id: str, strategy: HumanResolutionStrategy

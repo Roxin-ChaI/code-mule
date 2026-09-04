@@ -42,6 +42,7 @@ class CliContractTests(unittest.TestCase):
             (["inspect"], "inspect"),
             (["approve", "action-1"], "approve"),
             (["reject", "action-1"], "reject"),
+            (["answer", "action-1", "Use SQLite"], "answer"),
             (["resolve", "action-1", "--strategy", "acknowledge"], "resolve"),
             (["chat"], "chat"),
             (["chat", "--verbose"], "chat"),

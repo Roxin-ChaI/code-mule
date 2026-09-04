@@ -53,6 +53,8 @@ class PresentationModelTests(unittest.TestCase):
         self.assertIn("Question    Which mode should be used?", default)
         self.assertIn("- Canvas", default)
         self.assertIn("- DOM", default)
+        self.assertIn('code-mule answer action-1 "<answer>"', default)
+        self.assertNotIn("code-mule resolve action-1", default)
         self.assertNotIn("request-9", default)
         self.assertNotIn("worker_request_method", default)
 

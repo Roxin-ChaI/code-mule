@@ -8,7 +8,9 @@ from code_mule.domain import (
     HumanResolutionStrategy,
     ProjectStatus,
     TaskStatus,
+    WorkerInputDetails,
 )
+from code_mule.git_delivery import GitBaseline
 from code_mule.human import (
     HumanActionNotFound,
     HumanResolutionService,
@@ -43,6 +45,27 @@ def gated_state(category=HumanActionCategory.WORKER_APPROVAL):
     )
 
 
+def worker_input_state():
+    source = gated_state(HumanActionCategory.WORKER_INPUT)
+    action = replace(
+        source.human_actions[0],
+        worker_input=WorkerInputDetails(
+            request_method="item/tool/requestUserInput",
+            request_id="request-1",
+            question="Which database?",
+            choices=("SQLite", "PostgreSQL"),
+            worker_attempt=1,
+            baseline_head="a" * 40,
+            partial_paths=("storage.py",),
+        ),
+    )
+    return replace(
+        source,
+        human_actions=(action,),
+        git_baselines=(GitBaseline("task-1", "/repo", "a" * 40, ()),),
+    )
+
+
 def service(store):
     return HumanResolutionService(
         store,
@@ -53,6 +76,31 @@ def service(store):
 
 
 class HumanResolutionServiceTests(unittest.TestCase):
+    def test_answer_reopens_task_without_starting_work_or_leaking_answer(self):
+        store = MemoryStore(worker_input_state())
+        updated = service(store).answer("action-1", "SQLite")
+        action = updated.human_actions[0]
+        self.assertIs(action.status, HumanActionStatus.RESOLVED)
+        self.assertEqual(action.worker_input.answer, "SQLite")
+        self.assertIs(updated.project.status, ProjectStatus.RUNNING)
+        self.assertIsNone(updated.project.current_task_id)
+        self.assertIs(updated.tasks[0].status, TaskStatus.REOPENED)
+        self.assertIs(
+            updated.human_resolutions[-1].strategy,
+            HumanResolutionStrategy.ANSWER,
+        )
+        self.assertEqual(updated.events[-1].event_type, "human_action.answered")
+        self.assertNotIn("SQLite", str(updated.events[-1].metadata))
+        with self.assertRaises(InvalidHumanResolution):
+            service(store).answer("action-1", "again")
+
+    def test_answer_rejects_non_input_action_and_invalid_answer(self):
+        store = MemoryStore(gated_state())
+        with self.assertRaisesRegex(InvalidHumanResolution, "cannot accept"):
+            service(store).answer("action-1", "yes")
+        store = MemoryStore(worker_input_state())
+        with self.assertRaisesRegex(InvalidHumanResolution, "empty"):
+            service(store).answer("action-1", "")
     def test_approve_is_scoped_audited_and_cannot_be_reused(self):
         store = MemoryStore(gated_state())
         updated = service(store).approve("action-1")

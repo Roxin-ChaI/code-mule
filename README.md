@@ -244,10 +244,18 @@ must be handled explicitly; Code Mule never stashes, resets, or cleans it.
 | `stop` | Cancel at a Safe Point without rollback |
 | `inspect` | Inspect the pending HumanAction |
 | `approve ID` / `reject ID` | Resolve one exact approval action |
+| `answer ID "..."` | Answer one exact Worker input request |
 | `resolve ID --strategy ...` | Resolve a typed non-approval action |
 
 Use `--verbose` on a command for IDs and raw control values. Use global
 `--debug` for a sanitized traceback.
+
+When a Worker needs information, Code Mule stops in `HUMAN_REQUIRED` and
+`inspect` shows the bounded question and choices. Answer that exact action with
+`code-mule answer <action-id> "<answer>"`, then explicitly run `code-mule run`.
+Code Mule starts a fresh Worker session, verifies that the partial workspace
+changes still match the original clean Git baseline, and continues the same
+Task. It does not resume the closed Codex session or create a partial commit.
 
 ## CHANGE Example
 

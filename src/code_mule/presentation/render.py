@@ -1,5 +1,6 @@
 """Line-oriented Boss CLI rendering from immutable view models."""
 
+from code_mule.domain.enums import HumanActionCategory
 from code_mule.domain.models import HumanAction
 from code_mule.project_verification import (
     FinalReviewDecision,
@@ -174,7 +175,13 @@ def render_human_action(
     else:
         lines += (f"Request     {view.request}",)
     lines += (f"Risk        {view.risk}", "", "No action has been executed.")
-    if view.approvable:
+    if action.category is HumanActionCategory.WORKER_INPUT:
+        lines += (
+            "",
+            "Answer:",
+            f'  code-mule answer {view.action_id} "<answer>"',
+        )
+    elif view.approvable:
         lines += (
             "",
             "Approve:",

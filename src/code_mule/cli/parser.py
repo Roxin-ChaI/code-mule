@@ -74,6 +74,11 @@ def build_parser() -> argparse.ArgumentParser:
     reject.add_argument("action_id")
     _state_file(reject)
 
+    answer = commands.add_parser("answer", help="answer one Worker input request")
+    answer.add_argument("action_id")
+    answer.add_argument("answer")
+    _state_file(answer)
+
     resolve = commands.add_parser("resolve", help="resolve a non-approval action")
     resolve.add_argument("action_id")
     resolve.add_argument(

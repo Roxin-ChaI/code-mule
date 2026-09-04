@@ -237,10 +237,17 @@ stash、reset 或 clean 这些文件。
 | `stop` | 在 Safe Point 取消且不回滚 |
 | `inspect` | 查看 pending HumanAction |
 | `approve ID` / `reject ID` | 处理一个明确的 approval action |
+| `answer ID "..."` | 回答一个明确的 Worker 输入请求 |
 | `resolve ID --strategy ...` | 处理 typed 非 approval action |
 
 命令加 `--verbose` 可查看 ID 与 raw control value；全局 `--debug` 显示经过清理的
 traceback。
+
+Worker 需要补充信息时，Code Mule 会停在 `HUMAN_REQUIRED`，`inspect` 会显示
+经过边界限制的问题和选项。使用 `code-mule answer <action-id> "<answer>"`
+回答该 action，再显式执行 `code-mule run`。Code Mule 会启动新的 Worker
+session，先确认局部 workspace 修改仍与原始 clean Git baseline 一致，再继续同一
+Task；它不会恢复已关闭的 Codex session，也不会为局部结果创建 commit。
 
 ## CHANGE 示例
 

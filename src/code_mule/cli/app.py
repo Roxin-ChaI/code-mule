@@ -36,6 +36,7 @@ class BossCliCommands(Protocol):
     def inspect(self, verbose: bool) -> CliCommandResult: ...
     def approve(self, action_id: str, verbose: bool = False) -> CliCommandResult: ...
     def reject(self, action_id: str, verbose: bool = False) -> CliCommandResult: ...
+    def answer(self, action_id: str, answer: str, verbose: bool = False) -> CliCommandResult: ...
     def resolve(self, action_id: str, strategy: HumanResolutionStrategy, verbose: bool = False) -> CliCommandResult: ...
     def chat(self, input_stream: TextIO, verbose: bool = False) -> CliCommandResult: ...
 
@@ -96,6 +97,12 @@ def _dispatch(
         return commands.approve(getattr(arguments, "action_id"), getattr(arguments, "verbose"))
     if command == "reject":
         return commands.reject(getattr(arguments, "action_id"), getattr(arguments, "verbose"))
+    if command == "answer":
+        return commands.answer(
+            getattr(arguments, "action_id"),
+            getattr(arguments, "answer"),
+            getattr(arguments, "verbose"),
+        )
     if command == "resolve":
         return commands.resolve(
             getattr(arguments, "action_id"),

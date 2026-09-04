@@ -52,6 +52,7 @@ class _FakeCommands:
     def inspect(self, *values): return self._call("inspect", *values)
     def approve(self, *values): return self._call("approve", *values)
     def reject(self, *values): return self._call("reject", *values)
+    def answer(self, *values): return self._call("answer", *values)
     def resolve(self, *values): return self._call("resolve", *values)
     def chat(self, *values): return self._call("chat", *values)
 
@@ -477,6 +478,7 @@ class CliProcessBoundaryTests(unittest.TestCase):
             (["inspect", "--verbose"], "inspect"),
             (["approve", "action-1"], "approve"),
             (["reject", "action-1"], "reject"),
+            (["answer", "action-1", "Use SQLite"], "answer"),
             (["resolve", "action-1", "--strategy", "acknowledge"], "resolve"),
         )
         for argv, expected in cases:

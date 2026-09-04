@@ -7,6 +7,7 @@ from typing import Protocol
 
 from code_mule.domain.enums import (
     HumanActionCategory,
+    HumanActionStatus,
     ProjectStatus,
     SupervisorDecisionType,
     TaskStatus,
@@ -82,6 +83,8 @@ class ReviewService(Protocol):
 class GitDelivery(Protocol):
     def capture_baseline(self, task_id: str) -> GitBaseline: ...
 
+    def capture_partial_paths(self, baseline: GitBaseline) -> tuple[str, ...]: ...
+
     def prepare_change_set(
         self,
         baseline: GitBaseline,
@@ -135,6 +138,8 @@ class TaskCycleService:
         decisions: tuple[Decision, ...] = ()
         prompt = request.initial_prompt
         baseline: GitBaseline | None = None
+        continuation_partial_paths: tuple[str, ...] = ()
+        continuation_requested = self._has_worker_input_answer(state, task)
 
         if state.project.status is ProjectStatus.CANCEL_REQUESTED:
             self._cancel_current_task(task.id)
@@ -142,16 +147,30 @@ class TaskCycleService:
 
         if self._git_delivery is not None:
             try:
-                baseline = self._git_delivery.capture_baseline(task.id)
-                state = self._persist_git_baseline(state, task, baseline)
-                self._emit_progress(
-                    state,
-                    task,
-                    ProgressEventType.GIT_BASELINE_CAPTURED,
-                    "Clean Git baseline captured",
-                )
+                continuation = self._worker_input_continuation(state, task)
+                if continuation is None:
+                    baseline = self._git_delivery.capture_baseline(task.id)
+                    state = self._persist_git_baseline(state, task, baseline)
+                    self._emit_progress(
+                        state,
+                        task,
+                        ProgressEventType.GIT_BASELINE_CAPTURED,
+                        "Clean Git baseline captured",
+                    )
+                else:
+                    details, baseline = continuation
+                    current_paths = self._git_delivery.capture_partial_paths(baseline)
+                    if current_paths != details.partial_paths:
+                        raise GitOwnershipError(
+                            "workspace changed after the Worker input request"
+                        )
+                    continuation_partial_paths = details.partial_paths
+                    prompt = self._continuation_prompt(prompt, details)
             except GitDeliveryError as error:
-                self._record_workspace_block(state, task, error)
+                if continuation_requested:
+                    self._record_git_failure(state, task, error, "continuation")
+                else:
+                    self._record_workspace_block(state, task, error)
                 self._emit_git_failure(state, task, error, "baseline", attempt=1)
                 return self._human_outcome(
                     task.id, reports, decisions, final_prompt=None
@@ -215,7 +234,27 @@ class TaskCycleService:
                         created_at=self._clock(),
                     )
                 except CodexWorkerError as error:
-                    state = self._record_worker_failure(state, task, error)
+                    try:
+                        state = self._record_worker_failure(
+                            state, task, error, baseline
+                        )
+                    except GitDeliveryError as git_error:
+                        state = self._record_git_failure(
+                            self._store.load(), task, git_error, "worker_input"
+                        )
+                        self._emit_git_failure(
+                            state,
+                            task,
+                            git_error,
+                            "worker_input",
+                            attempt=task.execution_attempts + 1,
+                        )
+                        self._clear_worker_identity(task.id)
+                        return self._human_outcome(
+                            task.id, reports, decisions, final_prompt=None
+                        )
+                    if isinstance(error, CodexUserInputRequired):
+                        self._clear_worker_identity(task.id)
                     self._emit_worker_failure(state, task, error)
                     return self._human_outcome(
                         task.id,
@@ -267,11 +306,32 @@ class TaskCycleService:
                 if self._git_delivery is not None:
                     if baseline is None:
                         raise InvalidTaskCycleState("Git delivery requires a baseline")
+                    if not set(continuation_partial_paths).issubset(
+                        report.files_changed
+                    ):
+                        error = GitOwnershipError(
+                            "continued Worker report omitted partial baseline paths"
+                        )
+                        self._record_git_failure(state, task, error, "ownership")
+                        self._emit_git_failure(
+                            state,
+                            task,
+                            error,
+                            "ownership",
+                            attempt=report.attempt,
+                        )
+                        self._clear_worker_identity(task.id)
+                        return self._human_outcome(
+                            task.id, reports, decisions, final_prompt=None
+                        )
                     owned_paths = tuple(
                         dict.fromkeys(
-                            path
-                            for persisted_report in reports
-                            for path in persisted_report.files_changed
+                            continuation_partial_paths
+                            + tuple(
+                                path
+                                for persisted_report in reports
+                                for path in persisted_report.files_changed
+                            )
                         )
                     )
                     try:
@@ -874,18 +934,29 @@ class TaskCycleService:
         return new_state
 
     def _record_worker_failure(
-        self, state: ProjectState, task: Task, error: CodexWorkerError
+        self,
+        state: ProjectState,
+        task: Task,
+        error: CodexWorkerError,
+        baseline: GitBaseline | None = None,
     ) -> ProjectState:
         category, summary, requested_action, risk = self._worker_failure_action(error)
         worker_input = None
         if isinstance(error, CodexUserInputRequired):
             request = error.request
+            partial_paths: tuple[str, ...] = ()
+            baseline_head = None
+            if baseline is not None and self._git_delivery is not None:
+                partial_paths = self._git_delivery.capture_partial_paths(baseline)
+                baseline_head = baseline.baseline_head
             worker_input = WorkerInputDetails(
                 request_method=request.method,
                 request_id=request.request_id,
                 question=request.question,
                 choices=request.choices,
                 worker_attempt=task.execution_attempts + 1,
+                baseline_head=baseline_head,
+                partial_paths=partial_paths,
             )
         return self._transition_human_required(
             state,
@@ -897,6 +968,74 @@ class TaskCycleService:
             requested_action=requested_action,
             risk=risk,
             worker_input=worker_input,
+        )
+
+    def _worker_input_continuation(
+        self, state: ProjectState, task: Task
+    ) -> tuple[WorkerInputDetails, GitBaseline] | None:
+        actions = tuple(
+            action
+            for action in state.human_actions
+            if action.task_id == task.id
+            and action.category is HumanActionCategory.WORKER_INPUT
+            and action.status is HumanActionStatus.RESOLVED
+            and action.worker_input is not None
+            and action.worker_input.answer is not None
+            and action.worker_input.worker_attempt == task.execution_attempts + 1
+        )
+        if not actions:
+            return None
+        if len(actions) != 1:
+            raise GitOwnershipError(
+                "Worker input continuation is ambiguous"
+            )
+        details = actions[-1].worker_input
+        if details is None or details.baseline_head is None:
+            raise GitOwnershipError(
+                "Worker input continuation lacks its original Git baseline"
+            )
+        baselines = tuple(
+            item
+            for item in state.git_baselines
+            if item.task_id == task.id
+            and item.baseline_head == details.baseline_head
+        )
+        if len(baselines) != 1:
+            raise GitOwnershipError(
+                "Worker input continuation baseline is unavailable or ambiguous"
+            )
+        return details, baselines[0]
+
+    @staticmethod
+    def _has_worker_input_answer(state: ProjectState, task: Task) -> bool:
+        return any(
+            action.task_id == task.id
+            and action.category is HumanActionCategory.WORKER_INPUT
+            and action.status is HumanActionStatus.RESOLVED
+            and action.worker_input is not None
+            and action.worker_input.answer is not None
+            and action.worker_input.worker_attempt == task.execution_attempts + 1
+            for action in state.human_actions
+        )
+
+    @staticmethod
+    def _continuation_prompt(
+        original_prompt: str, details: WorkerInputDetails
+    ) -> str:
+        choices = (
+            "\nAvailable choices from the original request: "
+            + "; ".join(details.choices)
+            if details.choices
+            else ""
+        )
+        return (
+            f"{original_prompt}\n\n"
+            "Continue the same Task in a fresh Worker session. The previous session "
+            "may have left correct partial workspace changes; inspect the workspace "
+            "first and do not repeat or destroy completed work.\n"
+            f"Worker question: {details.question}{choices}\n"
+            f"Boss answer: {details.answer}\n"
+            "Report every changed path relative to the original clean Git baseline."
         )
 
     @staticmethod

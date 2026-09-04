@@ -111,6 +111,20 @@ class GitDeliveryService:
             staged_paths=(),
         )
 
+    def capture_partial_paths(self, baseline: GitBaseline) -> tuple[str, ...]:
+        """Verify and describe unfinished Worker edits against its clean baseline."""
+
+        root = Path(baseline.repository_root)
+        self._assert_root(root)
+        self._assert_head(root, baseline.baseline_head)
+        self._required(("git", "diff", "--check"), cwd=root)
+        changed, _, staged = self._status_paths(root)
+        if staged:
+            raise GitOwnershipError(
+                "Worker must not stage paths; staging belongs to the Orchestrator"
+            )
+        return changed
+
     def commit(self, change_set: GitChangeSet, task: Task) -> GitCommitResult:
         root = Path(change_set.repository_root)
         self._assert_root(root)

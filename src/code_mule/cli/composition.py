@@ -431,6 +431,29 @@ class ProductionCliComposition:
             )
         return CliCommandResult(CliExitCode.SUCCESS, lines)
 
+    def answer(
+        self, action_id: str, answer: str, verbose: bool = False
+    ) -> CliCommandResult:
+        try:
+            state = self._human_resolution().answer(action_id, answer)
+        except HumanResolutionError as error:
+            raise InvalidCliProjectState(str(error)) from error
+        action = self._action(state, action_id)
+        lines = (
+            "WORKER INPUT ANSWERED",
+            "A fresh Worker will continue this Task on the next explicit run.",
+            "Partial workspace changes were preserved.",
+            "No Worker was started by this command.",
+        )
+        if verbose:
+            lines += (
+                f"action_id: {action.id}",
+                f"action_status: {action.status.value}",
+                f"project_status: {state.project.status.value}",
+                f"task_id: {action.task_id or '-'}",
+            )
+        return CliCommandResult(CliExitCode.SUCCESS, lines)
+
     def resolve(
         self,
         action_id: str,

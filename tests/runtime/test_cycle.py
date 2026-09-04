@@ -18,6 +18,7 @@ from code_mule.git_delivery import (
     GitCommitError,
     GitCommitResult,
 )
+from code_mule.human import HumanResolutionService
 from code_mule.orchestrator import (
     ChangeCommand,
     OrchestratorService,
@@ -206,12 +207,16 @@ class FakeGitDelivery:
         self.baseline_calls = []
         self.prepare_calls = []
         self.commit_calls = []
+        self.partial_paths = ("calculator.py",)
 
     def capture_baseline(self, task_id):
         self.baseline_calls.append(task_id)
         if self.baseline_error:
             raise self.baseline_error
         return GitBaseline(task_id, "/repo", "a" * 40, ())
+
+    def capture_partial_paths(self, baseline):
+        return self.partial_paths
 
     def prepare_change_set(self, baseline, report, owned_paths):
         self.prepare_calls.append((baseline, report, owned_paths))
@@ -271,6 +276,108 @@ class TaskCycleContractTests(unittest.TestCase):
 
 
 class TaskCycleGitDeliveryTests(unittest.TestCase):
+    def test_answer_reuses_original_baseline_for_one_fresh_worker(self):
+        delivery = FakeGitDelivery()
+        first_session = FakeWorkerSession(
+            outcomes=[
+                CodexUserInputRequired(
+                    WorkerInputRequest(
+                        "item/tool/requestUserInput",
+                        "request-1",
+                        "Which database?",
+                        ("SQLite", "PostgreSQL"),
+                    )
+                )
+            ]
+        )
+        store = FakeStore(cycle_state())
+        first, request, _, _, _, first_sessions = build_cycle(
+            store=store, session=first_session, git_delivery=delivery
+        )
+        outcome = first.execute(request)
+        self.assertTrue(outcome.human_action_required)
+        action = store.current.human_actions[-1]
+        self.assertEqual(action.worker_input.baseline_head, "a" * 40)
+        self.assertEqual(action.worker_input.partial_paths, ("calculator.py",))
+        self.assertEqual(len(store.current.git_baselines), 1)
+        self.assertEqual(delivery.commit_calls, [])
+
+        HumanResolutionService(
+            store,
+            clock=lambda: NOW,
+            event_id_factory=IdFactory("human-event"),
+            resolution_id_factory=IdFactory("resolution"),
+        ).answer(action.id, "SQLite")
+        reopened = store.current.tasks[0]
+        active = replace(reopened, status=TaskStatus.IN_PROGRESS)
+        store.save(
+            replace(
+                store.current,
+                project=replace(store.current.project, current_task_id=active.id),
+                tasks=(active,),
+            )
+        )
+
+        second_session = FakeWorkerSession()
+        second, second_request, _, _, _, second_sessions = build_cycle(
+            store=store, session=second_session, git_delivery=delivery
+        )
+        result = second.execute(second_request)
+        self.assertFalse(result.human_action_required)
+        self.assertEqual(len(first_sessions), 1)
+        self.assertEqual(len(second_sessions), 1)
+        self.assertIsNot(first_sessions[0], second_sessions[0])
+        self.assertEqual(delivery.baseline_calls, [active.id])
+        self.assertEqual(len(store.current.git_baselines), 1)
+        continued_prompt = second_session.requests[0][0].prompt
+        self.assertIn("Boss answer: SQLite", continued_prompt)
+        self.assertIn("original clean Git baseline", continued_prompt)
+        self.assertEqual(len(delivery.commit_calls), 1)
+
+    def test_continuation_workspace_drift_blocks_before_fresh_worker(self):
+        delivery = FakeGitDelivery()
+        first_session = FakeWorkerSession(
+            outcomes=[
+                CodexUserInputRequired(
+                    WorkerInputRequest(
+                        "item/tool/requestUserInput", None, "Question?", ()
+                    )
+                )
+            ]
+        )
+        store = FakeStore(cycle_state())
+        first, request, _, _, _, _ = build_cycle(
+            store=store, session=first_session, git_delivery=delivery
+        )
+        first.execute(request)
+        action = store.current.human_actions[-1]
+        HumanResolutionService(
+            store,
+            clock=lambda: NOW,
+            event_id_factory=IdFactory("human-event"),
+            resolution_id_factory=IdFactory("resolution"),
+        ).answer(action.id, "Answer")
+        active = replace(store.current.tasks[0], status=TaskStatus.IN_PROGRESS)
+        store.save(
+            replace(
+                store.current,
+                project=replace(store.current.project, current_task_id=active.id),
+                tasks=(active,),
+            )
+        )
+        delivery.partial_paths = ("external.py",)
+        second_session = FakeWorkerSession()
+        second, second_request, _, _, _, second_sessions = build_cycle(
+            store=store, session=second_session, git_delivery=delivery
+        )
+        outcome = second.execute(second_request)
+        self.assertTrue(outcome.human_action_required)
+        self.assertEqual(second_sessions, [])
+        self.assertIs(
+            store.current.human_actions[-1].category,
+            HumanActionCategory.RECOVERY_UNCERTAIN,
+        )
+
     def test_accepted_task_commits_before_completion_and_persists_sha(self):
         delivery = FakeGitDelivery()
         service, request, store, _, _, _ = build_cycle(git_delivery=delivery)

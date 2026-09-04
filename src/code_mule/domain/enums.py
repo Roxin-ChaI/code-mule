@@ -85,6 +85,7 @@ class HumanResolutionStrategy(StrEnum):
     RETRY_TASK = "retry_task"
     FAIL_PROJECT = "fail_project"
     ACKNOWLEDGE = "acknowledge"
+    ANSWER = "answer"
 
 
 __all__ = [

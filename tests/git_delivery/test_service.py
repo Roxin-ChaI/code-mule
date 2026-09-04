@@ -103,6 +103,16 @@ class GitDeliveryServiceTests(RepositoryCase):
         with self.assertRaises(DirtyGitBaseline):
             self.service.capture_baseline("TASK-1")
 
+    def test_partial_paths_are_measured_against_original_clean_baseline(self):
+        baseline = self.service.capture_baseline("TASK-1")
+        (self.root / "partial.py").write_text("partial\n")
+        self.assertEqual(
+            self.service.capture_partial_paths(baseline), ("partial.py",)
+        )
+        git(self.root, "add", "--", "partial.py")
+        with self.assertRaisesRegex(GitOwnershipError, "must not stage"):
+            self.service.capture_partial_paths(baseline)
+
     def test_unrelated_change_or_worker_staging_is_rejected(self):
         baseline = self.service.capture_baseline("TASK-1")
         (self.root / "owned.py").write_text("owned\n")
