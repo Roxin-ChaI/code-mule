@@ -71,23 +71,50 @@ Do not rely on packages installed in the global `python3.12` environment.
 ## Boss CLI Quick Start
 
 ```bash
-.venv/bin/code-mule init \
+CODE_MULE_BIN="$(pwd)/.venv/bin/code-mule"
+mkdir -p /tmp/code-mule-calculator
+cd /tmp/code-mule-calculator
+git init
+git config user.name "Code Mule Boss"
+git config user.email "boss@example.invalid"
+touch README.md
+git add -- README.md
+git commit -m "chore: initialize workspace"
+
+"$CODE_MULE_BIN" init \
   --project-id calculator \
   --name "Calculator" \
-  --workspace /absolute/path/to/disposable/repository
+  --workspace "$PWD"
 
 export DEEPSEEK_API_KEY="..."
 export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
-.venv/bin/code-mule run --objective "Create a tested calculator"
-.venv/bin/code-mule status
-.venv/bin/code-mule status --verbose
+# Terminal A (blocking execution)
+"$CODE_MULE_BIN" run --objective "Create a tested calculator"
+
+# Terminal B, from the same directory while execution is active
+"$CODE_MULE_BIN" status
+"$CODE_MULE_BIN" chat
+"$CODE_MULE_BIN" change "Add multiply support"
+
+# After Terminal A reaches the CHANGE Safe Point
+"$CODE_MULE_BIN" change --apply
+
+# Or cancel an active project instead of applying/completing it
+"$CODE_MULE_BIN" stop
 ```
+
+Commands discover `.code-mule/project-state.json` in the current directory by
+default. The workspace must be a clean Git repository with an initial commit.
+`run` is blocking; control commands are issued from another terminal against
+the same persisted state. `stop` is an alternative terminal path, not a command
+to run after the Project is already DONE.
 
 The formal Boss CLI also provides `ask`, `change`, `change --apply`, `pause`,
 `resume`, `stop`, `inspect`, `approve`, `reject`, and `resolve`. See
 [Boss CLI](docs/cli.md) and [Human Resolution](docs/human-resolution.md) for
 action-scoped approval, state behavior, Human Gates,
 environment variables, exit codes, and the manual real E2E.
+Natural-language control is documented in [Boss Chat](docs/boss-chat.md).
 
 Default CLI output uses readable Boss terminology and hides internal IDs and
 raw statuses. Use per-command `--verbose` for an auditable internal view. During
@@ -219,18 +246,16 @@ and failure, Safe Point behavior, preservation rules, and local E2E coverage.
 
 ## Status
 
-Early development.
+Code Mule v0.1.0 is release-candidate ready after the Phase 19 local quality
+gate. It includes the Boss CLI and Chat, bounded Supervisor regeneration,
+single-owner execution, safe CHANGE and STOP boundaries, typed Human Actions,
+per-Task Git delivery, and project-level final verification. ProjectState
+schema v8 remains the Source of Truth and migrates snapshots from v1 through
+v7.
 
-The DeepSeek Supervisor provider, local Codex Worker, deterministic task cycle,
-bounded multi-task execution, natural-language initial project planning, and
-deterministic CHANGE replanning are
-in v0.1.0 development. The
-Supervisor uses the official `openai` Python SDK only as an OpenAI-compatible
-client for the DeepSeek endpoint, while the Worker uses the local Codex
-app-server process. ProjectState remains the Source of Truth. Automated tests
-do not call real model APIs, and the real DeepSeek + Codex multi-task E2E
-remains a Boss-only manual gate. Versioned Plan materialization and CHANGE
-replanning are available; parallel/multi-project execution and production
-readiness are not yet
-available. Real-time progress and console observability are available for the
-current runtime and manual verification paths.
+Automated tests and local release E2E never call DeepSeek. The authenticated
+DeepSeek + real Codex release flow remains a Boss-only manual gate. v0.1.0 is a
+single-project, single-worker local MVP—not a daemon, parallel runner, remote
+deployment system, or automatic push/tag/release tool. See
+[Release Readiness](docs/release-readiness.md) and
+[Troubleshooting](docs/troubleshooting.md).

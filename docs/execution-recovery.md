@@ -33,6 +33,12 @@ concurrent Boss `change` or `pause` update.
 Normal completion, a CHANGE safe point, PAUSE, HUMAN_REQUIRED, and handled
 Ctrl+C all release the OS lock and mark the lease `RELEASED`.
 
+If execution is interrupted while an active Task remains under `RUNNING`,
+`CHANGE_REQUESTED`, `PAUSED_BY_BOSS`, or `CANCEL_REQUESTED`, release first
+creates a `RECOVERY_UNCERTAIN` HumanAction and moves to `HUMAN_REQUIRED`.
+Releasing the local lock never implies that an in-flight Worker side effect is
+safe to repeat.
+
 ## Stale detection
 
 When the OS lock can be acquired but ProjectState still contains an `ACTIVE`

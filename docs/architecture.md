@@ -76,3 +76,32 @@ The Orchestrator detects a gated action before execution, records its exact scop
 6. **Versioned plans over mutable undocumented plans.** Replanning creates traceable versions.
 7. **Auditable changes over silent replanning.** Changes, analyses, decisions, and transitions are recorded.
 8. **One worker first, scale later.** The MVP favors predictable control and recovery over concurrency.
+
+## v0.1.0 execution chain
+
+The release-candidate chain is:
+
+```text
+Boss CLI / Chat
+  -> Planning
+  -> Execution Ownership
+  -> Supervisor + Codex Worker
+  -> TaskCycle
+  -> precise Git delivery
+  -> optional CHANGE / replanning
+  -> Human Resolution when gated
+  -> deterministic final verification
+  -> final Supervisor review
+  -> DONE or CANCELLED
+```
+
+Each layer owns one boundary. The Supervisor reasons but cannot mutate state or
+approve a Human Gate. The Orchestrator owns legal transitions. TaskCycle owns
+Task attempts and merges them into the latest persisted snapshot. Execution
+Ownership prevents a second Worker. Git delivery alone stages and commits exact
+Task paths. ProjectState is the sole durable source of project facts.
+
+STOP and PAUSE remain safe-point controls. If an in-flight Task fails after a
+PAUSE or CHANGE was persisted, the project enters typed `HUMAN_REQUIRED` rather
+than losing the external control state or releasing ownership as if recovery
+were certain.

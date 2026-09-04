@@ -11,23 +11,44 @@ python3.12 -m venv .venv
 ## Quick start
 
 ```bash
+CODE_MULE_BIN="$(pwd)/.venv/bin/code-mule"
 mkdir -p /tmp/code-mule-workspace
-git init /tmp/code-mule-workspace
+cd /tmp/code-mule-workspace
+git init
+git config user.name "Code Mule Boss"
+git config user.email "boss@example.invalid"
+touch README.md
+git add -- README.md
+git commit -m "chore: initialize workspace"
 
-.venv/bin/code-mule init \
+"$CODE_MULE_BIN" init \
   --project-id calculator \
   --name "Calculator" \
-  --workspace /tmp/code-mule-workspace
+  --workspace "$PWD"
 
 export DEEPSEEK_API_KEY="..."
 export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
-.venv/bin/code-mule run --objective "Create a tested calculator"
-.venv/bin/code-mule status
+# Terminal A
+"$CODE_MULE_BIN" run --objective "Create a tested calculator"
+
+# Terminal B, from the same directory while run is active
+"$CODE_MULE_BIN" status
+"$CODE_MULE_BIN" chat
+"$CODE_MULE_BIN" change "Add multiply support"
+
+# After run stops at the CHANGE Safe Point
+"$CODE_MULE_BIN" change --apply
 ```
 
-The default state file is `.code-mule/project-state.json`. Pass
+The default state file is `.code-mule/project-state.json` under the current
+directory, so subsequent commands automatically discover the initialized
+project when run there. Pass
 `--state-file PATH` to every command when using another location. `init` never
 overwrites an existing state file and persists an absolute Worker workspace.
+The workspace must be a clean Git repository with an initial commit before
+execution because every Task starts from a recorded Git HEAD.
+`run` and `change --apply` are blocking execution commands. Use a second
+terminal in the same directory for `status`, Chat, CHANGE, PAUSE, or STOP.
 
 ## Default output
 
@@ -109,6 +130,7 @@ HUMAN_REQUIRED is a fail-closed Human Gate. Use `inspect` and an action-scoped
 decision; neither `run` nor `resume` silently clears it. See
 [Human Resolution and Approval](human-resolution.md) for categories, audit
 events, strategy restrictions, and the Worker session recovery limitation.
+See [Boss Chat](boss-chat.md) for deterministic natural-language routing.
 
 ## Real manual E2E
 
