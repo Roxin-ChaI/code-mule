@@ -449,6 +449,37 @@ class TaskCycleFlowTests(unittest.TestCase):
         self.assertIsNone(store.current.project.current_task_id)
         self.assertIs(store.current.tasks[0].status, TaskStatus.COMPLETED)
 
+    def test_boss_pause_then_human_review_persists_typed_gate(self):
+        store = FakeStore(cycle_state())
+        orchestrator = OrchestratorService(
+            store,
+            clock=lambda: NOW,
+            event_id_factory=IdFactory("boss-event"),
+        )
+
+        class PauseInjectingSupervisor(FakeSupervisor):
+            def review(self, request):
+                orchestrator.pause(PauseCommand("project-1"))
+                return super().review(request)
+
+        supervisor = PauseInjectingSupervisor(
+            [review(SupervisorDecisionType.HUMAN_REQUIRED)]
+        )
+        service, request, _, _, _, _ = build_cycle(
+            store=store,
+            supervisor=supervisor,
+        )
+
+        outcome = service.execute(request)
+
+        self.assertTrue(outcome.human_action_required)
+        self.assertIs(store.current.project.status, ProjectStatus.HUMAN_REQUIRED)
+        self.assertEqual(len(store.current.human_actions), 1)
+        self.assertEqual(
+            store.current.human_actions[0].summary,
+            "Supervisor requested human judgment",
+        )
+
     def test_change_persisted_during_worker_is_preserved_at_safe_point(self):
         store = FakeStore(cycle_state())
 

@@ -229,6 +229,43 @@ class ExecutionOwnershipServiceTests(unittest.TestCase):
         self.assertIs(final.project.status, ProjectStatus.HUMAN_REQUIRED)
         self.assertEqual(final.human_actions[-1].category.value, "recovery_uncertain")
 
+    def test_interrupted_control_state_with_active_task_requires_recovery(self):
+        base = self.store.load()
+        for status in (
+            ProjectStatus.CHANGE_REQUESTED,
+            ProjectStatus.PAUSED_BY_BOSS,
+        ):
+            with self.subTest(status=status):
+                self.store.save(replace(base, execution_leases=()))
+                handle = self.service().acquire()
+                state = self.store.load()
+                running_task = replace(state.tasks[0], status=TaskStatus.IN_PROGRESS)
+                self.store.save(
+                    replace(
+                        state,
+                        project=replace(
+                            state.project,
+                            status=status,
+                            current_task_id=running_task.id,
+                        ),
+                        tasks=(running_task,),
+                    )
+                )
+                handle.record_worker_identity("task-1", "thread-1", 1)
+
+                handle.close(interrupted=True)
+
+                final = self.store.load()
+                self.assertIs(final.project.status, ProjectStatus.HUMAN_REQUIRED)
+                self.assertIs(
+                    final.execution_leases[-1].status,
+                    ExecutionLeaseStatus.RELEASED,
+                )
+                self.assertEqual(
+                    final.human_actions[-1].category.value,
+                    "recovery_uncertain",
+                )
+
     def event_types(self):
         return tuple(event.event_type for event in self.store.load().events)
 

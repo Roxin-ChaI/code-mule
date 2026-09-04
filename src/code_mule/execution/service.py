@@ -240,7 +240,12 @@ class ExecutionOwnershipService:
         if (
             interrupted
             and state.project.status
-            in {ProjectStatus.RUNNING, ProjectStatus.CANCEL_REQUESTED}
+            in {
+                ProjectStatus.RUNNING,
+                ProjectStatus.CHANGE_REQUESTED,
+                ProjectStatus.PAUSED_BY_BOSS,
+                ProjectStatus.CANCEL_REQUESTED,
+            }
             and state.project.current_task_id is not None
         ):
             if pending_action(state) is None:

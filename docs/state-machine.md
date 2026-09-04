@@ -41,6 +41,7 @@ This document specifies the v0.1.0 project lifecycle conceptually. It does not i
 | `REPLANNING` | `FAILED` | No safe, valid revised Plan can be established. |
 | `PAUSED_BY_BOSS` | `RUNNING` | RESUME and state/repository consistency checks succeed. |
 | `PAUSED_BY_BOSS` | `CHANGE_REQUESTED` | Boss submits CHANGE while paused. |
+| `PAUSED_BY_BOSS` | `HUMAN_REQUIRED` | An in-flight Task reaches its Safe Point with a typed failure or Human Gate after PAUSE was recorded. |
 | `HUMAN_REQUIRED` | `RUNNING` | Boss input resolves the issue and all resume guards pass. |
 | `HUMAN_REQUIRED` | `PAUSED_BY_BOSS` | Boss elects to pause and repository state is safely reconciled. |
 | `HUMAN_REQUIRED` | `FAILED` | Boss rejects a required action or the issue cannot be resolved safely. |
