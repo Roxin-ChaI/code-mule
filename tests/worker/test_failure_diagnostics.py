@@ -7,6 +7,7 @@ from code_mule.worker import (
     CodexProtocolError, CodexTurnFailed, CodexTurnFailureDetails,
     CodexTurnFailureKind,
 )
+from code_mule.worker.contracts import worker_failure_metadata, turn_failure_details_from_metadata
 from .test_protocol import make_client, ScriptedMonotonic
 
 
@@ -66,6 +67,33 @@ class TurnFailureDiagnosticsTests(unittest.TestCase):
             client.wait_for_turn("thread-1", "turn-1")
         self.assertIs(caught.exception.details.kind, CodexTurnFailureKind.TURN_FAILED)
         self.assertEqual(caught.exception.details.activity_count, 2)
+
+    def test_retryable_error_can_finish_successfully_without_raw_issue(self):
+        client, _ = self.client()
+        client._pending_messages.extend([
+            notification("error", willRetry=True, error={"message": SECRET}),
+            notification("item/completed", item={"type": "agentMessage", "text": "complete"}),
+            notification("turn/completed", turn={"id": "turn-1", "status": "completed"}),
+        ])
+        result = client.wait_for_turn("thread-1", "turn-1")
+        self.assertTrue(result.completed)
+        self.assertNotIn(SECRET, repr(result))
+
+    def test_safe_metadata_round_trip_rejects_tampered_diagnostic_fields(self):
+        details = CodexTurnFailureDetails(
+            CodexTurnFailureKind.ERROR_NOTIFICATION, "thread-1", "turn-1", None,
+            False, "internal_error", 3, 12.4, 128.3,
+        )
+        metadata = worker_failure_metadata(CodexTurnFailed(details=details))
+        self.assertEqual(turn_failure_details_from_metadata(metadata), details)
+        self.assertNotIn("turn_status", metadata)
+        self.assertEqual(turn_failure_details_from_metadata(metadata | {"raw_message": SECRET}), details)
+        for changes in (
+            {"error_code": SECRET}, {"activity_count": SECRET},
+            {"last_activity_age_seconds": "nan"}, {"failure_kind": SECRET},
+            {"turn_status": SECRET}, {"will_retry": "true"},
+        ):
+            self.assertIsNone(turn_failure_details_from_metadata(metadata | changes))
 
     def test_wrong_identity_does_not_fail_current_turn_or_refresh_activity(self):
         client, _ = self.client()

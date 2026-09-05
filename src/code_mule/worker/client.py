@@ -649,14 +649,6 @@ class CodexAppServerClient:
         if not isinstance(params.get("turnId"), str):
             raise CodexProtocolError(f"{method} is missing turnId")
 
-    @staticmethod
-    def _turn_error_message(error: object, fallback: str = "Codex turn failed") -> str:
-        if isinstance(error, dict):
-            message = error.get("message")
-            if isinstance(message, str) and message:
-                return message
-        return fallback
-
     def _require_process(self) -> _Process:
         if self._process is None:
             raise CodexAppServerStartError("Codex app-server is not running")

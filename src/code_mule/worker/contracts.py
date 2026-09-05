@@ -127,6 +127,23 @@ def worker_failure_metadata(error: CodexWorkerError) -> dict[str, str]:
     """Return bounded diagnostic metadata without model or environment content."""
 
     metadata = {"error_type": type(error).__name__}
+    if isinstance(error, CodexTurnFailed) and error.details is not None:
+        details = error.details
+        metadata.update({
+            "failure_kind": details.kind.value,
+            "thread_id": details.thread_id,
+            "turn_id": details.turn_id,
+            "activity_count": str(details.activity_count),
+            "turn_elapsed_seconds": format(details.turn_elapsed_seconds, ".6f"),
+        })
+        if details.turn_status is not None:
+            metadata["turn_status"] = details.turn_status
+        if details.will_retry is not None:
+            metadata["will_retry"] = str(details.will_retry).lower()
+        if details.error_code is not None:
+            metadata["error_code"] = details.error_code
+        if details.last_activity_age_seconds is not None:
+            metadata["last_activity_age_seconds"] = format(details.last_activity_age_seconds, ".6f")
     if isinstance(error, CodexTurnTimeout):
         metadata["timeout_kind"] = error.timeout_kind
         if error.inactivity_timeout_seconds is not None:
@@ -136,6 +153,31 @@ def worker_failure_metadata(error: CodexWorkerError) -> dict[str, str]:
         if error.max_turn_seconds is not None:
             metadata["max_turn_seconds"] = format(error.max_turn_seconds, "g")
     return metadata
+
+
+def turn_failure_details_from_metadata(metadata: dict[str, str]) -> CodexTurnFailureDetails | None:
+    """Validate the safe event projection before verbose display; never echo extras."""
+    if metadata.get("error_type") != "CodexTurnFailed":
+        return None
+    try:
+        retry = metadata.get("will_retry")
+        if retry not in (None, "false"):
+            return None
+        return CodexTurnFailureDetails(
+            kind=CodexTurnFailureKind(metadata["failure_kind"]),
+            thread_id=metadata["thread_id"], turn_id=metadata["turn_id"],
+            turn_status=metadata.get("turn_status"),
+            will_retry=False if retry == "false" else None,
+            error_code=metadata.get("error_code"),
+            activity_count=int(metadata["activity_count"]),
+            last_activity_age_seconds=(
+                float(metadata["last_activity_age_seconds"])
+                if "last_activity_age_seconds" in metadata else None
+            ),
+            turn_elapsed_seconds=float(metadata["turn_elapsed_seconds"]),
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
 
 
 class CodexApprovalRequired(CodexWorkerError):

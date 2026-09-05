@@ -156,7 +156,7 @@ def render_change_applied(
 
 
 def render_human_action(
-    action: HumanAction, *, verbose: bool = False
+    action: HumanAction, *, verbose: bool = False, state: ProjectState | None = None
 ) -> tuple[str, ...]:
     view = human_action_view(action)
     lines = (
@@ -212,7 +212,42 @@ def render_human_action(
                 f"worker_request_method: {view.worker_request_method}",
                 f"worker_request_id: {view.worker_request_id or '-'}",
             )
+        if state is not None:
+            lines += _render_worker_failure(state, action)
     return lines
+
+
+def _render_worker_failure(state: ProjectState, action: HumanAction) -> tuple[str, ...]:
+    from code_mule.worker.contracts import turn_failure_details_from_metadata
+
+    # Match the action's exact failure boundary, never a different Task/attempt.
+    events = tuple(
+        event for event in state.events
+        if event.event_type == "task.execution_failed"
+        and event.entity_id == action.task_id
+        and event.timestamp == action.created_at
+    )
+    if len(events) != 1:
+        return ()
+    event = events[0]
+    details = turn_failure_details_from_metadata(event.metadata)
+    if details is None:
+        return ()
+    age = details.last_activity_age_seconds
+    return (
+        "", "WORKER FAILURE",
+        "Failure type   CodexTurnFailed",
+        f"Failure kind   {details.kind.value}",
+        f"Turn status    {details.turn_status or '-'}",
+        f"Error code     {details.error_code or '-'}",
+        f"Will retry     {'-' if details.will_retry is None else 'false'}",
+        f"Activity count {details.activity_count}",
+        f"Last activity  {'-' if age is None else f'{age:.1f}s before failure'}",
+        f"Turn elapsed   {details.turn_elapsed_seconds:.1f}s",
+        f"Thread ID      {details.thread_id}",
+        f"Turn ID        {details.turn_id}",
+        f"Failure time   {event.timestamp.isoformat()}",
+    )
 
 
 def render_project_cancellation_requested(

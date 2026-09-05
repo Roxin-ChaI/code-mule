@@ -389,7 +389,7 @@ class ProductionCliComposition:
         if action is None:
             raise InvalidCliProjectState("no pending HumanAction")
         return CliCommandResult(
-            CliExitCode.SUCCESS, render_human_action(action, verbose=verbose)
+            CliExitCode.SUCCESS, render_human_action(action, verbose=verbose, state=state)
         )
 
     def approve(self, action_id: str, verbose: bool = False) -> CliCommandResult:
