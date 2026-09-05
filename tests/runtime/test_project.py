@@ -247,6 +247,16 @@ def build_service(
 
 
 class ProjectExecutionContractTests(unittest.TestCase):
+    def test_worker_prompt_distinguishes_native_input_and_typed_report_actions(self):
+        state = make_state((make_task("task-a"),))
+        prompt = TaskPromptBuilder().build(state, state.tasks[0])
+        for instruction in (
+            "requestUserInput", "human_action.kind=input", "do not choose for Boss",
+            "Use approval", "external_side_effect", "human_action=null",
+            "Never bypass a Human Gate", "Do not include secrets",
+        ):
+            self.assertIn(instruction, prompt)
+
     def test_config_requires_positive_task_limit(self):
         self.assertEqual(ProjectExecutionConfig(1).max_tasks_per_run, 1)
         for value in (0, -1):

@@ -257,6 +257,13 @@ Code Mule starts a fresh Worker session, verifies that the partial workspace
 changes still match the original clean Git baseline, and continues the same
 Task. It does not resume the closed Codex session or create a partial commit.
 
+Human actions have distinct meanings: `WORKER_INPUT` uses `answer` for a question
+or product choice; `WORKER_APPROVAL` and `EXTERNAL_SIDE_EFFECT` use `approve` /
+`reject` for the specific operation shown by `inspect`. Approval records that
+one decision and does not automatically execute the operation. Worker input can
+arrive through native Codex input requests or a typed end-of-turn report; both
+use the same fresh-session continuation described above.
+
 ## CHANGE Example
 
 ```text

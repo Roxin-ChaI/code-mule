@@ -249,6 +249,12 @@ Worker 需要补充信息时，Code Mule 会停在 `HUMAN_REQUIRED`，`inspect` 
 session，先确认局部 workspace 修改仍与原始 clean Git baseline 一致，再继续同一
 Task；它不会恢复已关闭的 Codex session，也不会为局部结果创建 commit。
 
+人工操作按语义区分：`WORKER_INPUT` 是补充信息或产品选择，使用 `answer`；
+`WORKER_APPROVAL` 和 `EXTERNAL_SIDE_EFFECT` 是对 `inspect` 展示的具体操作
+进行审批，使用 `approve` / `reject`。批准只记录本次决定，不会自动执行该操作。
+Worker 可以通过 Codex 原生输入请求，或在结束当前 turn 时返回 typed report
+来提问；两者都复用上述 fresh Worker session 续接流程。
+
 ## CHANGE 示例
 
 ```text
