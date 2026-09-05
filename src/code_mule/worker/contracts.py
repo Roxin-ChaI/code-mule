@@ -2,6 +2,9 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from enum import StrEnum
+import math
+import re
 
 from code_mule.domain.models import Task
 
@@ -23,8 +26,72 @@ class CodexProtocolError(CodexWorkerError):
     """Raised when app-server violates the expected structured protocol."""
 
 
+class CodexTurnFailureKind(StrEnum):
+    ERROR_NOTIFICATION = "error_notification"
+    TURN_FAILED = "turn_failed"
+    TURN_INTERRUPTED = "turn_interrupted"
+
+
+# Only exact structured codes are retained; unknown codes and prose are omitted.
+SAFE_TURN_ERROR_CODES = frozenset({
+    "rate_limit_exceeded", "context_window_exceeded", "internal_error",
+    "server_error", "model_not_found", "insufficient_quota",
+})
+
+
+@dataclass(frozen=True)
+class CodexTurnFailureDetails:
+    kind: CodexTurnFailureKind
+    thread_id: str
+    turn_id: str
+    turn_status: str | None
+    will_retry: bool | None
+    error_code: str | None
+    activity_count: int
+    last_activity_age_seconds: float | None
+    turn_elapsed_seconds: float
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, CodexTurnFailureKind):
+            raise ValueError("failure kind must be typed")
+        for value in (self.thread_id, self.turn_id):
+            if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value):
+                raise ValueError("failure identity must be bounded")
+        expected = {
+            CodexTurnFailureKind.ERROR_NOTIFICATION: None,
+            CodexTurnFailureKind.TURN_FAILED: "failed",
+            CodexTurnFailureKind.TURN_INTERRUPTED: "interrupted",
+        }[self.kind]
+        if self.turn_status != expected:
+            raise ValueError("failure kind and terminal status disagree")
+        if self.will_retry is not None and type(self.will_retry) is not bool:
+            raise ValueError("will_retry must be boolean or None")
+        if self.will_retry is True or (expected is not None and self.will_retry is not None):
+            raise ValueError("terminal failure cannot request retry")
+        if self.error_code is not None and self.error_code not in SAFE_TURN_ERROR_CODES:
+            raise ValueError("error code is not allowlisted")
+        if type(self.activity_count) is not int or not 0 <= self.activity_count <= 1_000_000_000:
+            raise ValueError("activity count must be bounded")
+        if self.turn_elapsed_seconds is None:
+            raise ValueError("turn elapsed time is required")
+        for value in (self.turn_elapsed_seconds, self.last_activity_age_seconds):
+            if value is not None and (
+                type(value) not in (float, int) or not math.isfinite(value) or not 0 <= value <= 1_000_000_000
+            ):
+                raise ValueError("failure elapsed time must be finite and bounded")
+        if (self.activity_count == 0) != (self.last_activity_age_seconds is None):
+            raise ValueError("last activity requires observed activity")
+        if self.last_activity_age_seconds is not None and self.last_activity_age_seconds > self.turn_elapsed_seconds:
+            raise ValueError("activity cannot precede turn observation")
+
+
 class CodexTurnFailed(CodexWorkerError):
     """Raised when app-server explicitly reports a failed or interrupted turn."""
+
+    def __init__(self, message: str = "Codex turn failed", *, details: CodexTurnFailureDetails | None = None) -> None:
+        self.details = details
+        # Preserve source compatibility without retaining arbitrary provider prose.
+        super().__init__("Codex turn failed" if details is None else f"Codex turn failed ({details.kind.value})")
 
 
 class CodexTurnTimeout(CodexWorkerError):
@@ -169,6 +236,8 @@ __all__ = [
     "CodexApprovalRequired",
     "CodexProtocolError",
     "CodexTurnFailed",
+    "CodexTurnFailureKind",
+    "CodexTurnFailureDetails",
     "CodexTurnHardTimeout",
     "CodexTurnInactivityTimeout",
     "CodexTurnTimeout",

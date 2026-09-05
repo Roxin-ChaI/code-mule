@@ -26,6 +26,9 @@ from .contracts import (
     CodexApprovalRequired,
     CodexProtocolError,
     CodexTurnFailed,
+    CodexTurnFailureDetails,
+    CodexTurnFailureKind,
+    SAFE_TURN_ERROR_CODES,
     CodexTurnHardTimeout,
     CodexTurnInactivityTimeout,
     CodexTurnTimeout,
@@ -233,6 +236,8 @@ class CodexAppServerClient:
         event_count = 0
         final_message: str | None = None
         issues: list[str] = []
+        activity_count = 0
+        last_activity: float | None = None
 
         while True:
             try:
@@ -260,10 +265,9 @@ class CodexAppServerClient:
             if self._is_trusted_turn_activity(
                 method, params, thread_id, turn_id
             ):
-                inactivity_deadline = (
-                    self._monotonic()
-                    + self._config.inactivity_timeout_seconds
-                )
+                last_activity = self._monotonic()
+                activity_count += 1
+                inactivity_deadline = last_activity + self._config.inactivity_timeout_seconds
 
             if matches_thread and matches_turn:
                 self._project_activity(method, params)
@@ -288,10 +292,16 @@ class CodexAppServerClient:
                 self._require_event_identity(params, method)
                 if matches_thread and matches_turn:
                     event_count += 1
-                    issue = self._turn_error_message(params.get("error"))
-                    issues.append(issue)
+                    self._safe_failure_code(params.get("error"), allow_none=False)
+                    if "willRetry" in params and type(params["willRetry"]) is not bool:
+                        raise CodexProtocolError("error notification has invalid willRetry")
                     if params.get("willRetry") is not True:
-                        raise CodexTurnFailed(issue)
+                        raise self._turn_failure(
+                            CodexTurnFailureKind.ERROR_NOTIFICATION, thread_id, turn_id,
+                            params.get("error"), None, params.get("willRetry"),
+                            activity_count, last_activity, started,
+                        )
+                    issues.append("Codex reported a retryable turn error")
                 continue
 
             if method == TURN_COMPLETED_METHOD:
@@ -312,8 +322,11 @@ class CodexAppServerClient:
                             issues=tuple(issues),
                         )
                     if status in {"failed", "interrupted"}:
-                        raise CodexTurnFailed(
-                            self._turn_error_message(turn.get("error"), status)
+                        raise self._turn_failure(
+                            CodexTurnFailureKind.TURN_FAILED if status == "failed"
+                            else CodexTurnFailureKind.TURN_INTERRUPTED,
+                            thread_id, turn_id, turn.get("error"), status, None,
+                            activity_count, last_activity, started,
                         )
                     raise CodexProtocolError(
                         f"turn/completed has invalid status {status!r}"
@@ -322,6 +335,35 @@ class CodexAppServerClient:
 
             if matches_thread and matches_turn:
                 event_count += 1
+
+    @staticmethod
+    def _safe_failure_code(error: object, *, allow_none: bool = True) -> str | None:
+        if error is None and allow_none:
+            return None
+        if not isinstance(error, dict):
+            raise CodexProtocolError("turn error must be an object")
+        if "message" in error and not isinstance(error["message"], str):
+            raise CodexProtocolError("turn error message has invalid type")
+        code = error.get("code")
+        return code if isinstance(code, str) and code in SAFE_TURN_ERROR_CODES else None
+
+    def _turn_failure(
+        self, kind, thread_id, turn_id, error, status, will_retry,
+        activity_count, last_activity, started,
+    ) -> CodexTurnFailed:
+        code = self._safe_failure_code(error)
+        failed_at = self._monotonic()
+        try:
+            details = CodexTurnFailureDetails(
+                kind=kind, thread_id=thread_id, turn_id=turn_id,
+                turn_status=status, will_retry=will_retry, error_code=code,
+                activity_count=activity_count,
+                last_activity_age_seconds=(None if last_activity is None else failed_at - last_activity),
+                turn_elapsed_seconds=failed_at - started,
+            )
+        except (TypeError, ValueError):
+            raise CodexProtocolError("turn failure diagnostics are malformed") from None
+        return CodexTurnFailed(details=details)
 
     def _project_activity(
         self, method: str, params: dict[str, object]

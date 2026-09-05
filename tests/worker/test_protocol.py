@@ -850,7 +850,7 @@ class CodexAppServerClientTests(unittest.TestCase):
                         },
                     }
                 )
-                with self.assertRaisesRegex(CodexTurnFailed, "explicit failure"):
+                with self.assertRaisesRegex(CodexTurnFailed, "Codex turn failed"):
                     client.wait_for_turn(thread_id, turn_id)
                 client.close()
 
@@ -870,7 +870,7 @@ class CodexAppServerClientTests(unittest.TestCase):
                 },
             }
         )
-        with self.assertRaisesRegex(CodexTurnFailed, "model unavailable"):
+        with self.assertRaisesRegex(CodexTurnFailed, "error_notification"):
             client.wait_for_turn(thread_id, turn_id)
         client.close()
 
