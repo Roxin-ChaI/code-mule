@@ -11,6 +11,7 @@ from code_mule.domain.enums import (
     ProjectStatus,
     SupervisorDecisionType,
     TaskStatus,
+    WorkerHumanActionKind,
 )
 from code_mule.domain.models import (
     Decision,
@@ -282,17 +283,23 @@ class TaskCycleService:
                 state = self._persist_report(state, task, report)
                 reports += (report,)
 
-                if report.human_action_required:
-                    self._transition_human_required(
-                        state,
-                        self._task(state, task.id),
-                        event_types=("task.human_required",),
-                        metadata={"source": "worker_report"},
-                        category=HumanActionCategory.EXTERNAL_SIDE_EFFECT,
-                        summary="Worker reported an operation requiring human review",
-                        requested_action="Inspect and explicitly approve or reject the specific operation",
-                        risk="The operation may have an irreversible external side effect",
-                    )
+                if report.human_action is not None:
+                    try:
+                        state = self._record_report_human_action(
+                            state, self._task(state, task.id), report, baseline
+                        )
+                    except GitDeliveryError as error:
+                        state = self._record_git_failure(
+                            self._store.load(), task, error, "worker_report"
+                        )
+                        self._emit_git_failure(
+                            state, task, error, "worker_report", attempt=report.attempt
+                        )
+                        self._clear_worker_identity(task.id)
+                        return self._human_outcome(
+                            task.id, reports, decisions, final_prompt=None
+                        )
+                    self._clear_worker_identity(task.id)
                     self._emit_human_gate(
                         state,
                         self._task(state, task.id),
@@ -971,6 +978,62 @@ class TaskCycleService:
             worker_input=worker_input,
         )
 
+    def _record_report_human_action(
+        self,
+        state: ProjectState,
+        task: Task,
+        report: ExecutionReport,
+        baseline: GitBaseline | None,
+    ) -> ProjectState:
+        action = report.human_action
+        if action is None:
+            raise InvalidTaskCycleState("Worker report has no human action")
+        partial_paths: tuple[str, ...] = ()
+        baseline_head = None
+        if self._git_delivery is not None:
+            if baseline is None:
+                raise GitOwnershipError("Worker human action lacks its Git baseline")
+            partial_paths = self._git_delivery.capture_partial_paths(baseline)
+            baseline_head = baseline.baseline_head
+            if not set(partial_paths).issubset(report.files_changed):
+                raise GitOwnershipError("Worker human action omitted partial paths")
+        category = {
+            WorkerHumanActionKind.INPUT: HumanActionCategory.WORKER_INPUT,
+            WorkerHumanActionKind.APPROVAL: HumanActionCategory.WORKER_APPROVAL,
+            WorkerHumanActionKind.EXTERNAL_SIDE_EFFECT: HumanActionCategory.EXTERNAL_SIDE_EFFECT,
+        }[action.kind]
+        details = None
+        if action.kind is WorkerHumanActionKind.INPUT:
+            details = WorkerInputDetails(
+                request_method="worker/report",
+                request_id=report.id,
+                question=action.request,
+                choices=action.choices,
+                worker_attempt=report.attempt,
+                baseline_head=baseline_head,
+                partial_paths=partial_paths,
+            )
+        return self._transition_human_required(
+            state,
+            task,
+            event_types=("task.human_required",),
+            metadata={
+                "source": "worker_report",
+                "kind": action.kind.value,
+                "attempt": str(report.attempt),
+                "report_id": report.id,
+            },
+            category=category,
+            summary=action.summary,
+            requested_action=action.request,
+            risk=(
+                "Partial work is preserved; answering requires an explicit run in a fresh Worker session"
+                if action.kind is WorkerHumanActionKind.INPUT
+                else action.summary
+            ),
+            worker_input=details,
+        )
+
     def _worker_input_continuation(
         self, state: ProjectState, task: Task
     ) -> tuple[WorkerInputDetails, GitBaseline] | None:
@@ -982,7 +1045,7 @@ class TaskCycleService:
             and action.status is HumanActionStatus.RESOLVED
             and action.worker_input is not None
             and action.worker_input.answer is not None
-            and action.worker_input.worker_attempt == task.execution_attempts + 1
+            and self._input_attempt_matches(state, task, action.worker_input)
         )
         if not actions:
             return None
@@ -1015,8 +1078,25 @@ class TaskCycleService:
             and action.status is HumanActionStatus.RESOLVED
             and action.worker_input is not None
             and action.worker_input.answer is not None
-            and action.worker_input.worker_attempt == task.execution_attempts + 1
+            and TaskCycleService._input_attempt_matches(state, task, action.worker_input)
             for action in state.human_actions
+        )
+
+    @staticmethod
+    def _input_attempt_matches(
+        state: ProjectState, task: Task, details: WorkerInputDetails
+    ) -> bool:
+        if details.request_method != "worker/report":
+            return details.worker_attempt == task.execution_attempts + 1
+        # Report-level input has already incremented the persisted attempt
+        # count. Bind continuation to that exact typed report, once only.
+        return details.worker_attempt == task.execution_attempts and any(
+            report.id == details.request_id
+            and report.task_id == task.id
+            and report.attempt == details.worker_attempt
+            and report.human_action is not None
+            and report.human_action.kind is WorkerHumanActionKind.INPUT
+            for report in state.execution_reports
         )
 
     @staticmethod

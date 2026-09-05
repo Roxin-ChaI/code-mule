@@ -946,6 +946,30 @@ class TaskCycleFailureTests(unittest.TestCase):
         self.assertEqual(supervisor.requests, [])
         self.assertIs(store.current.project.status, ProjectStatus.HUMAN_REQUIRED)
 
+    def test_report_category_uses_kind_even_when_prose_mentions_other_categories(self):
+        for kind, category in (
+            (WorkerHumanActionKind.INPUT, HumanActionCategory.WORKER_INPUT),
+            (WorkerHumanActionKind.APPROVAL, HumanActionCategory.WORKER_APPROVAL),
+            (WorkerHumanActionKind.EXTERNAL_SIDE_EFFECT, HumanActionCategory.EXTERNAL_SIDE_EFFECT),
+        ):
+            with self.subTest(kind=kind):
+                action = WorkerHumanAction(
+                    kind, "input approval external_side_effect", "Specific request"
+                )
+
+                class Session(FakeWorkerSession):
+                    def execute(self, request, *, report_id, created_at):
+                        return replace(
+                            super().execute(request, report_id=report_id, created_at=created_at),
+                            human_action=action,
+                        )
+
+                service, request, store, _, supervisor, _ = build_cycle(session=Session())
+                service.execute(request)
+                self.assertIs(store.current.human_actions[-1].category, category)
+                self.assertEqual(store.current.human_actions[-1].requested_action, action.request)
+                self.assertEqual(supervisor.requests, [])
+
     def test_worker_approval_returns_human_required_without_supervisor(self):
         session = FakeWorkerSession([CodexApprovalRequired("approval")])
         supervisor = FakeSupervisor([])

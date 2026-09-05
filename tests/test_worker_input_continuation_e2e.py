@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from io import StringIO
+import json
 import subprocess
 from tempfile import TemporaryDirectory
 import unittest
@@ -11,6 +12,7 @@ import unittest
 from code_mule.cli.composition import ProductionCliComposition, RuntimeComposition
 from code_mule.domain.enums import (
     HumanActionStatus,
+    HumanActionCategory,
     PlanStatus,
     ProjectStatus,
     SupervisorDecisionType,
@@ -29,6 +31,9 @@ from code_mule.scheduler import TaskScheduler
 from code_mule.state.store import JsonProjectStateStore
 from code_mule.supervisor.contracts import ReviewResult
 from code_mule.worker import CodexUserInputRequired, WorkerInputRequest
+from code_mule.worker.structured_report import parse_structured_worker_report
+from code_mule.worker.parsing import build_execution_report
+from code_mule.cli.contracts import InvalidCliProjectState
 
 from state import make_project_state
 
@@ -118,8 +123,51 @@ class ContinuationSession:
         self.closed += 1
 
 
+class ReportActionSession(InputSession):
+    def __init__(self, workspace, kind, mutation=None):
+        super().__init__(workspace)
+        self.kind = kind
+        self.mutation = mutation
+
+    def execute(self, request, *, report_id, created_at):
+        (self.workspace / "calculator.py").write_text(
+            "def add(a, b):\n    return a + b\n", encoding="utf-8"
+        )
+        if self.mutation == "staged":
+            git(self.workspace, "add", "--", "calculator.py")
+        elif self.mutation == "head":
+            git(self.workspace, "commit", "--allow-empty", "-q", "-m", "external")
+        details = {
+            "input": ("Boss storage choice required", "排行榜使用 localStorage 还是 session memory?", ["localStorage", "session memory"]),
+            "approval": ("Installing a system package changes the host", "Approve installing the system package", []),
+            "external_side_effect": ("Publishing the branch exposes project code remotely", "Push this branch to the remote repository", []),
+        }[self.kind]
+        payload = {
+            "status": "completed",
+            "summary": "Turn ended awaiting Boss",
+            "files_changed": [] if self.mutation == "omitted" else ["calculator.py"],
+            "tests": [],
+            "static_checks": [],
+            "git_state": "dirty",
+            "issues": [],
+            "human_action": {
+                "kind": self.kind,
+                "summary": details[0],
+                "request": details[1],
+                "choices": details[2],
+            },
+        }
+        return build_execution_report(
+            request, parse_structured_worker_report(json.dumps(payload)), report_id, created_at
+        )
+
+
 class AcceptingSupervisor:
+    def __init__(self):
+        self.reviews = []
+
     def review(self, request):
+        self.reviews.append(request)
         return ReviewResult(
             SupervisorDecisionType.CONTINUE,
             "Task criteria satisfied",
@@ -144,6 +192,23 @@ class DoneFinalizer:
 
 class WorkerInputContinuationE2ETests(unittest.TestCase):
     def test_input_answer_fresh_continuation_produces_one_commit(self):
+        self._input_scenario()
+
+    def test_report_input_answer_fresh_continuation_produces_one_commit(self):
+        self._input_scenario("input")
+
+    def test_report_approval_and_external_effect_only_accept_scoped_approval_or_rejection(self):
+        for kind in ("approval", "external_side_effect"):
+            for resolution in ("approve", "reject"):
+                with self.subTest(kind=kind, resolution=resolution):
+                    self._input_scenario(kind, resolution=resolution)
+
+    def test_report_human_action_git_drift_fails_closed_before_input_or_review(self):
+        for mutation in ("staged", "head", "omitted"):
+            with self.subTest(mutation=mutation):
+                self._input_scenario("input", mutation=mutation)
+
+    def _input_scenario(self, report_kind=None, *, resolution=None, mutation=None):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             workspace = root / "workspace"
@@ -186,18 +251,23 @@ class WorkerInputContinuationE2ETests(unittest.TestCase):
                 )
             )
 
-            input_session = InputSession(workspace)
+            input_session = (
+                InputSession(workspace) if report_kind is None
+                else ReportActionSession(workspace, report_kind, mutation)
+            )
             continuation_session = ContinuationSession(workspace)
             sessions = [input_session, continuation_session]
+            supervisor = AcceptingSupervisor()
+            report_ids = iter(("report-input", "report-final"))
 
             def cycle_factory():
                 session = sessions.pop(0)
                 return TaskCycleService(
                     worker_session_factory=lambda: session,
-                    supervisor=AcceptingSupervisor(),
+                    supervisor=supervisor,
                     store=store,
                     clock=lambda: NOW,
-                    report_id_factory=lambda: "report-final",
+                    report_id_factory=lambda: next(report_ids),
                     decision_id_factory=lambda: "decision-final",
                     event_id_factory=lambda: "event-runtime",
                     config=TaskCycleConfig(2),
@@ -237,13 +307,54 @@ class WorkerInputContinuationE2ETests(unittest.TestCase):
             self.assertNotEqual(first.exit_code, 0)
             gated = store.load()
             action = gated.human_actions[-1]
+            self.assertEqual(supervisor.reviews, [])
+            self.assertIs(gated.project.status, ProjectStatus.HUMAN_REQUIRED)
+            self.assertIs(gated.tasks[0].status, TaskStatus.IN_PROGRESS)
+            self.assertEqual(gated.git_commit_results, ())
+            self.assertEqual(input_session.closed, 1)
+            if mutation:
+                self.assertIs(action.category, HumanActionCategory.RECOVERY_UNCERTAIN)
+                self.assertEqual(continuation_session.started, 0)
+                self.assertTrue((workspace / "calculator.py").exists())
+                return
+            if report_kind in ("approval", "external_side_effect"):
+                self.assertIs(action.category, {
+                    "approval": HumanActionCategory.WORKER_APPROVAL,
+                    "external_side_effect": HumanActionCategory.EXTERNAL_SIDE_EFFECT,
+                }[report_kind])
+                inspected = "\n".join(composition.inspect().output)
+                self.assertIn(action.requested_action, inspected)
+                self.assertIn(action.risk, inspected)
+                with self.assertRaises(InvalidCliProjectState):
+                    composition.answer(action.id, "yes")
+                self.assertEqual(store.load(), gated)
+                getattr(composition, resolution)(action.id)
+                closed = store.load()
+                self.assertIs(closed.human_actions[-1].status, {
+                    "approve": HumanActionStatus.APPROVED,
+                    "reject": HumanActionStatus.REJECTED,
+                }[resolution])
+                self.assertIs(closed.project.status, ProjectStatus.HUMAN_REQUIRED)
+                self.assertEqual(continuation_session.started, 0)
+                self.assertEqual(git(workspace, "rev-parse", "HEAD"), initial_head)
+                self.assertTrue((workspace / "calculator.py").exists())
+                return
+            self.assertIs(action.category, HumanActionCategory.WORKER_INPUT)
+            self.assertEqual(action.task_id, task.id)
+            if report_kind:
+                self.assertEqual(gated.execution_reports[0].human_action.kind.value, report_kind)
+                self.assertEqual(action.worker_input.worker_attempt, 1)
+                self.assertEqual(action.worker_input.request_id, "report-input")
             self.assertEqual(action.worker_input.partial_paths, ("calculator.py",))
             self.assertEqual(action.worker_input.baseline_head, initial_head)
             self.assertEqual(git(workspace, "rev-list", "--count", "HEAD"), "1")
 
             inspected = "\n".join(composition.inspect().output)
-            self.assertIn("Should multiply accept integers only?", inspected)
-            answered = composition.answer(action.id, "Yes, integers only")
+            self.assertIn(action.worker_input.question, inspected)
+            for choice in action.worker_input.choices:
+                self.assertIn(choice, inspected)
+            answer = "localStorage" if report_kind else "Yes, integers only"
+            answered = composition.answer(action.id, answer)
             self.assertIn("WORKER INPUT ANSWERED", answered.output)
             after_answer = store.load()
             self.assertIs(after_answer.project.status, ProjectStatus.RUNNING)
@@ -260,6 +371,13 @@ class WorkerInputContinuationE2ETests(unittest.TestCase):
             self.assertIs(completed.tasks[0].status, TaskStatus.COMPLETED)
             self.assertEqual(len(completed.git_baselines), 1)
             self.assertEqual(len(completed.git_commit_results), 1)
+            self.assertEqual(completed.git_baselines[0].baseline_head, initial_head)
+            self.assertEqual(len(completed.tasks), 1)
+            self.assertEqual(completed.tasks[0].id, task.id)
+            self.assertEqual(completed.change_requests, ())
+            self.assertEqual(completed.impact_analyses, ())
+            self.assertEqual(len(supervisor.reviews), 1)
+            self.assertEqual(completed.tasks[0].execution_attempts, 2 if report_kind else 1)
             self.assertEqual(git(workspace, "rev-list", "--count", "HEAD"), "2")
             self.assertEqual(git(workspace, "status", "--short"), "")
             self.assertEqual(sessions, [])
@@ -267,7 +385,7 @@ class WorkerInputContinuationE2ETests(unittest.TestCase):
             self.assertEqual(continuation_session.started, 1)
             self.assertEqual(continuation_session.closed, 1)
             self.assertIn(
-                "Boss answer: Yes, integers only", continuation_session.prompts[0]
+                f"Boss answer: {answer}", continuation_session.prompts[0]
             )
 
 
