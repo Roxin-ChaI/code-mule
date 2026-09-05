@@ -54,7 +54,7 @@ class ExecutionReportMappingTests(unittest.TestCase):
         self.assertEqual(
             report.tests,
             (
-                "python -m unittest: pass (129 passed)",
+                "python -m unittest: pass",
                 "integration: not_run",
             ),
         )

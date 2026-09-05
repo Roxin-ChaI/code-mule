@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from code_mule.domain.models import ExecutionReport
-from code_mule.domain.worker_verification import WorkerCheckType, WorkerVerificationCheck
+from code_mule.domain.worker_verification import WorkerCheckType, WorkerVerificationCheck, safe_check_name
 
 from .contracts import WorkerTaskRequest
 from .structured_report import StructuredWorkerReport, WorkerCheckResult
@@ -34,7 +34,7 @@ def build_execution_report(
         summary=result.summary,
         created_at=created_at,
         verification_checks=tuple(
-            WorkerVerificationCheck(check.name, kind, check.status, check.required)
+            WorkerVerificationCheck(safe_check_name(check.name), kind, check.status, check.required)
             for kind, checks in ((WorkerCheckType.TEST, result.tests), (WorkerCheckType.STATIC_CHECK, result.static_checks))
             for check in checks
         ),
@@ -42,10 +42,8 @@ def build_execution_report(
 
 
 def _format_check(check: WorkerCheckResult) -> str:
-    formatted = f"{check.name}: {check.status.value}"
-    if check.detail is not None:
-        return f"{formatted} ({check.detail})"
-    return formatted
+    # Arbitrary Worker detail stays ephemeral, not in durable evidence or UI.
+    return f"{safe_check_name(check.name)}: {check.status.value}"
 
 
 __all__ = ["build_execution_report"]

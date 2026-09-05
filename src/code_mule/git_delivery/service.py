@@ -249,6 +249,11 @@ class GitDeliveryService:
     def _validate_report(report: ExecutionReport) -> None:
         if report.status != "completed" or report.human_action_required:
             raise WorkerVerificationError("Worker did not provide completed delivery evidence")
+        if any(
+            not isinstance(entries, tuple) or not all(isinstance(entry, str) for entry in entries)
+            for entries in (report.tests, report.static_checks)
+        ):
+            raise WorkerVerificationError("Worker verification evidence is malformed")
         checks = report.verification_checks
         if checks is None:
             checks = legacy_checks(report.tests, report.static_checks)

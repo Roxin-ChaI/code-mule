@@ -575,11 +575,16 @@ class TaskCycleService:
             state,
             task,
             ProgressEventType.GIT_DELIVERY_FAILED,
-            "Task Git delivery requires human action",
+            ("Worker verification requires human action" if isinstance(error, WorkerVerificationError)
+             else "Task Git delivery requires human action"),
             attempt=attempt,
             metadata={"error_type": type(error).__name__, "stage": stage},
         )
-        self._emit_human_gate(state, task, "git_delivery", attempt=attempt)
+        self._emit_human_gate(
+            state, task,
+            "worker_verification" if isinstance(error, WorkerVerificationError) else "git_delivery",
+            attempt=attempt,
+        )
 
     def _emit_human_gate(
         self,
@@ -773,17 +778,29 @@ class TaskCycleService:
         error: GitDeliveryError,
         stage: str,
     ) -> ProjectState:
+        verification = isinstance(error, WorkerVerificationError)
+        metadata = {"error_type": type(error).__name__, "stage": stage}
+        if verification and error.check is not None:
+            from code_mule.domain.worker_verification import safe_check_name
+
+            metadata.update({
+                "check_name": safe_check_name(error.check.name),
+                "check_type": error.check.check_type.value,
+                "check_status": error.check.status.value,
+                "check_required": str(error.check.required).lower(),
+            })
         return self._transition_human_required(
             state,
             task,
             event_types=("git.delivery_failed", "task.human_required"),
-            metadata={"error_type": type(error).__name__, "stage": stage},
-            category=HumanActionCategory.RECOVERY_UNCERTAIN,
-            summary=("Worker verification blocked delivery" if isinstance(error, WorkerVerificationError)
+            metadata=metadata,
+            category=(HumanActionCategory.WORKER_VERIFICATION if verification
+                      else HumanActionCategory.RECOVERY_UNCERTAIN),
+            summary=("Worker verification blocked delivery" if verification
                      else "Task Git delivery could not be completed safely"),
-            requested_action=("Complete the required verification before delivery" if isinstance(error, WorkerVerificationError)
+            requested_action=("Complete the required verification before delivery" if verification
                               else "Inspect repository ownership and choose an explicit resolution"),
-            risk=("Delivering without required verification would bypass Task quality gates" if isinstance(error, WorkerVerificationError)
+            risk=("Delivering without required verification would bypass Task quality gates" if verification
                   else "Committing may include unrelated work or duplicate an uncertain delivery"),
         )
 

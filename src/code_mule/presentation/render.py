@@ -174,7 +174,13 @@ def render_human_action(
             )
     else:
         lines += (f"Request     {view.request}",)
-    lines += (f"Risk        {view.risk}", "", "No action has been executed.")
+    if action.category is HumanActionCategory.WORKER_VERIFICATION and state is not None:
+        lines += _render_verification_failure(state, action, verbose=verbose)
+    lines += (f"Risk        {view.risk}", "", (
+        "No delivery commit was created. Worker changes were preserved."
+        if action.category is HumanActionCategory.WORKER_VERIFICATION
+        else "No action has been executed."
+    ))
     if action.category is HumanActionCategory.WORKER_INPUT:
         lines += (
             "",
@@ -189,6 +195,12 @@ def render_human_action(
             "",
             "Reject:",
             f"  code-mule reject {view.action_id}",
+        )
+    elif action.category is HumanActionCategory.WORKER_VERIFICATION:
+        lines += (
+            "", "No automatic retry or approval is available for this verification block.",
+            "Acknowledging the action does not resume execution:",
+            f"  code-mule resolve {view.action_id} --strategy acknowledge",
         )
     else:
         lines += (
@@ -214,6 +226,34 @@ def render_human_action(
             )
         if state is not None:
             lines += _render_worker_failure(state, action)
+    return lines
+
+
+def _render_verification_failure(state: ProjectState, action: HumanAction, *, verbose: bool) -> tuple[str, ...]:
+    from code_mule.domain.worker_verification import WorkerCheckStatus, WorkerCheckType, safe_check_name
+
+    events = tuple(event for event in state.events
+                   if event.event_type == "git.delivery_failed"
+                   and event.entity_id == action.task_id
+                   and event.timestamp == action.created_at
+                   and event.metadata.get("error_type") == "WorkerVerificationError"
+                   and event.metadata.get("stage") == "verification")
+    if len(events) != 1:
+        return ()
+    metadata = events[0].metadata
+    lines = ("Failure     Worker verification evidence blocked delivery",)
+    if (metadata.get("check_status") in {item.value for item in WorkerCheckStatus}
+            and metadata.get("check_type") in {item.value for item in WorkerCheckType}
+            and metadata.get("check_required") in {"true", "false"}):
+        lines += (
+            f"Failed check {safe_check_name(metadata.get('check_name', ''))}",
+            f"Status       {metadata['check_status']}",
+            f"Required     {'yes' if metadata['check_required'] == 'true' else 'no'}",
+        )
+        if verbose:
+            lines += (f"Check type   {metadata['check_type']}",)
+    if verbose:
+        lines += ("Failure type WorkerVerificationError", "Failure stage verification")
     return lines
 
 

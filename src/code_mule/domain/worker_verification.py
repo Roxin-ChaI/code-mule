@@ -69,3 +69,18 @@ def evidence_matches_text(checks: tuple[WorkerVerificationCheck, ...], tests: tu
             if text != prefix and not (text.startswith(prefix + " (") and text.endswith(")")):
                 return False
     return True
+
+
+def safe_check_name(name: str) -> str:
+    """Bounded label-only diagnostics; never copy a command, payload or detail.
+
+    Suspicious labels are replaced wholesale, not partially redacted. This is
+    an output policy, not a classifier and never influences delivery decisions.
+    """
+    if (
+        not isinstance(name, str)
+        or not re.fullmatch(r"[A-Za-z0-9\u4e00-\u9fff ._-]{1,120}", name)
+        or re.search(r"secret|token|password|credential|api.?key|authorization|bearer|sk-|[A-Za-z0-9_-]{33,}", name, re.I)
+    ):
+        return "[check name withheld]"
+    return name.strip() or "[check name withheld]"

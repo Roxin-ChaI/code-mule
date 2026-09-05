@@ -67,6 +67,7 @@ class HumanActionCategory(StrEnum):
     SUPERVISOR_FAILURE = "supervisor_failure"
     DEPENDENCY_BLOCK = "dependency_block"
     WORKSPACE_BLOCK = "workspace_block"
+    WORKER_VERIFICATION = "worker_verification"
     RECOVERY_UNCERTAIN = "recovery_uncertain"
     EXTERNAL_SIDE_EFFECT = "external_side_effect"
     UNKNOWN = "unknown"

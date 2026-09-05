@@ -40,6 +40,9 @@ class WorkerVerificationTests(RepositoryCase):
         check = WorkerVerificationCheck("test", WorkerCheckType.TEST, WorkerCheckStatus.PASS, True)
         with self.assertRaises(WorkerVerificationError):
             self.service.prepare_change_set(baseline, replace(report("owned.py"), tests=("test: fail",), verification_checks=(check,)), ("owned.py",))
+        for entries in ((None,), "test: pass", ["test: pass"]):
+            with self.subTest(entries=entries), self.assertRaises(WorkerVerificationError):
+                self.service.prepare_change_set(baseline, replace(report("owned.py"), tests=entries), ("owned.py",))
 
     def test_ownership_still_blocks_even_with_optional_not_run(self):
         baseline = self.service.capture_baseline("TASK-1")
