@@ -11,6 +11,7 @@ from .contracts import (
     GitOwnershipError,
     GitStagingError,
     UnexpectedGitHead,
+    WorkerVerificationError,
 )
 from .service import (
     GitCommandResult,
@@ -33,6 +34,7 @@ __all__ = [
     "GitStagingError",
     "GitWorkspaceIsolationError",
     "UnexpectedGitHead",
+    "WorkerVerificationError",
     "GitCommandResult",
     "GitCommandRunner",
     "GitDeliveryService",

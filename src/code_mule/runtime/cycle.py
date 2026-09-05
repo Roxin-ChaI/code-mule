@@ -28,6 +28,7 @@ from code_mule.git_delivery import (
     GitChangeSet,
     GitCommitResult,
     GitDeliveryError,
+    WorkerVerificationError,
     GitOwnershipError,
 )
 from code_mule.progress import (
@@ -357,12 +358,13 @@ class TaskCycleService:
                             metadata={"path_count": str(len(change_set.changed_paths))},
                         )
                     except GitDeliveryError as error:
-                        self._record_git_failure(state, task, error, "ownership")
+                        stage = "verification" if isinstance(error, WorkerVerificationError) else "ownership"
+                        self._record_git_failure(state, task, error, stage)
                         self._emit_git_failure(
                             state,
                             task,
                             error,
-                            "ownership",
+                            stage,
                             attempt=report.attempt,
                         )
                         self._clear_worker_identity(task.id)
@@ -777,9 +779,12 @@ class TaskCycleService:
             event_types=("git.delivery_failed", "task.human_required"),
             metadata={"error_type": type(error).__name__, "stage": stage},
             category=HumanActionCategory.RECOVERY_UNCERTAIN,
-            summary="Task Git delivery could not be completed safely",
-            requested_action="Inspect repository ownership and choose an explicit resolution",
-            risk="Committing may include unrelated work or duplicate an uncertain delivery",
+            summary=("Worker verification blocked delivery" if isinstance(error, WorkerVerificationError)
+                     else "Task Git delivery could not be completed safely"),
+            requested_action=("Complete the required verification before delivery" if isinstance(error, WorkerVerificationError)
+                              else "Inspect repository ownership and choose an explicit resolution"),
+            risk=("Delivering without required verification would bypass Task quality gates" if isinstance(error, WorkerVerificationError)
+                  else "Committing may include unrelated work or duplicate an uncertain delivery"),
         )
 
     def _record_workspace_block(

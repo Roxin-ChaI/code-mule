@@ -91,6 +91,10 @@ class GitOwnershipError(GitDeliveryError):
     """The Task cannot exclusively own the observed repository changes."""
 
 
+class WorkerVerificationError(GitDeliveryError):
+    """Worker verification evidence does not meet delivery prerequisites."""
+
+
 class UnexpectedGitHead(GitDeliveryError):
     """HEAD changed outside the delivery transaction."""
 

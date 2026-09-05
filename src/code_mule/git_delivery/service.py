@@ -20,6 +20,7 @@ from .contracts import (
     GitOwnershipError,
     GitStagingError,
     UnexpectedGitHead,
+    WorkerVerificationError,
 )
 
 
@@ -244,10 +245,10 @@ class GitDeliveryService:
     @staticmethod
     def _validate_report(report: ExecutionReport) -> None:
         if report.status != "completed" or report.human_action_required:
-            raise GitOwnershipError("Worker did not provide completed delivery evidence")
+            raise WorkerVerificationError("Worker did not provide completed delivery evidence")
         checks = report.tests + report.static_checks
         if any(": pass" not in item.lower() for item in checks):
-            raise GitOwnershipError("Worker verification evidence is not passing")
+            raise WorkerVerificationError("Worker verification evidence is not passing")
 
     @staticmethod
     def _nul_paths(raw: str) -> tuple[str, ...]:

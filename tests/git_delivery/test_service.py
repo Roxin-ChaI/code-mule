@@ -14,6 +14,7 @@ from code_mule.git_delivery import (
     GitDeliveryService,
     GitOwnershipError,
     UnexpectedGitHead,
+    WorkerVerificationError,
 )
 from code_mule.git_delivery.service import run_git_command
 
@@ -135,8 +136,16 @@ class GitDeliveryServiceTests(RepositoryCase):
             self.service.prepare_change_set(baseline, report(), ())
         (self.root / "bad.py").write_text("bad\n")
         failed = replace(report("bad.py"), tests=("unittest: fail",))
-        with self.assertRaises(GitOwnershipError):
+        with self.assertRaises(WorkerVerificationError):
             self.service.prepare_change_set(baseline, failed, ("bad.py",))
+
+    def test_required_not_run_is_verification_not_ownership(self):
+        baseline = self.service.capture_baseline("TASK-1")
+        (self.root / "owned.py").write_text("owned\n")
+        evidence = replace(report("owned.py"), tests=("visual: not_run",))
+        with self.assertRaises(WorkerVerificationError) as caught:
+            self.service.prepare_change_set(baseline, evidence, ("owned.py",))
+        self.assertNotIsInstance(caught.exception, GitOwnershipError)
 
     def test_nonblocking_issues_are_left_for_supervisor_review(self):
         baseline = self.service.capture_baseline("TASK-1")
