@@ -161,7 +161,7 @@ class FakeWorkerSession:
             ("compileall: pass",),
             "dirty",
             (),
-            False,
+            None,
             "Fake Worker completed the Task.",
             created_at,
         )

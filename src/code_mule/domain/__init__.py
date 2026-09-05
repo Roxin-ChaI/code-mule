@@ -11,6 +11,7 @@ from .enums import (
     RequirementStatus,
     SupervisorDecisionType,
     TaskStatus,
+    WorkerHumanActionKind,
 )
 from .models import (
     ChangeRequest,
@@ -27,6 +28,7 @@ from .models import (
     Requirement,
     Task,
     WorkerInputDetails,
+    WorkerHumanAction,
 )
 from .state_machine import InvalidProjectTransition, can_transition, validate_transition
 
@@ -56,6 +58,8 @@ __all__ = [
     "Task",
     "TaskStatus",
     "WorkerInputDetails",
+    "WorkerHumanAction",
+    "WorkerHumanActionKind",
     "can_transition",
     "validate_transition",
 ]

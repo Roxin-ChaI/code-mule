@@ -72,6 +72,12 @@ class HumanActionCategory(StrEnum):
     UNKNOWN = "unknown"
 
 
+class WorkerHumanActionKind(StrEnum):
+    INPUT = "input"
+    APPROVAL = "approval"
+    EXTERNAL_SIDE_EFFECT = "external_side_effect"
+
+
 class HumanActionStatus(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
@@ -94,6 +100,7 @@ __all__ = [
     "HumanActionCategory",
     "HumanActionStatus",
     "HumanResolutionStrategy",
+    "WorkerHumanActionKind",
     "PlanStatus",
     "ProjectStatus",
     "RequirementStatus",

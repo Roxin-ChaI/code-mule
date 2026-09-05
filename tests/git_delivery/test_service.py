@@ -41,7 +41,7 @@ def task(title: str = "Add multiply support") -> Task:
 def report(*paths: str) -> ExecutionReport:
     return ExecutionReport(
         "report-1", "TASK-1", 1, "completed", tuple(paths),
-        ("unittest: pass",), ("compileall: pass",), "dirty", (), False,
+        ("unittest: pass",), ("compileall: pass",), "dirty", (), None,
         "implemented", NOW,
     )
 

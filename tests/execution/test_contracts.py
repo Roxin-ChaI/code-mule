@@ -67,7 +67,7 @@ class ExecutionOwnershipContractTests(unittest.TestCase):
     def test_v6_round_trip_preserves_execution_identity(self):
         state = replace(make_project_state(), execution_leases=(lease(),))
         payload = serialize_project_state(state)
-        self.assertEqual(payload["schema_version"], 9)
+        self.assertEqual(payload["schema_version"], CURRENT_SCHEMA_VERSION)
         self.assertEqual(payload["execution_leases"][0]["owner_id"], "owner-1")
         self.assertEqual(payload["execution_leases"][0]["attempt"], 2)
         self.assertEqual(deserialize_project_state(payload), state)
@@ -76,9 +76,11 @@ class ExecutionOwnershipContractTests(unittest.TestCase):
         current = serialize_project_state(make_project_state())
         legacy = copy.deepcopy(current)
         legacy["schema_version"] = 5
+        for report in legacy["execution_reports"]:
+            report["human_action_required"] = report.pop("human_action") is not None
         legacy.pop("execution_leases")
         migrated = deserialize_project_state(legacy)
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 9)
+        self.assertEqual(CURRENT_SCHEMA_VERSION, 10)
         self.assertEqual(migrated.execution_leases, ())
 
 

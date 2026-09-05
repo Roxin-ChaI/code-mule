@@ -29,7 +29,7 @@ class FakeClient:
                     "static_checks": [],
                     "git_state": "unknown",
                     "issues": [],
-                    "human_action_required": False,
+                    "human_action": None,
                 }
             ),
             True,

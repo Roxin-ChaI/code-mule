@@ -157,7 +157,7 @@ class _FakeWorkerSession:
             (),
             "clean",
             (),
-            False,
+            None,
             "Fake Worker completed once.",
             created_at,
         )

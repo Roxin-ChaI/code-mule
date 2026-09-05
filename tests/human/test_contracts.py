@@ -74,10 +74,12 @@ class HumanActionContractTests(unittest.TestCase):
     def test_state_v4_migrates_and_v6_round_trips_human_records(self):
         legacy = serialize_project_state(make_project_state())
         legacy["schema_version"] = 4
+        for report in legacy["execution_reports"]:
+            report["human_action_required"] = report.pop("human_action") is not None
         del legacy["human_actions"]
         del legacy["human_resolutions"]
         migrated = deserialize_project_state(legacy)
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 9)
+        self.assertEqual(CURRENT_SCHEMA_VERSION, 10)
         self.assertEqual(migrated.human_actions, ())
         self.assertEqual(migrated.human_resolutions, ())
 
@@ -146,6 +148,8 @@ class HumanActionContractTests(unittest.TestCase):
         self.assertEqual(restored.human_actions[-1].worker_input.question, "Choose a framework")
 
         payload["schema_version"] = 8
+        for report in payload["execution_reports"]:
+            report["human_action_required"] = report.pop("human_action") is not None
         for action in payload["human_actions"]:
             action.pop("worker_input")
         migrated = deserialize_project_state(payload)

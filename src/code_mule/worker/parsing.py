@@ -29,7 +29,7 @@ def build_execution_report(
         static_checks=tuple(_format_check(check) for check in result.static_checks),
         git_state=result.git_state,
         issues=transport_issues + result.issues,
-        human_action_required=result.human_action_required,
+        human_action=result.human_action,
         summary=result.summary,
         created_at=created_at,
     )

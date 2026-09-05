@@ -8,8 +8,9 @@ from code_mule.domain.enums import (
     ProjectStatus,
     SupervisorDecisionType,
     TaskStatus,
+    WorkerHumanActionKind,
 )
-from code_mule.domain.models import ExecutionReport
+from code_mule.domain.models import ExecutionReport, WorkerHumanAction
 from code_mule.execution import ExecutionLease, ExecutionLeaseStatus
 from code_mule.git_delivery import (
     DirtyGitBaseline,
@@ -123,7 +124,15 @@ class FakeWorkerSession:
             static_checks=("compileall: pass",),
             git_state="dirty",
             issues=(),
-            human_action_required=self.human_action_required,
+            human_action=(
+                WorkerHumanAction(
+                    WorkerHumanActionKind.EXTERNAL_SIDE_EFFECT,
+                    "External operation requires approval",
+                    "Approve the external operation",
+                )
+                if self.human_action_required
+                else None
+            ),
             summary=f"attempt {request.task.execution_attempts + 1}",
             created_at=created_at,
         )

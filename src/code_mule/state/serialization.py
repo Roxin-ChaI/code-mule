@@ -14,6 +14,7 @@ from code_mule.domain.enums import (
     RequirementStatus,
     SupervisorDecisionType,
     TaskStatus,
+    WorkerHumanActionKind,
 )
 from code_mule.domain.models import (
     ChangeRequest,
@@ -30,6 +31,7 @@ from code_mule.domain.models import (
     Requirement,
     Task,
     WorkerInputDetails,
+    WorkerHumanAction,
 )
 from code_mule.execution.contracts import ExecutionLease, ExecutionLeaseStatus
 from code_mule.git_delivery.contracts import GitBaseline, GitChangeSet, GitCommitResult
@@ -46,7 +48,7 @@ from code_mule.project_verification.contracts import (
 from .models import ProjectState
 
 
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 
 
 class UnsupportedStateSchema(ValueError):
@@ -253,7 +255,16 @@ def _execution_report_to_payload(report: ExecutionReport) -> dict[str, object]:
         "static_checks": list(report.static_checks),
         "git_state": report.git_state,
         "issues": list(report.issues),
-        "human_action_required": report.human_action_required,
+        "human_action": (
+            None
+            if report.human_action is None
+            else {
+                "kind": report.human_action.kind.value,
+                "summary": report.human_action.summary,
+                "request": report.human_action.request,
+                "choices": list(report.human_action.choices),
+            }
+        ),
         "summary": report.summary,
         "created_at": report.created_at.isoformat(),
     }
@@ -759,8 +770,38 @@ def _migrate_v8_to_v9(root: dict[str, object]) -> dict[str, object]:
         action["worker_input"] = None
         actions.append(action)
     migrated = dict(root)
-    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
+    migrated["schema_version"] = 9
     migrated["human_actions"] = actions
+    return migrated
+
+
+def _migrate_v9_to_v10(root: dict[str, object]) -> dict[str, object]:
+    """Replace ambiguous Worker report booleans with a safe typed action."""
+
+    reports: list[dict[str, object]] = []
+    for item in _expect_list(
+        _field(root, "execution_reports", "project state"), "execution_reports"
+    ):
+        report = dict(_expect_object(item, "execution_report"))
+        required = _expect_bool(
+            _field(report, "human_action_required", "execution_report"),
+            "execution_report.human_action_required",
+        )
+        report.pop("human_action_required")
+        report["human_action"] = (
+            {
+                "kind": WorkerHumanActionKind.EXTERNAL_SIDE_EFFECT.value,
+                "summary": "Legacy Worker report requires human review",
+                "request": "Inspect and explicitly approve or reject the recorded operation",
+                "choices": [],
+            }
+            if required
+            else None
+        )
+        reports.append(report)
+    migrated = dict(root)
+    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
+    migrated["execution_reports"] = reports
     return migrated
 
 
@@ -933,9 +974,8 @@ def _execution_report_from_payload(value: object) -> ExecutionReport:
             _field(payload, "issues", "execution_report"),
             "execution_report.issues",
         ),
-        human_action_required=_expect_bool(
-            _field(payload, "human_action_required", "execution_report"),
-            "execution_report.human_action_required",
+        human_action=_worker_human_action_from_payload(
+            _field(payload, "human_action", "execution_report")
         ),
         summary=_expect_str(
             _field(payload, "summary", "execution_report"),
@@ -944,6 +984,34 @@ def _execution_report_from_payload(value: object) -> ExecutionReport:
         created_at=_datetime(
             _field(payload, "created_at", "execution_report"),
             "execution_report.created_at",
+        ),
+    )
+
+
+def _worker_human_action_from_payload(value: object) -> WorkerHumanAction | None:
+    if value is None:
+        return None
+    payload = _expect_object(value, "execution_report.human_action")
+    if set(payload) != {"kind", "summary", "request", "choices"}:
+        raise InvalidProjectState("execution_report.human_action has invalid fields")
+    return WorkerHumanAction(
+        kind=WorkerHumanActionKind(
+            _expect_str(
+                _field(payload, "kind", "execution_report.human_action"),
+                "execution_report.human_action.kind",
+            )
+        ),
+        summary=_expect_str(
+            _field(payload, "summary", "execution_report.human_action"),
+            "execution_report.human_action.summary",
+        ),
+        request=_expect_str(
+            _field(payload, "request", "execution_report.human_action"),
+            "execution_report.human_action.request",
+        ),
+        choices=_strings(
+            _field(payload, "choices", "execution_report.human_action"),
+            "execution_report.human_action.choices",
         ),
     )
 
@@ -1402,7 +1470,7 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     schema_version = root["schema_version"]
     if type(schema_version) is not int:
         raise UnsupportedStateSchema("schema_version must be an integer")
-    if schema_version not in {1, 2, 3, 4, 5, 6, 7, 8, CURRENT_SCHEMA_VERSION}:
+    if schema_version not in {1, 2, 3, 4, 5, 6, 7, 8, 9, CURRENT_SCHEMA_VERSION}:
         raise UnsupportedStateSchema(
             f"unsupported schema_version: {schema_version!r}"
         )
@@ -1429,6 +1497,9 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
         schema_version = 8
     if schema_version == 8:
         root = _migrate_v8_to_v9(root)
+        schema_version = 9
+    if schema_version == 9:
+        root = _migrate_v9_to_v10(root)
 
     try:
         quality_value = _field(root, "quality_status", "project state")

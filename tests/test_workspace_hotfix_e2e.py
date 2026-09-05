@@ -70,7 +70,7 @@ class _WorkerSession:
             ("compileall: pass",),
             "dirty",
             (),
-            False,
+            None,
             "implemented",
             created_at,
         )

@@ -56,7 +56,7 @@ class ManualChangeReplanningE2ETests(unittest.TestCase):
             (),
             "clean",
             (),
-            False,
+            None,
             "worker completed",
             NOW,
         )

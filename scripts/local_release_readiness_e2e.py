@@ -175,7 +175,7 @@ class FakeReleaseWorkerSession:
             ("compileall: pass",),
             "dirty",
             (),
-            False,
+            None,
             "Deterministic fake Worker completed the release Task.",
             created_at,
         )

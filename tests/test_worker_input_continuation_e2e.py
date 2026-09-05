@@ -105,7 +105,7 @@ class ContinuationSession:
             ("compileall: pass",),
             "dirty",
             (),
-            False,
+            None,
             "continued the original task",
             created_at,
         )

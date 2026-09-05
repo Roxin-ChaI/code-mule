@@ -13,6 +13,7 @@ from .enums import (
     RequirementStatus,
     SupervisorDecisionType,
     TaskStatus,
+    WorkerHumanActionKind,
 )
 
 
@@ -151,6 +152,36 @@ class Decision:
     created_at: datetime
 
 
+@dataclass(frozen=True)
+class WorkerHumanAction:
+    kind: WorkerHumanActionKind
+    summary: str
+    request: str
+    choices: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, WorkerHumanActionKind):
+            raise ValueError("Worker human action kind must be typed")
+        if not isinstance(self.summary, str) or not self.summary.strip():
+            raise ValueError("Worker human action summary must be nonblank")
+        if not isinstance(self.request, str) or not self.request.strip():
+            raise ValueError("Worker human action request must be nonblank")
+        if not isinstance(self.choices, tuple) or any(
+            not isinstance(choice, str) or not choice.strip() for choice in self.choices
+        ):
+            raise ValueError("Worker human action choices must be nonblank strings")
+        _require_non_empty(self.summary, "summary")
+        _require_non_empty(self.request, "request")
+        if len(self.summary) > 1_000 or len(self.request) > 2_000:
+            raise ValueError("Worker human action exceeds safe bounds")
+        if len(self.choices) > 20 or any(
+            choice == "" or len(choice) > 500 for choice in self.choices
+        ):
+            raise ValueError("Worker human action choices exceed safe bounds")
+        if self.kind is not WorkerHumanActionKind.INPUT and self.choices:
+            raise ValueError("choices are only valid for input actions")
+
+
 @dataclass
 class ExecutionReport:
     id: str
@@ -162,9 +193,17 @@ class ExecutionReport:
     static_checks: tuple[str, ...]
     git_state: str
     issues: tuple[str, ...]
-    human_action_required: bool
+    human_action: WorkerHumanAction | None
     summary: str
     created_at: datetime
+
+    def __post_init__(self) -> None:
+        if self.human_action is not None and not isinstance(self.human_action, WorkerHumanAction):
+            raise ValueError("human_action must be a typed WorkerHumanAction or None")
+
+    @property
+    def human_action_required(self) -> bool:
+        return self.human_action is not None
 
 
 @dataclass
@@ -288,4 +327,5 @@ __all__ = [
     "Requirement",
     "Task",
     "WorkerInputDetails",
+    "WorkerHumanAction",
 ]

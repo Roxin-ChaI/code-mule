@@ -10,6 +10,7 @@ from code_mule.worker.structured_report import (
     parse_structured_worker_report,
     structured_worker_report_schema,
 )
+from code_mule.domain.enums import WorkerHumanActionKind
 
 
 def valid_payload():
@@ -30,7 +31,7 @@ def valid_payload():
         ],
         "git_state": "dirty",
         "issues": ["issue-b", "issue-a"],
-        "human_action_required": False,
+        "human_action": None,
     }
 
 
@@ -45,6 +46,10 @@ class StructuredWorkerReportTests(unittest.TestCase):
             nested = first["properties"][field]["items"]
             self.assertFalse(nested["additionalProperties"])
             self.assertEqual(set(nested["required"]), set(nested["properties"]))
+        action = first["properties"]["human_action"]["anyOf"][1]
+        self.assertFalse(action["additionalProperties"])
+        self.assertEqual(set(action["required"]), set(action["properties"]))
+        self.assertNotIn("human_action_required", first["properties"])
         first["changed"] = True
         self.assertNotIn("changed", second)
 
@@ -57,6 +62,39 @@ class StructuredWorkerReportTests(unittest.TestCase):
         self.assertIs(report.tests[0].status, WorkerCheckStatus.PASS)
         self.assertIs(report.tests[1].status, WorkerCheckStatus.NOT_RUN)
         self.assertEqual(report.issues, ("issue-b", "issue-a"))
+        self.assertFalse(report.human_action_required)
+
+    def test_typed_human_action_preserves_kind_request_and_choices(self):
+        payload = valid_payload()
+        payload["human_action"] = {
+            "kind": "input",
+            "summary": "Boss choice required",
+            "request": "Use localStorage or session memory?",
+            "choices": ["localStorage", "session memory"],
+        }
+
+        report = parse_structured_worker_report(json.dumps(payload))
+
+        self.assertIs(report.human_action.kind, WorkerHumanActionKind.INPUT)
+        self.assertEqual(report.human_action.choices, ("localStorage", "session memory"))
+        self.assertTrue(report.human_action_required)
+
+    def test_human_action_is_strict_bounded_and_not_inferred_from_summary(self):
+        cases = []
+        for action in (
+            {"kind": "input", "summary": "x", "request": "q", "choices": [], "extra": "x"},
+            {"kind": "unknown", "summary": "x", "request": "q", "choices": []},
+            {"kind": "approval", "summary": "x", "request": "q", "choices": ["yes"]},
+            {"kind": "input", "summary": "x" * 1001, "request": "q", "choices": []},
+            {"kind": "input", "summary": "x", "request": "q", "choices": ["x"] * 21},
+        ):
+            payload = valid_payload()
+            payload["human_action"] = action
+            cases.append(payload)
+        for payload in cases:
+            with self.subTest(action=payload["human_action"]):
+                with self.assertRaises(InvalidWorkerReport):
+                    parse_structured_worker_report(json.dumps(payload))
 
     def test_missing_extra_wrong_type_and_invalid_enums_fail_closed(self):
         cases = []
@@ -75,9 +113,9 @@ class StructuredWorkerReportTests(unittest.TestCase):
         bad_git = valid_payload()
         bad_git["git_state"] = "probably clean"
         cases.append(bad_git)
-        bad_bool = valid_payload()
-        bad_bool["human_action_required"] = 1
-        cases.append(bad_bool)
+        bad_action = valid_payload()
+        bad_action["human_action"] = True
+        cases.append(bad_action)
         for payload in cases:
             with self.subTest(payload=payload):
                 with self.assertRaises(InvalidWorkerReport):

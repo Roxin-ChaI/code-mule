@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import cast
 
+from code_mule.domain.enums import WorkerHumanActionKind
+from code_mule.domain.models import WorkerHumanAction
+
 from .contracts import CodexWorkerError
 
 
@@ -45,11 +48,17 @@ class StructuredWorkerReport:
     static_checks: tuple[WorkerCheckResult, ...]
     git_state: str
     issues: tuple[str, ...]
-    human_action_required: bool
+    human_action: WorkerHumanAction | None
 
     def __post_init__(self) -> None:
         if self.git_state not in {"clean", "dirty", "unknown"}:
             raise ValueError("git_state must be clean, dirty, or unknown")
+        if self.human_action is not None and not isinstance(self.human_action, WorkerHumanAction):
+            raise ValueError("human_action must be a typed WorkerHumanAction or None")
+
+    @property
+    def human_action_required(self) -> bool:
+        return self.human_action is not None
 
 
 def structured_worker_report_schema() -> dict[str, object]:
@@ -85,7 +94,29 @@ def structured_worker_report_schema() -> dict[str, object]:
                 "enum": ["clean", "dirty", "unknown"],
             },
             "issues": {"type": "array", "items": {"type": "string"}},
-            "human_action_required": {"type": "boolean"},
+            "human_action": {
+                "anyOf": [
+                    {"type": "null"},
+                    {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "kind": {
+                                "type": "string",
+                                "enum": [item.value for item in WorkerHumanActionKind],
+                            },
+                            "summary": {"type": "string", "minLength": 1, "maxLength": 1000},
+                            "request": {"type": "string", "minLength": 1, "maxLength": 2000},
+                            "choices": {
+                                "type": "array",
+                                "maxItems": 20,
+                                "items": {"type": "string", "minLength": 1, "maxLength": 500},
+                            },
+                        },
+                        "required": ["kind", "summary", "request", "choices"],
+                    },
+                ]
+            },
         },
         "required": [
             "status",
@@ -95,7 +126,7 @@ def structured_worker_report_schema() -> dict[str, object]:
             "static_checks",
             "git_state",
             "issues",
-            "human_action_required",
+            "human_action",
         ],
     }
 
@@ -121,15 +152,11 @@ def parse_structured_worker_report(raw_output: str) -> StructuredWorkerReport:
                 "static_checks",
                 "git_state",
                 "issues",
-                "human_action_required",
+                "human_action",
             },
             "worker report",
         )
-        human_action_required = payload["human_action_required"]
-        if not isinstance(human_action_required, bool):
-            raise InvalidWorkerReport(
-                "worker report.human_action_required must be a boolean"
-            )
+        human_action = _human_action(payload["human_action"])
         return StructuredWorkerReport(
             status=WorkerExecutionStatus(_string(payload["status"], "status")),
             summary=_string(payload["summary"], "summary"),
@@ -138,7 +165,7 @@ def parse_structured_worker_report(raw_output: str) -> StructuredWorkerReport:
             static_checks=_checks(payload["static_checks"], "static_checks"),
             git_state=_string(payload["git_state"], "git_state"),
             issues=_string_tuple(payload["issues"], "issues"),
-            human_action_required=human_action_required,
+            human_action=human_action,
         )
     except InvalidWorkerReport:
         raise
@@ -205,6 +232,25 @@ def _checks(value: object, context: str) -> tuple[WorkerCheckResult, ...]:
             )
         )
     return tuple(parsed)
+
+
+def _human_action(value: object) -> WorkerHumanAction | None:
+    if value is None:
+        return None
+    payload = _object(value, "worker report.human_action")
+    _exact_fields(
+        payload,
+        {"kind", "summary", "request", "choices"},
+        "worker report.human_action",
+    )
+    return WorkerHumanAction(
+        kind=WorkerHumanActionKind(
+            _string(payload["kind"], "worker report.human_action.kind")
+        ),
+        summary=_string(payload["summary"], "worker report.human_action.summary"),
+        request=_string(payload["request"], "worker report.human_action.request"),
+        choices=_string_tuple(payload["choices"], "worker report.human_action.choices"),
+    )
 
 
 __all__ = [

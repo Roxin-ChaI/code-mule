@@ -2,7 +2,8 @@ import copy
 import unittest
 from dataclasses import replace
 
-from code_mule.domain.enums import ProjectStatus, TaskStatus
+from code_mule.domain.enums import ProjectStatus, TaskStatus, WorkerHumanActionKind
+from code_mule.domain.models import WorkerHumanAction
 from code_mule.state.serialization import (
     CURRENT_SCHEMA_VERSION,
     InvalidProjectState,
@@ -15,6 +16,18 @@ from state import make_project_state, make_project_state_without_quality
 
 
 class ProjectStateSerializationTests(unittest.TestCase):
+    def test_each_worker_action_round_trips_with_single_source_of_truth(self):
+        for kind in WorkerHumanActionKind:
+            with self.subTest(kind=kind):
+                state = make_project_state()
+                action = WorkerHumanAction(kind, "Specific reason", "Specific request", ())
+                state = replace(state, execution_reports=(
+                    replace(state.execution_reports[0], human_action=action),
+                ))
+                payload = serialize_project_state(state)
+                self.assertNotIn("human_action_required", payload["execution_reports"][0])
+                self.assertEqual(deserialize_project_state(payload), state)
+
     def test_complete_state_round_trip(self):
         state = make_project_state()
         self.assertEqual(deserialize_project_state(serialize_project_state(state)), state)
@@ -67,8 +80,22 @@ class ProjectStateSerializationTests(unittest.TestCase):
                 state = make_project_state()
                 state = replace(state, project=replace(state.project, status=status))
                 payload = serialize_project_state(state)
-                self.assertEqual(payload["schema_version"], 9)
+                self.assertEqual(payload["schema_version"], CURRENT_SCHEMA_VERSION)
                 self.assertIs(deserialize_project_state(payload).project.status, status)
+
+    def test_v9_worker_boolean_migrates_to_typed_fail_closed_action(self):
+        payload = serialize_project_state(make_project_state())
+        payload["schema_version"] = 9
+        report = payload["execution_reports"][0]
+        report.pop("human_action")
+        report["human_action_required"] = True
+
+        restored = deserialize_project_state(payload)
+
+        action = restored.execution_reports[0].human_action
+        self.assertEqual(action.kind.value, "external_side_effect")
+        self.assertTrue(restored.execution_reports[0].human_action_required)
+        self.assertEqual(serialize_project_state(restored)["schema_version"], 10)
 
 
 class InvalidProjectStateTests(unittest.TestCase):
@@ -122,6 +149,8 @@ class InvalidProjectStateTests(unittest.TestCase):
     def test_v1_state_migrates_task_traceability_without_reordering(self):
         payload = copy.deepcopy(self.payload)
         payload["schema_version"] = 1
+        for report in payload["execution_reports"]:
+            report["human_action_required"] = report.pop("human_action") is not None
         for task in payload["tasks"]:
             task.pop("requirement_ids")
         original = copy.deepcopy(payload)
@@ -139,6 +168,8 @@ class InvalidProjectStateTests(unittest.TestCase):
     def test_v2_state_migrates_replacement_metadata(self):
         payload = copy.deepcopy(self.payload)
         payload["schema_version"] = 2
+        for report in payload["execution_reports"]:
+            report["human_action_required"] = report.pop("human_action") is not None
         for requirement in payload["requirements"]:
             requirement.pop("supersedes_id")
         new_impact_fields = (
@@ -177,6 +208,8 @@ class InvalidProjectStateTests(unittest.TestCase):
     def test_v3_state_migrates_with_unknown_workspace(self):
         payload = copy.deepcopy(self.payload)
         payload["schema_version"] = 3
+        for report in payload["execution_reports"]:
+            report["human_action_required"] = report.pop("human_action") is not None
         payload["project"].pop("workspace")
 
         restored = deserialize_project_state(payload)

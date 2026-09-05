@@ -161,7 +161,7 @@ def make_project_state(
                 ("compileall: passed",),
                 "clean",
                 (),
-                False,
+                None,
                 "state serialized",
                 UPDATED,
             ),

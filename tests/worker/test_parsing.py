@@ -1,6 +1,8 @@
 import unittest
 from datetime import UTC, datetime
 
+from code_mule.domain.enums import WorkerHumanActionKind
+from code_mule.domain.models import WorkerHumanAction
 from code_mule.worker.contracts import WorkerTaskRequest
 from code_mule.worker.parsing import build_execution_report
 from code_mule.worker.structured_report import (
@@ -32,7 +34,7 @@ class ExecutionReportMappingTests(unittest.TestCase):
             ),
             git_state="dirty",
             issues=("report issue",),
-            human_action_required=False,
+            human_action=None,
         )
         created_at = datetime.now(UTC)
 
@@ -68,7 +70,18 @@ class ExecutionReportMappingTests(unittest.TestCase):
         for status in (WorkerExecutionStatus.FAILED, WorkerExecutionStatus.BLOCKED):
             with self.subTest(status=status):
                 result = StructuredWorkerReport(
-                    status, "Stopped", (), (), (), "unknown", (), True
+                    status,
+                    "Stopped",
+                    (),
+                    (),
+                    (),
+                    "unknown",
+                    (),
+                    WorkerHumanAction(
+                        WorkerHumanActionKind.INPUT,
+                        "Input required",
+                        "Choose an option",
+                    ),
                 )
                 report = build_execution_report(
                     request, result, "report", datetime.now(UTC)

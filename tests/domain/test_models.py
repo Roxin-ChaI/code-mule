@@ -73,7 +73,7 @@ class ModelContractTests(unittest.TestCase):
         change = ChangeRequest("change-1", "project-1", "Add a field", ChangeRequestStatus.PENDING, ("req-1",), "boss", CREATED)
         impact = ImpactAnalysis("change-1", "none", ("domain",), ("task-0",), ("task-1",), (), ("task-2",), (), (), "replan")
         decision = Decision("decision-1", "task-1", SupervisorDecisionType.CONTINUE, "Passed", CREATED)
-        report = ExecutionReport("report-1", "task-1", 1, "passed", ("a.py",), ("ok",), ("ok",), "clean", (), False, "Done", CREATED)
+        report = ExecutionReport("report-1", "task-1", 1, "passed", ("a.py",), ("ok",), ("ok",), "clean", (), None, "Done", CREATED)
         quality = QualityStatus("passed", "not_run", "not_run", "not_run", True)
         event = ProjectEvent("event-1", "project-1", "task.completed", "task-1", CREATED, {"source": "test"})
 
