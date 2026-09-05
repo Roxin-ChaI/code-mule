@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from code_mule.domain.models import ExecutionReport
+from code_mule.domain.worker_verification import WorkerCheckType, WorkerVerificationCheck
 
 from .contracts import WorkerTaskRequest
 from .structured_report import StructuredWorkerReport, WorkerCheckResult
@@ -32,6 +33,11 @@ def build_execution_report(
         human_action=result.human_action,
         summary=result.summary,
         created_at=created_at,
+        verification_checks=tuple(
+            WorkerVerificationCheck(check.name, kind, check.status, check.required)
+            for kind, checks in ((WorkerCheckType.TEST, result.tests), (WorkerCheckType.STATIC_CHECK, result.static_checks))
+            for check in checks
+        ),
     )
 
 

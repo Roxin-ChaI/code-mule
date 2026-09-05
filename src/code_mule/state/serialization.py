@@ -46,9 +46,10 @@ from code_mule.project_verification.contracts import (
 )
 
 from .models import ProjectState
+from code_mule.domain.worker_verification import WorkerCheckStatus, WorkerCheckType, WorkerVerificationCheck
 
 
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 11
 
 
 class UnsupportedStateSchema(ValueError):
@@ -253,6 +254,11 @@ def _execution_report_to_payload(report: ExecutionReport) -> dict[str, object]:
         "files_changed": list(report.files_changed),
         "tests": list(report.tests),
         "static_checks": list(report.static_checks),
+        "verification_checks": None if report.verification_checks is None else [
+            {"name": check.name, "check_type": check.check_type.value,
+             "status": check.status.value, "required": check.required}
+            for check in report.verification_checks
+        ],
         "git_state": report.git_state,
         "issues": list(report.issues),
         "human_action": (
@@ -800,9 +806,20 @@ def _migrate_v9_to_v10(root: dict[str, object]) -> dict[str, object]:
         )
         reports.append(report)
     migrated = dict(root)
-    migrated["schema_version"] = CURRENT_SCHEMA_VERSION
+    migrated["schema_version"] = 10
     migrated["execution_reports"] = reports
     return migrated
+
+
+def _migrate_v10_to_v11(root: dict[str, object]) -> dict[str, object]:
+    # Historical reports never declared optional checks. Keep explicit legacy
+    # provenance; delivery reads their exact historical grammar as required=True.
+    reports = []
+    for item in _expect_list(_field(root, "execution_reports", "project state"), "execution_reports"):
+        report = dict(_expect_object(item, "execution_report"))
+        report["verification_checks"] = None
+        reports.append(report)
+    return {**root, "schema_version": 11, "execution_reports": reports}
 
 
 def _change_request_from_payload(value: object) -> ChangeRequest:
@@ -942,6 +959,9 @@ def _decision_from_payload(value: object) -> Decision:
 def _execution_report_from_payload(value: object) -> ExecutionReport:
     payload = _expect_object(value, "execution_report")
     return ExecutionReport(
+        verification_checks=_verification_checks_from_payload(
+            _field(payload, "verification_checks", "execution_report")
+        ),
         id=_expect_str(_field(payload, "id", "execution_report"), "execution_report.id"),
         task_id=_expect_str(
             _field(payload, "task_id", "execution_report"),
@@ -986,6 +1006,23 @@ def _execution_report_from_payload(value: object) -> ExecutionReport:
             "execution_report.created_at",
         ),
     )
+
+
+def _verification_checks_from_payload(value: object) -> tuple[WorkerVerificationCheck, ...] | None:
+    if value is None:
+        return None
+    result = []
+    for item in _expect_list(value, "verification_checks"):
+        check = _expect_object(item, "verification_check")
+        if set(check) != {"name", "check_type", "status", "required"}:
+            raise InvalidProjectState("verification_check has invalid fields")
+        result.append(WorkerVerificationCheck(
+            _expect_str(check["name"], "check.name"),
+            WorkerCheckType(_expect_str(check["check_type"], "check.check_type")),
+            WorkerCheckStatus(_expect_str(check["status"], "check.status")),
+            _expect_bool(check["required"], "check.required"),
+        ))
+    return tuple(result)
 
 
 def _worker_human_action_from_payload(value: object) -> WorkerHumanAction | None:
@@ -1470,7 +1507,7 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     schema_version = root["schema_version"]
     if type(schema_version) is not int:
         raise UnsupportedStateSchema("schema_version must be an integer")
-    if schema_version not in {1, 2, 3, 4, 5, 6, 7, 8, 9, CURRENT_SCHEMA_VERSION}:
+    if schema_version not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, CURRENT_SCHEMA_VERSION}:
         raise UnsupportedStateSchema(
             f"unsupported schema_version: {schema_version!r}"
         )
@@ -1500,6 +1537,9 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
         schema_version = 9
     if schema_version == 9:
         root = _migrate_v9_to_v10(root)
+        schema_version = 10
+    if schema_version == 10:
+        root = _migrate_v10_to_v11(root)
 
     try:
         quality_value = _field(root, "quality_status", "project state")

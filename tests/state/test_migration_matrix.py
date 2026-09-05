@@ -30,6 +30,10 @@ def historical_payload(version: int) -> dict[str, object]:
     payload["schema_version"] = version
     project = payload["project"]
 
+    if version <= 10:
+        for report in payload["execution_reports"]:
+            report.pop("verification_checks")
+
     if version <= 9:
         for report in payload["execution_reports"]:
             report["human_action_required"] = report.pop("human_action") is not None

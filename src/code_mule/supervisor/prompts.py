@@ -102,10 +102,20 @@ def _render_decision(item: Decision) -> str:
 
 
 def _render_execution_report(item: ExecutionReport) -> str:
+    from code_mule.domain.worker_verification import legacy_checks
+
+    checks = item.verification_checks
+    if checks is None:
+        checks = legacy_checks(item.tests, item.static_checks)
+    check_requirements = tuple(
+        f"{check.check_type.value}:{check.name}:status={check.status.value}:required={str(check.required).lower()}"
+        for check in checks
+    )
     return (
         f"- id={_text(item.id)} task_id={_text(item.task_id)} attempt={item.attempt} "
         f"status={_text(item.status)} tests={_string_list(item.tests)} "
         f"static_checks={_string_list(item.static_checks)} "
+        f"verification_checks={_string_list(check_requirements)} "
         f"issues={_string_list(item.issues)} "
         f"human_action_required={str(item.human_action_required).lower()} "
         f"summary={_text(item.summary)} created_at={item.created_at.isoformat()}"

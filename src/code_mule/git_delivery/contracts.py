@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+from code_mule.domain.worker_verification import WorkerVerificationCheck
 
 
 def _non_empty(value: str, field_name: str) -> None:
@@ -94,6 +95,10 @@ class GitOwnershipError(GitDeliveryError):
 class WorkerVerificationError(GitDeliveryError):
     """Worker verification evidence does not meet delivery prerequisites."""
 
+    def __init__(self, message: str, check: WorkerVerificationCheck | None = None):
+        super().__init__(message)
+        self.check = check
+
 
 class UnexpectedGitHead(GitDeliveryError):
     """HEAD changed outside the delivery transaction."""
@@ -122,4 +127,5 @@ __all__ = [
     "GitOwnershipError",
     "GitStagingError",
     "UnexpectedGitHead",
+    "WorkerVerificationError",
 ]

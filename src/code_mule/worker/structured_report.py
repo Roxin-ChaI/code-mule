@@ -7,15 +7,9 @@ from typing import cast
 
 from code_mule.domain.enums import WorkerHumanActionKind
 from code_mule.domain.models import WorkerHumanAction
+from code_mule.domain.worker_verification import WorkerCheckStatus
 
 from .contracts import CodexWorkerError
-
-
-class WorkerCheckStatus(StrEnum):
-    PASS = "pass"
-    FAIL = "fail"
-    NOT_RUN = "not_run"
-    UNKNOWN = "unknown"
 
 
 class WorkerExecutionStatus(StrEnum):
@@ -33,10 +27,13 @@ class WorkerCheckResult:
     name: str
     status: WorkerCheckStatus
     detail: str | None
+    required: bool = True
 
     def __post_init__(self) -> None:
-        if self.name == "":
-            raise ValueError("name must not be empty")
+        if not isinstance(self.name, str) or not 1 <= len(self.name) <= 200:
+            raise ValueError("name must have 1..200 characters")
+        if type(self.required) is not bool or not isinstance(self.status, WorkerCheckStatus):
+            raise ValueError("required/status must be typed")
 
 
 @dataclass(frozen=True)
@@ -68,14 +65,15 @@ def structured_worker_report_schema() -> dict[str, object]:
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "name": {"type": "string", "minLength": 1},
+            "name": {"type": "string", "minLength": 1, "maxLength": 200},
             "status": {
                 "type": "string",
                 "enum": [item.value for item in WorkerCheckStatus],
             },
             "detail": {"type": ["string", "null"]},
+            "required": {"type": "boolean"},
         },
-        "required": ["name", "status", "detail"],
+        "required": ["name", "status", "detail", "required"],
     }
     return {
         "type": "object",
@@ -218,7 +216,7 @@ def _checks(value: object, context: str) -> tuple[WorkerCheckResult, ...]:
     for index, item in enumerate(_array(value, context)):
         item_context = f"{context}[{index}]"
         payload = _object(item, item_context)
-        _exact_fields(payload, {"name", "status", "detail"}, item_context)
+        _exact_fields(payload, {"name", "status", "detail", "required"}, item_context)
         detail = payload["detail"]
         if detail is not None and not isinstance(detail, str):
             raise InvalidWorkerReport(f"{item_context}.detail must be string or null")
@@ -229,6 +227,7 @@ def _checks(value: object, context: str) -> tuple[WorkerCheckResult, ...]:
                     _string(payload["status"], f"{item_context}.status")
                 ),
                 detail=detail,
+                required=payload["required"],
             )
         )
     return tuple(parsed)

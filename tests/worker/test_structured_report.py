@@ -23,11 +23,12 @@ def valid_payload():
                 "name": "python -m unittest",
                 "status": "pass",
                 "detail": "1 test passed",
+                "required": True,
             },
-            {"name": "integration", "status": "not_run", "detail": None},
+            {"name": "integration", "status": "not_run", "detail": None, "required": False},
         ],
         "static_checks": [
-            {"name": "compileall", "status": "unknown", "detail": None}
+            {"name": "compileall", "status": "unknown", "detail": None, "required": True}
         ],
         "git_state": "dirty",
         "issues": ["issue-b", "issue-a"],
@@ -141,6 +142,19 @@ class StructuredWorkerReportTests(unittest.TestCase):
             with self.subTest(payload=payload):
                 with self.assertRaises(InvalidWorkerReport):
                     parse_structured_worker_report(json.dumps(payload))
+
+    def test_required_is_mandatory_and_strict_boolean(self):
+        for value in (None, "false", 0, 1, [], "missing"):
+            payload = valid_payload()
+            if value == "missing":
+                del payload["tests"][0]["required"]
+            else:
+                payload["tests"][0]["required"] = value
+            with self.subTest(value=value), self.assertRaises(InvalidWorkerReport):
+                parse_structured_worker_report(json.dumps(payload))
+        parsed = parse_structured_worker_report(json.dumps(valid_payload()))
+        self.assertTrue(parsed.tests[0].required)
+        self.assertFalse(parsed.tests[1].required)
 
     def test_parser_does_not_extract_or_repair_json(self):
         payload = json.dumps(valid_payload())

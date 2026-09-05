@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+from .worker_verification import WorkerVerificationCheck
 
 from .enums import (
     ChangeRequestStatus,
@@ -196,10 +197,17 @@ class ExecutionReport:
     human_action: WorkerHumanAction | None
     summary: str
     created_at: datetime
+    # None is explicit legacy provenance, treated conservatively as required checks.
+    verification_checks: tuple[WorkerVerificationCheck, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.human_action is not None and not isinstance(self.human_action, WorkerHumanAction):
             raise ValueError("human_action must be a typed WorkerHumanAction or None")
+        if self.verification_checks is not None and (
+            not isinstance(self.verification_checks, tuple)
+            or not all(isinstance(check, WorkerVerificationCheck) for check in self.verification_checks)
+        ):
+            raise ValueError("verification_checks must contain typed checks")
 
     @property
     def human_action_required(self) -> bool:

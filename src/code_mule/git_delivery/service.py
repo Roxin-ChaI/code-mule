@@ -9,6 +9,7 @@ import subprocess
 from typing import Protocol
 
 from code_mule.domain.models import ExecutionReport, Task
+from code_mule.domain.worker_verification import evidence_matches_text, legacy_checks
 
 from .contracts import (
     DirtyGitBaseline,
@@ -85,7 +86,6 @@ class GitDeliveryService:
         owned_paths: tuple[str, ...],
     ) -> GitChangeSet:
         root = Path(baseline.repository_root)
-        self._validate_report(report)
         self._assert_root(root)
         self._assert_head(root, baseline.baseline_head)
         self._required(("git", "diff", "--check"), cwd=root)
@@ -103,6 +103,9 @@ class GitDeliveryService:
             raise GitOwnershipError(
                 "Worker must not stage paths; staging belongs to the Orchestrator"
             )
+        # Only classify a cleanly attributable, unchanged-baseline delivery as
+        # a verification block. Unknown ownership always retains its safe gate.
+        self._validate_report(report)
         return GitChangeSet(
             task_id=baseline.task_id,
             repository_root=str(root),
@@ -246,9 +249,14 @@ class GitDeliveryService:
     def _validate_report(report: ExecutionReport) -> None:
         if report.status != "completed" or report.human_action_required:
             raise WorkerVerificationError("Worker did not provide completed delivery evidence")
-        checks = report.tests + report.static_checks
-        if any(": pass" not in item.lower() for item in checks):
-            raise WorkerVerificationError("Worker verification evidence is not passing")
+        checks = report.verification_checks
+        if checks is None:
+            checks = legacy_checks(report.tests, report.static_checks)
+        elif not evidence_matches_text(checks, report.tests, report.static_checks):
+            raise WorkerVerificationError("Worker verification evidence is inconsistent")
+        for check in checks:
+            if not check.permits_delivery:
+                raise WorkerVerificationError("Worker verification evidence is not passing", check)
 
     @staticmethod
     def _nul_paths(raw: str) -> tuple[str, ...]:
