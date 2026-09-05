@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import IO, Protocol, cast
 
+from code_mule import __version__
 from code_mule.progress import (
     ProgressEvent,
     ProgressEventType,
@@ -173,7 +174,7 @@ class CodexAppServerClient:
                 "clientInfo": {
                     "name": "code-mule",
                     "title": "Code Mule",
-                    "version": "0.1.0",
+                    "version": __version__,
                 }
             },
         )

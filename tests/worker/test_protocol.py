@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from code_mule import __version__
 from code_mule.progress import ProgressEventType, RecordingProgressSink
 from code_mule.worker.client import CodexAppServerClient
 from code_mule.worker.contracts import (
@@ -638,7 +639,7 @@ class CodexAppServerClientTests(unittest.TestCase):
             )
             self.assertEqual(
                 requests[0]["params"]["clientInfo"],
-                {"name": "code-mule", "title": "Code Mule", "version": "0.1.0"},
+                {"name": "code-mule", "title": "Code Mule", "version": __version__},
             )
             self.assertEqual(
                 requests[2]["params"],
