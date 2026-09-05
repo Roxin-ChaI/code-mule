@@ -255,7 +255,8 @@ When a Worker needs information, Code Mule stops in `HUMAN_REQUIRED` and
 `code-mule answer <action-id> "<answer>"`, then explicitly run `code-mule run`.
 Code Mule starts a fresh Worker session, verifies that the partial workspace
 changes still match the original clean Git baseline, and continues the same
-Task. It does not resume the closed Codex session or create a partial commit.
+Task. The `answer` command itself starts no Worker and preserves partial work.
+It does not resume the closed Codex session or create a partial commit.
 
 Human actions have distinct meanings: `WORKER_INPUT` uses `answer` for a question
 or product choice; `WORKER_APPROVAL` and `EXTERNAL_SIDE_EFFECT` use `approve` /
@@ -314,9 +315,44 @@ than invented. Task `COMPLETED` does not imply Project `DONE`.
   never JSON repair or validator bypass.
 - App-server processes and reader threads close on success, timeout, or Ctrl+C.
 
-## v0.1.0 Validation
+## v0.1.1 Current Baseline
 
-Release-candidate baseline:
+Release preparation baseline: **498 tests passed**, `compileall`, `pip check`,
+and `git diff --check` PASS. Python 3.12 is required. Real E2E validated with
+**Codex CLI 0.153.4**; this is a tested version, not a proven minimum version.
+
+v0.1.1 fixes target Git baseline isolation, adds safe `WORKSPACE_BLOCK` retry,
+Worker Input answer/fresh-session continuation, dual inactivity/hard timeouts,
+safe Codex failure diagnostics, and typed Worker human actions. Verification
+failures are now distinct from Git ownership failures: required checks must PASS;
+optional NOT_RUN is allowed, but optional FAIL/UNKNOWN still blocks delivery.
+Exact Git ownership, clean baselines, HEAD checks, and precise staging remain strict.
+
+ProjectState is now **schema v11**, with migrations from historical schemas v1–v10.
+New state may not be readable by older Code Mule versions. Back up state before
+upgrading; forward migration does not promise backward/downgrade compatibility.
+
+The latest Boss-run real DeepSeek + Codex E2E completed Plan v1, **6/6 Tasks**,
+one delivery commit per Task, final Supervisor review APPROVE, and a clean Git
+workspace. T4 exercised a typed Worker Input report: Boss chose `localStorage`,
+then an explicit `run` continued the same Task in a fresh Worker session.
+
+Verification scope matters:
+
+- Project-level test/lint/typecheck/build hooks were unconfigured and **SKIPPED**;
+  the required Git-clean check passed.
+- Worker T6 independently recorded automated tests **20/20 PASS**, JavaScript
+  syntax PASS, and `git diff --check` PASS.
+- Browser visual verification was optional **NOT_RUN**. No manual browser
+  acceptance is claimed; the input gate in this run had no partial edits.
+
+See [v0.1.1 release notes](docs/releases/v0.1.1.md) for migration, safety, and
+verification details. v0.1.0's tag remains unchanged; this preparation does not
+create a v0.1.1 tag or release.
+
+## Historical v0.1.0 Validation
+
+Original v0.1.0 release-candidate baseline (historical, not the current baseline):
 
 - 441 automated tests PASS on Python 3.12.13;
 - `code-mule==0.1.0` fresh editable install and `pip check` PASS;

@@ -5,8 +5,10 @@ library integration, not an autonomous orchestration loop or a CLI.
 
 ## Tested Runtime
 
-The implementation was developed against `codex-cli 0.147.0`. Protocol fields
-were checked from the installed executable with:
+Real E2E validated with **Codex CLI 0.153.4** for v0.1.1. This is not a proven
+minimum supported version. The older `codex-cli 0.147.0` was used during initial
+development; that historical fact is not a current model-compatibility guarantee.
+Protocol fields were originally inspected with:
 
 ```bash
 codex app-server generate-json-schema --out /tmp/codex-app-server-schema
@@ -53,7 +55,8 @@ CodexWorkerConfig(
     workspace=absolute_workspace,
     approval_policy="on-request",
     sandbox="read-only",
-    read_timeout_seconds=120,
+    inactivity_timeout_seconds=120,
+    max_turn_seconds=900,
 )
 ```
 
@@ -70,9 +73,16 @@ prompts or protocol payloads.
 `CodexWorkerService.execute` runs one task through a fresh app-server process.
 `CodexWorkerSession` additionally supports multiple turns on one thread for a
 bounded REWORK cycle. Native structured output supplies execution status,
-summary, files changed, individual checks, Git state, issues, and the Human
-Gate flag. Every field is validated locally without prose parsing; `not_run`
-and `unknown` remain explicit evidence states rather than implied success.
+summary, files changed, individual checks, Git state, issues, and typed
+`human_action` (or null). Each check declares boolean `required`; required checks
+must PASS, optional NOT_RUN may continue, and FAIL/UNKNOWN always block delivery.
+See [Worker verification](worker-verification.md) for schema v11 evidence and
+safe diagnostics, and [v0.1.1 release notes](releases/v0.1.1.md) for the real E2E.
+
+`code-mule answer <action-id> "<answer>"` records one pending WORKER_INPUT answer
+without starting a Worker. A subsequent explicit `run` verifies the original
+baseline and partial paths, then uses a fresh session for the same Task. It
+does not transparently resume an uncertain or interrupted turn.
 
 Project State Store remains the source of truth. The Worker neither mutates a
 `Task` nor advances project state; the deterministic Phase 7 task-cycle service

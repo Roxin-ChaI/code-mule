@@ -96,6 +96,10 @@ identity when applicable:
   risk, scope, and action-specific next command. `--verbose` adds internal IDs.
 - `approve ACTION_ID` / `reject ACTION_ID`: closes one exact approval action;
   approval cannot be reused and rejection never executes the operation.
+- `answer ACTION_ID "answer"`: answers one pending WORKER_INPUT action without
+  starting a Worker. Partial work is preserved. A subsequent explicit `run`
+  validates the original Git baseline and continues the same Task in a fresh
+  Worker session; it does not resume the closed turn or create a partial commit.
 - `resolve ACTION_ID --strategy STRATEGY`: handles non-approval gates with an
   explicit `acknowledge`, `fail_project`, or permitted `retry_task` strategy.
 
@@ -110,6 +114,11 @@ line-oriented, and contains no ANSI or spinner control characters.
 
 Normal errors identify the failing boundary and give a safe next command.
 Tracebacks remain exclusive to global `--debug` mode.
+
+The current v0.1.1 baseline uses ProjectState schema v11 and was real-E2E
+validated with Codex CLI 0.153.4 (not a minimum-version claim). Historical state
+migrations remain supported, but old Code Mule versions may not read new state;
+back up state before upgrading. See [release notes](releases/v0.1.1.md).
 
 ## Environment
 

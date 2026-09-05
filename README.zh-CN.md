@@ -247,7 +247,8 @@ Worker 需要补充信息时，Code Mule 会停在 `HUMAN_REQUIRED`，`inspect` 
 经过边界限制的问题和选项。使用 `code-mule answer <action-id> "<answer>"`
 回答该 action，再显式执行 `code-mule run`。Code Mule 会启动新的 Worker
 session，先确认局部 workspace 修改仍与原始 clean Git baseline 一致，再继续同一
-Task；它不会恢复已关闭的 Codex session，也不会为局部结果创建 commit。
+Task。`answer` 本身不会启动 Worker，已有局部修改会保留；它不会恢复已关闭的
+Codex session，也不会为局部结果创建 commit。
 
 人工操作按语义区分：`WORKER_INPUT` 是补充信息或产品选择，使用 `answer`；
 `WORKER_APPROVAL` 和 `EXTERNAL_SIDE_EFFECT` 是对 `inspect` 展示的具体操作
@@ -303,9 +304,43 @@ all Tasks complete → tests/lint/typecheck/build/git-clean → FINAL_REVIEW →
   validator。
 - app-server process 与 reader thread 在成功、timeout 或 Ctrl+C 后都会关闭。
 
-## v0.1.0 验证基线
+## v0.1.1 当前基线
 
-Release candidate baseline：
+发布准备基线：**498 项测试通过**，`compileall`、`pip check` 和
+`git diff --check` 均 PASS。需要 Python 3.12。真实 E2E 使用
+**Codex CLI 0.153.4** 验证；这是实测版本，不代表已证明的最低支持版本。
+
+v0.1.1 修复了目标 Git baseline 的 state 隔离，支持安全重试 `WORKSPACE_BLOCK`、
+Worker Input 回答后以新 session 续接、inactivity/hard 双重超时、安全 Codex
+失败诊断和 typed Worker human actions。验证证据失败与 Git ownership 失败已
+分开处理：required 检查必须 PASS；optional NOT_RUN 可接受，但 optional
+FAIL/UNKNOWN 仍阻塞。精确路径归属、clean baseline、HEAD 与 staged-file
+安全规则没有放宽。
+
+当前 ProjectState 为 **schema v11**，保留 v1–v10 的历史迁移链。
+新 state 可能无法被旧版 Code Mule 读取。升级前请备份 state；支持向前迁移
+不等于支持降级或由旧程序读取新版数据。
+
+最近一次 Boss 执行的真实 DeepSeek + Codex E2E 完成 Plan v1、**6/6 Tasks**，
+每个 Task 恰好一个交付 commit，最终 Supervisor review APPROVE，Git workspace
+clean。T4 通过 typed Worker report 请求输入；Boss 选择 `localStorage` 后，
+显式 `run` 使用新的 Worker session 完成同一 Task。
+
+验证范围需要区分：
+
+- 项目级 test/lint/typecheck/build hooks 未配置，结果为 **SKIPPED**；
+  required Git-clean 检查 PASS。
+- Worker T6 独立记录自动测试 **20/20 PASS**、JavaScript 语法 PASS、
+  `git diff --check` PASS。
+- 浏览器视觉验证为 optional **NOT_RUN**，不代表人工浏览器验收通过；
+  本次输入请求发生时没有 partial edits。
+
+迁移、安全边界和验证详情见 [v0.1.1 release notes](docs/releases/v0.1.1.md)。
+v0.1.0 tag 保持不变；本次准备不创建 v0.1.1 tag 或 release。
+
+## v0.1.0 历史验证基线
+
+以下是原 v0.1.0 release candidate 的历史数据，不是当前基线：
 
 - Python 3.12.13 上 441 个 automated tests PASS；
 - `code-mule==0.1.0` fresh editable install 与 `pip check` PASS；

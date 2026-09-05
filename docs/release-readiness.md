@@ -1,5 +1,11 @@
 # v0.1.0 Release Readiness
 
+This is the historical Phase 19 / v0.1.0 readiness record. For the current
+498-test baseline, schema v11, and Codex CLI 0.153.4 real E2E, see
+[v0.1.1 release preparation](releases/v0.1.1.md). The original v0.1.0 tag remains
+unchanged. Harness-specific timeout settings below are not the production CLI
+defaults (currently 120-second inactivity / 900-second hard limit).
+
 Phase 19 audits the complete local v0.1.0 lifecycle without adding a new Agent
 capability. The audited path covers CLI and Chat, planning, ownership,
 Supervisor reliability, Codex execution, TaskCycle, Git delivery, CHANGE,
