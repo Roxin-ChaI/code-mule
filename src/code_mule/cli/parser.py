@@ -45,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
     status = commands.add_parser("status", help="show project status")
     _state_file(status)
 
+    diagnose = commands.add_parser(
+        "diagnose", help="explain blockers, recoverability, and the next Boss action"
+    )
+    _state_file(diagnose)
+
     ask = commands.add_parser("ask", help="query project status read-only")
     ask.add_argument("question")
     _state_file(ask)

@@ -16,6 +16,7 @@ from code_mule.domain.enums import (
     ProjectStatus,
 )
 from code_mule.domain.models import Project
+from code_mule.diagnosis import ProjectDiagnosisService
 from code_mule.conversation import (
     BossConversationService,
     BossSession,
@@ -62,6 +63,7 @@ from code_mule.presentation import (
     render_change_requested,
     render_human_action,
     render_project,
+    render_project_diagnosis,
     render_project_cancelled,
     render_project_cancellation_requested,
     status_label,
@@ -177,6 +179,7 @@ class ProductionCliComposition:
         self._stderr = stderr
         self._store = JsonProjectStateStore(self._state_file)
         self._runtime_factory = runtime_factory
+        self._diagnosis_service = ProjectDiagnosisService()
 
     def init_project(
         self, project_id: str, name: str, workspace: Path, verbose: bool = False
@@ -255,6 +258,13 @@ class ProductionCliComposition:
         state = self._load()
         return CliCommandResult(
             CliExitCode.SUCCESS, render_project(state, verbose=verbose)
+        )
+
+    def diagnose(self, verbose: bool = False) -> CliCommandResult:
+        diagnosis = self._diagnosis_service.diagnose(self._load())
+        return CliCommandResult(
+            CliExitCode.SUCCESS,
+            render_project_diagnosis(diagnosis, verbose=verbose),
         )
 
     def ask(self, question: str, verbose: bool = False) -> CliCommandResult:
@@ -485,6 +495,7 @@ class ProductionCliComposition:
             commands=self,
             router=self._boss_intent_router(),
             session=BossSession(state.project.id),
+            diagnosis_service=self._diagnosis_service,
             verbose=verbose,
         )
         run_chat_loop(

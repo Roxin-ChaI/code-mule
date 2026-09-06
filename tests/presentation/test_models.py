@@ -14,9 +14,11 @@ from code_mule.presentation import (
     decision_label,
     project_view,
     render_project,
+    render_project_diagnosis,
     render_human_action,
     status_label,
 )
+from code_mule.diagnosis import ProjectDiagnosisService
 from code_mule.git_delivery import GitCommitResult
 from code_mule.project_verification import (
     FinalReviewDecision,
@@ -30,6 +32,17 @@ from state import make_project_state
 
 
 class PresentationModelTests(unittest.TestCase):
+    def test_diagnosis_renderer_separates_explanation_from_status(self):
+        state = make_project_state()
+        diagnosis = ProjectDiagnosisService().diagnose(state)
+        output = "\n".join(render_project_diagnosis(diagnosis, verbose=True))
+        self.assertIn("PROJECT DIAGNOSIS", output)
+        self.assertIn("Plan           v1", output)
+        self.assertIn("Progress       0 / 1", output)
+        self.assertIn("Current Task   task-1 · Serialize state", output)
+        self.assertIn("blocker_category: none", output)
+        self.assertNotIn("criteria satisfied", output)
+
     def test_worker_input_action_exposes_question_choices_and_safe_verbose_ids(self):
         action = HumanAction(
             "action-1",

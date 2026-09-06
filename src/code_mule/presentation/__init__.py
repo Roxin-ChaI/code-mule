@@ -8,6 +8,7 @@ from .render import (
     render_change_requested,
     render_human_action,
     render_project,
+    render_project_diagnosis,
     render_project_cancelled,
     render_project_cancellation_requested,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "render_change_requested",
     "render_human_action",
     "render_project",
+    "render_project_diagnosis",
     "render_project_cancelled",
     "render_project_cancellation_requested",
     "render_dashboard",

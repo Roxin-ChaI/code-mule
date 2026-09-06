@@ -124,9 +124,14 @@ class ProjectDiagnosisService:
         }:
             inconsistent = True
         current = self._unique_task(state, state.project.current_task_id)
+        in_progress = tuple(task for task in tasks if task.status is TaskStatus.IN_PROGRESS)
         if state.project.current_task_id is not None and (
-            current is None or current not in tasks
+            current is None
+            or current not in tasks
+            or current.status is not TaskStatus.IN_PROGRESS
         ):
+            inconsistent = True
+        if (current is None and in_progress) or len(in_progress) > 1:
             inconsistent = True
         pending = tuple(
             action

@@ -15,6 +15,7 @@ class ConversationContractTests(unittest.TestCase):
             {
                 "QUERY_STATUS", "QUERY_PLAN", "QUERY_PROGRESS",
                 "QUERY_CURRENT_WORK", "QUERY_BLOCKERS", "QUERY_GENERAL",
+                "DIAGNOSE",
                 "CHANGE", "PAUSE", "RESUME", "STOP", "INSPECT", "APPROVE",
                 "REJECT", "RESOLVE", "HELP", "UNKNOWN",
             },

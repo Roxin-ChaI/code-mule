@@ -134,9 +134,15 @@ class ProjectDiagnosisServiceTests(unittest.TestCase):
         for status, blocker, action in cases:
             with self.subTest(status=status):
                 state = make_project_state()
+                task_status = (
+                    TaskStatus.CANCELLED
+                    if status is ProjectStatus.CANCELLED
+                    else TaskStatus.COMPLETED
+                )
                 state = replace(
                     state,
                     project=replace(state.project, status=status, current_task_id=None),
+                    tasks=(replace(state.tasks[0], status=task_status),),
                 )
                 diagnosis = self.service.diagnose(state)
                 self.assertIs(diagnosis.blocker_category, blocker)
@@ -151,6 +157,15 @@ class ProjectDiagnosisServiceTests(unittest.TestCase):
         )
         self.assertIs(diagnosis.recoverability, DiagnosisRecoverability.UNCERTAIN)
         self.assertTrue(diagnosis.boss_action_required)
+
+        orphaned = replace(
+            make_project_state(),
+            project=replace(make_project_state().project, current_task_id=None),
+        )
+        self.assertIs(
+            self.service.diagnose(orphaned).blocker_category,
+            DiagnosisBlockerCategory.INCONSISTENT_STATE,
+        )
 
     def test_multiple_pending_actions_are_ambiguous(self):
         state = self.human_state(HumanActionCategory.WORKER_APPROVAL)

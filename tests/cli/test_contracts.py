@@ -33,6 +33,8 @@ class CliContractTests(unittest.TestCase):
             (["init", "--project-id", "p", "--name", "Project"], "init"),
             (["run", "--objective", "build it"], "run"),
             (["status"], "status"),
+            (["diagnose"], "diagnose"),
+            (["diagnose", "--verbose"], "diagnose"),
             (["ask", "what remains?"], "ask"),
             (["change", "add multiply"], "change"),
             (["change", "--apply"], "change"),

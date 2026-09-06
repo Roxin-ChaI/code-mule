@@ -12,6 +12,7 @@ class BossIntent(StrEnum):
     QUERY_CURRENT_WORK = "query_current_work"
     QUERY_BLOCKERS = "query_blockers"
     QUERY_GENERAL = "query_general"
+    DIAGNOSE = "diagnose"
     CHANGE = "change"
     PAUSE = "pause"
     RESUME = "resume"

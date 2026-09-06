@@ -11,11 +11,13 @@ from code_mule.domain.enums import (
     ProjectStatus,
     TaskStatus,
 )
+from code_mule.diagnosis import ProjectDiagnosisService
 from code_mule.presentation import (
     decision_label,
     project_view,
     render_human_action,
     render_project,
+    render_project_diagnosis,
 )
 from code_mule.state.models import ProjectState
 
@@ -55,12 +57,14 @@ class BossConversationService:
         commands: BossCommandGateway,
         router: BossIntentRouter,
         session: BossSession,
+        diagnosis_service: ProjectDiagnosisService | None = None,
         verbose: bool = False,
     ) -> None:
         self._state_loader = state_loader
         self._commands = commands
         self._router = router
         self._session = session
+        self._diagnosis_service = diagnosis_service or ProjectDiagnosisService()
         self._verbose = verbose
 
     def handle(self, message: str) -> ConversationReply:
@@ -96,6 +100,14 @@ class BossConversationService:
             return self._blockers_reply(state)
         if intent is BossIntent.QUERY_GENERAL:
             return self._command_reply(intent, lambda: self._commands.ask(routed.normalized_request))
+        if intent is BossIntent.DIAGNOSE:
+            diagnosis = self._diagnosis_service.diagnose(state)
+            return ConversationReply(
+                intent,
+                render_project_diagnosis(diagnosis, verbose=self._verbose),
+                referenced_task_id=diagnosis.current_task_id,
+                referenced_action_id=diagnosis.pending_action_id,
+            )
         if intent is BossIntent.CHANGE:
             return self._change_reply(state, routed.normalized_request)
         if intent is BossIntent.PAUSE:
@@ -121,6 +133,7 @@ class BossConversationService:
                 intent,
                 (
                     "You can ask about status, plan, progress, current work, or blockers.",
+                    "Ask for a project diagnosis to understand why execution stopped and what to do next.",
                     "You can also request a change, pause, resume, stop, inspect, approve, reject, or retry.",
                     "Ambiguous requests are clarified before any state change.",
                 ),

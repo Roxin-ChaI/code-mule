@@ -139,6 +139,42 @@ class BossConversationServiceTests(unittest.TestCase):
                 self.assertEqual(gateway.calls, [])
                 self.assertNotIn("project_status: running", output)
 
+    def test_diagnosis_uses_shared_deterministic_state_facts(self):
+        state = make_project_state()
+        action = HumanAction(
+            "action-1", state.project.id, "task-1",
+            HumanActionCategory.RECOVERY_UNCERTAIN,
+            "Interrupted", "Inspect state", "Duplicate side effect",
+            HumanActionStatus.PENDING, UPDATED,
+        )
+        state = replace(
+            state,
+            project=replace(state.project, status=ProjectStatus.HUMAN_REQUIRED),
+            human_actions=(action,),
+        )
+        conversation, gateway = service(state, BossIntent.DIAGNOSE)
+        output = "\n".join(conversation.handle("为什么停了").lines)
+        self.assertIn("PROJECT DIAGNOSIS", output)
+        self.assertIn("The outcome of an interrupted execution is uncertain.", output)
+        self.assertIn("Next           code-mule inspect", output)
+        self.assertEqual(gateway.calls, [])
+
+    def test_real_deterministic_diagnosis_phrases_never_call_fallback(self):
+        state = make_project_state()
+        gateway = FakeGateway()
+        fallback = FallbackRouter()
+        conversation = BossConversationService(
+            state_loader=lambda: state,
+            commands=gateway,
+            router=CompositeBossIntentRouter(model=fallback),
+            session=BossSession(state.project.id),
+        )
+        for message in ("项目诊断", "为什么停止了？", "diagnose project", "how can I continue"):
+            with self.subTest(message=message):
+                self.assertIs(conversation.handle(message).intent, BossIntent.DIAGNOSE)
+        self.assertEqual(fallback.calls, [])
+        self.assertEqual(gateway.calls, [])
+
     def test_change_pause_resume_delegate_only_existing_commands(self):
         state = make_project_state()
         cases = (

@@ -43,6 +43,7 @@ class _FakeCommands:
     def init_project(self, *values): return self._call("init", *values)
     def run(self, *values): return self._call("run", *values)
     def status(self, *values): return self._call("status", *values)
+    def diagnose(self, *values): return self._call("diagnose", *values)
     def ask(self, *values): return self._call("ask", *values)
     def change(self, *values): return self._call("change", *values)
     def apply_change(self, *values): return self._call("apply_change", *values)
@@ -390,8 +391,32 @@ class ProductionCommandTests(unittest.TestCase):
     def test_missing_key_only_blocks_model_dependent_command(self):
         composition = self.init()
         self.assertEqual(composition.status().exit_code, CliExitCode.SUCCESS)
+        self.assertEqual(composition.diagnose().exit_code, CliExitCode.SUCCESS)
         with self.assertRaisesRegex(Exception, "DEEPSEEK_API_KEY"):
             composition.run("Build it")
+
+    def test_diagnose_is_read_only_and_does_not_compose_runtime_or_ownership(self):
+        runtime_calls = []
+
+        def forbidden_runtime(state):
+            runtime_calls.append(state.project.id)
+            raise AssertionError("diagnose must not compose runtime")
+
+        composition = self.composition(forbidden_runtime)
+        self.init(composition)
+        before = self.state_file.read_bytes()
+        result = composition.diagnose(verbose=True)
+        self.assertEqual(result.exit_code, CliExitCode.SUCCESS)
+        self.assertIn("PROJECT DIAGNOSIS", result.output)
+        self.assertIn("blocker_category: none", result.output)
+        self.assertEqual(runtime_calls, [])
+        self.assertEqual(self.state_file.read_bytes(), before)
+        self.assertFalse((self.state_file.parent / "execution.lock").exists())
+
+        status = composition.status().output
+        self.assertIn("PROJECT", status)
+        self.assertNotIn("PROJECT DIAGNOSIS", status)
+        self.assertNotIn("BLOCKER", status)
 
     def test_inspect_is_read_only_and_approval_is_action_scoped(self):
         composition = self.init()
@@ -471,6 +496,11 @@ class CliProcessBoundaryTests(unittest.TestCase):
         self.assertEqual(output, "ok\n")
         self.assertEqual(errors, "")
         self.assertEqual(commands.calls, [("status", (False,))])
+
+        commands = _FakeCommands()
+        code, output, errors = self.invoke(["diagnose", "--verbose"], commands)
+        self.assertEqual((code, output, errors), (0, "ok\n", ""))
+        self.assertEqual(commands.calls, [("diagnose", (True,))])
 
     def test_dispatches_human_resolution_commands(self):
         cases = (

@@ -50,6 +50,20 @@ class BossRoutingTests(unittest.TestCase):
             "重试": BossIntent.RESOLVE,
             "approve action-123": BossIntent.APPROVE,
             "拒绝 action-123": BossIntent.REJECT,
+            "项目诊断": BossIntent.DIAGNOSE,
+            "为什么停了？": BossIntent.DIAGNOSE,
+            "为什么停止了": BossIntent.DIAGNOSE,
+            "现在卡在哪里": BossIntent.DIAGNOSE,
+            "现在卡在哪": BossIntent.DIAGNOSE,
+            "为什么不能继续": BossIntent.DIAGNOSE,
+            "我需要做什么": BossIntent.DIAGNOSE,
+            "怎么继续": BossIntent.DIAGNOSE,
+            "diagnose project": BossIntent.DIAGNOSE,
+            "why did the project stop": BossIntent.DIAGNOSE,
+            "why is it blocked": BossIntent.DIAGNOSE,
+            "what is blocking the project": BossIntent.DIAGNOSE,
+            "what should I do next": BossIntent.DIAGNOSE,
+            "how can I continue": BossIntent.DIAGNOSE,
         }
         for message, expected in cases.items():
             with self.subTest(message=message):

@@ -2,6 +2,10 @@
 
 from code_mule.domain.enums import HumanActionCategory
 from code_mule.domain.models import HumanAction
+from code_mule.diagnosis import (
+    DiagnosisRecoverability,
+    ProjectDiagnosis,
+)
 from code_mule.project_verification import (
     FinalReviewDecision,
     ProjectVerificationStatus,
@@ -9,6 +13,78 @@ from code_mule.project_verification import (
 from code_mule.state.models import ProjectState
 
 from .models import human_action_view, project_view
+from .labels import humanize_identifier, status_label
+
+
+def render_project_diagnosis(
+    diagnosis: ProjectDiagnosis, *, verbose: bool = False
+) -> tuple[str, ...]:
+    recoverability = {
+        DiagnosisRecoverability.RECOVERABLE: "Yes",
+        DiagnosisRecoverability.NOT_APPLICABLE: "Not applicable",
+        DiagnosisRecoverability.UNCERTAIN: "Uncertain",
+        DiagnosisRecoverability.TERMINAL: "No (terminal state)",
+    }[diagnosis.recoverability]
+    current = (
+        "None"
+        if diagnosis.current_task_id is None
+        else f"{diagnosis.current_task_id} · {diagnosis.current_task_title}"
+    )
+    latest = (
+        "None"
+        if diagnosis.latest_completed_task_id is None
+        else (
+            f"{diagnosis.latest_completed_task_id} · "
+            f"{diagnosis.latest_completed_task_title}"
+        )
+    )
+    lines = (
+        "PROJECT DIAGNOSIS",
+        "",
+        f"Project        {diagnosis.project_name}",
+        f"Status         {status_label(diagnosis.project_status)}",
+        f"Plan           {'—' if diagnosis.active_plan_version is None else f'v{diagnosis.active_plan_version}'}",
+        f"Progress       {diagnosis.completed_tasks} / {diagnosis.total_tasks}",
+        f"Current Task   {current}",
+        f"Latest Done    {latest}",
+        "",
+        "BLOCKER",
+        "",
+        f"Reason         {diagnosis.blocker_summary}",
+        f"Stage          {humanize_identifier(diagnosis.blocker_stage.value)}",
+        f"Recoverable    {recoverability}",
+    )
+    if diagnosis.verification is not None:
+        verification = diagnosis.verification
+        lines += (
+            f"Check           {verification.check_name}",
+            f"Check type      {humanize_identifier(verification.check_type.value)}",
+            f"Check status    {humanize_identifier(verification.check_status.value)}",
+            f"Required        {'Yes' if verification.required else 'No'}",
+        )
+    lines += (
+        "",
+        "BOSS ACTION",
+        "",
+        f"Required       {'Yes' if diagnosis.boss_action_required else 'No'}",
+        f"Next           {diagnosis.recommended_next_action.value.title() if diagnosis.recommended_next_action.value == 'none' else diagnosis.recommended_next_action.value}",
+    )
+    if verbose:
+        lines += (
+            "",
+            "INTERNAL",
+            f"project_status: {diagnosis.project_status.value}",
+            f"blocker_category: {diagnosis.blocker_category.value}",
+            f"blocker_stage: {diagnosis.blocker_stage.value}",
+            f"recoverability: {diagnosis.recoverability.value}",
+            f"current_task_id: {diagnosis.current_task_id or '-'}",
+            f"latest_completed_task_id: {diagnosis.latest_completed_task_id or '-'}",
+            f"latest_task_commit: {diagnosis.latest_task_commit or '-'}",
+            f"pending_action_id: {diagnosis.pending_action_id or '-'}",
+        )
+        if diagnosis.worker_input_question is not None:
+            lines += (f"worker_input_question: {diagnosis.worker_input_question}",)
+    return lines
 
 
 def render_project(
@@ -328,6 +404,7 @@ __all__ = [
     "render_change_requested",
     "render_human_action",
     "render_project",
+    "render_project_diagnosis",
     "render_project_cancelled",
     "render_project_cancellation_requested",
 ]
