@@ -225,6 +225,8 @@ class ExecutionOwnershipService:
         self, lease_id: str, task_id: str
     ) -> ExecutionLease:
         def clear(lease: ExecutionLease) -> ExecutionLease:
+            if lease.current_task_id is None and lease.codex_thread_id is None:
+                return lease
             if lease.current_task_id != task_id:
                 raise ExecutionOwnershipError(
                     "Worker identity does not belong to the completed Task"
@@ -272,7 +274,8 @@ class ExecutionOwnershipService:
             }
             and state.project.current_task_id is not None
         ):
-            if pending_action(state) is None:
+            from code_mule.recovery.service import RecoveryClassifier
+            if pending_action(state) is None and not RecoveryClassifier().classify(state).automatic_resume_allowed:
                 attempts = tuple(
                     item for item in state.execution_attempts
                     if item.task_id == state.project.current_task_id
@@ -410,6 +413,9 @@ class ExecutionOwnershipService:
         }:
             return RecoveryClassification.STALE_IDLE_LEASE
         if state.project.current_task_id is None:
+            return RecoveryClassification.SAFE_TO_RESUME
+        from code_mule.recovery.service import RecoveryClassifier
+        if RecoveryClassifier().classify(state).automatic_resume_allowed:
             return RecoveryClassification.SAFE_TO_RESUME
         task = next(
             (

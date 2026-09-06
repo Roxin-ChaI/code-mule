@@ -150,6 +150,14 @@ class ProjectDiagnosisService:
 
         classification = self._classification(state, pending, inconsistent)
         recovery = RecoveryClassifier().classify(state)
+        if state.latest_safe_point is not None and not pending and not inconsistent:
+            from dataclasses import replace
+            classification = replace(
+                classification,
+                recoverability=DiagnosisRecoverability(recovery.recoverability.value),
+                boss_action_required=recovery.requires_boss_action,
+                next_action=(DiagnosisNextAction.RECOVER if recovery.automatic_resume_allowed else classification.next_action),
+            )
         completed = tuple(task for task in tasks if task.status is TaskStatus.COMPLETED)
         latest_completed = max(completed, key=lambda task: task.updated_at, default=None)
         action = pending[0] if len(pending) == 1 else None

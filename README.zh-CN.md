@@ -95,7 +95,9 @@ Supervisor 只提供 typed plan 和 decision。确定性 runtime 负责状态迁
 - **Git 原生交付** — 每个被接受的 Task 形成一个精确的本地 commit。
 - **需求变更** — CHANGE 经过影响分析，生成 Plan vN+1。
 - **Human Gate** — Worker Input、批准和外部副作用会安全停下等待 Boss。
-- **持久化恢复** — 从 `ProjectState` 恢复，而不是依赖聊天记录。
+- **确定性恢复** — 持久化最近的执行边界、Safe Point 与 Worker attempt
+  生命周期；`code-mule recover` 只在 `ProjectState` 能证明 Git 与 Plan
+  连续性时继续。
 
 ## 人类控制
 
@@ -212,6 +214,7 @@ code-mule chat
 | `run --objective "..."` / `run` | 开始规划，或继续 RUNNING 工作 |
 | `status` | 读取确定性的 Plan 和 Task 进度 |
 | `diagnose` | 只读解释阻塞原因、可恢复性和 Boss 下一步操作 |
+| `recover` | 从已持久化且通过确定性校验的执行边界继续 |
 | `chat` | 打开自然语言 Boss 界面 |
 | `ask "..."` | 查询项目，只读 |
 | `change "..."` / `change --apply` | 记录 CHANGE，再显式执行 replanning |

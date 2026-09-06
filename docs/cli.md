@@ -93,6 +93,9 @@ identity when applicable:
 - `pause`: applies the existing Boss PAUSE transition.
 - `resume`: resumes only PAUSED_BY_BOSS after workspace, Plan, and task ownership
   recovery checks. It never bypasses HUMAN_REQUIRED.
+- `recover`: classifies a persisted interruption, validates the required Git
+  continuity, and continues from the last trusted Safe Point. It never resolves
+  a HumanAction or restarts an uncertain Worker.
 - `stop`: records whole-project cancellation. With no active Task it completes
   immediately; otherwise the current Task reaches a Safe Point and no next Task
   is dispatched. Completed work is preserved and no rollback is performed.
@@ -101,7 +104,7 @@ identity when applicable:
 - `approve ACTION_ID` / `reject ACTION_ID`: closes one exact approval action;
   approval cannot be reused and rejection never executes the operation.
 - `answer ACTION_ID "answer"`: answers one pending WORKER_INPUT action without
-  starting a Worker. Partial work is preserved. A subsequent explicit `run`
+  starting a Worker. Partial work is preserved. A subsequent explicit `recover`
   validates the original Git baseline and continues the same Task in a fresh
   Worker session; it does not resume the closed turn or create a partial commit.
 - `resolve ACTION_ID --strategy STRATEGY`: handles non-approval gates with an
@@ -119,6 +122,7 @@ exists and what the Boss should do next:
 ```bash
 code-mule diagnose
 code-mule diagnose --verbose
+code-mule recover --verbose
 ```
 
 The diagnosis is derived only from ProjectState: active Plan and Task progress,

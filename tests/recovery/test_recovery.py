@@ -120,6 +120,29 @@ class RecoveryClassificationTests(unittest.TestCase):
         self.assertIs(plan.recovery_mode, RecoveryMode.BLOCKED)
         self.assertFalse(plan.automatic_resume_allowed)
 
+    def test_missing_legacy_attempt_evidence_never_means_unstarted(self):
+        state = make_project_state()
+        self.assertFalse(self.classifier.classify(state).automatic_resume_allowed)
+        payload = serialize_project_state(state)
+        payload["schema_version"] = 11
+        for key in ("latest_execution_stop", "latest_safe_point", "execution_attempts"):
+            payload.pop(key)
+        self.assertFalse(self.classifier.classify(deserialize_project_state(payload)).automatic_resume_allowed)
+
+    def test_closed_gate_does_not_authorize_human_required_execution(self):
+        state = self._current(ExecutionAttemptStatus.PREPARED)
+        state = replace(state, project=replace(state.project, status=ProjectStatus.HUMAN_REQUIRED))
+        self.assertFalse(self.classifier.classify(state).automatic_resume_allowed)
+
+    def test_materialized_plan_with_planning_status_is_inconsistent(self):
+        state = replace(self.state, project=replace(self.state.project, status=ProjectStatus.PLANNING))
+        self.assertIs(self.classifier.classify(state).recovery_mode, RecoveryMode.BLOCKED)
+
+    def test_blocked_preflight_never_touches_workspace(self):
+        state = self._current(ExecutionAttemptStatus.WORKER_STARTED)
+        state = replace(state, project=replace(state.project, workspace="/nonexistent"))
+        self.assertIs(self.classifier.classify(state, validate_workspace=True).recovery_mode, RecoveryMode.BLOCKED)
+
     def test_interrupted_worker_never_auto_retries(self):
         plan = self.classifier.classify(self._current(ExecutionAttemptStatus.INTERRUPTED))
         self.assertIs(plan.recoverability, BoundaryRecoverability.UNCERTAIN)
@@ -132,7 +155,7 @@ class RecoveryClassificationTests(unittest.TestCase):
     def test_answered_worker_input_uses_fresh_session_same_task(self):
         details = WorkerInputDetails("worker/report", "report-1", "Storage?", (), 2, "a" * 40, ("app.js",), "localStorage")
         action = HumanAction("action-1", "project-1", "task-1", HumanActionCategory.WORKER_INPUT, "Input", "Answer", "Risk", HumanActionStatus.RESOLVED, NOW, NOW, details)
-        state = replace(self.state, human_actions=(action,))
+        state = replace(self.state, human_actions=(action,), tasks=(replace(self.state.tasks[0], status=TaskStatus.REOPENED),))
         plan = self.classifier.classify(state)
         self.assertIs(plan.recovery_mode, RecoveryMode.CONTINUE_AFTER_INPUT)
         self.assertEqual(plan.task_id, "task-1")
@@ -150,7 +173,8 @@ class RecoveryClassificationTests(unittest.TestCase):
         self.assertIs(self.classifier.classify(state).recovery_mode, RecoveryMode.FRESH_PLANNING)
 
     def test_planning_after_materialization_reuses_plan(self):
-        state = replace(self.state, project=replace(self.state.project, status=ProjectStatus.PLANNING))
+        # Materialization atomically publishes the Plan AND RUNNING status.
+        state = self.state
         self.assertIs(self.classifier.classify(state).recovery_mode, RecoveryMode.RESUME_PLAN)
 
     def test_terminal_project_has_no_recovery(self):
@@ -198,6 +222,18 @@ class WorkspaceRecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(RecoveryPreflightError, "staged"):
             RecoveryClassifier().classify(self._state(self.head), validate_workspace=True)
 
+    def test_unstaged_external_path_blocks_unstarted_recovery(self):
+        (self.root / "README.md").write_text("external edit\n")
+        with self.assertRaises(RecoveryPreflightError):
+            RecoveryClassifier().classify(self._state(self.head), validate_workspace=True)
+
+    def test_preflight_is_read_only(self):
+        state = self._state(self.head)
+        before = serialize_project_state(state)
+        self.assertTrue(RecoveryClassifier().classify(state, validate_workspace=True).automatic_resume_allowed)
+        self.assertEqual(before, serialize_project_state(state))
+        self.assertEqual(subprocess.run(("git", "status", "--short"), cwd=self.root, text=True, capture_output=True, check=True).stdout, "")
+
     def _state(self, head):
         source = make_project_state()
         task = replace(source.tasks[0], status=TaskStatus.IN_PROGRESS)
@@ -206,6 +242,35 @@ class WorkspaceRecoveryTests(unittest.TestCase):
 
 
 class ProcessRestartRecoveryTests(unittest.TestCase):
+    def test_reconstructed_runtime_dispatches_selected_or_materialized_task_once(self):
+        from code_mule.state.store import JsonProjectStateStore
+        from code_mule.runtime import ProjectExecutionService, ProjectExecutionConfig, TaskPromptBuilder
+        from code_mule.scheduler import TaskScheduler
+        from runtime.test_project import make_state, make_task, FakeFinalizer, IdFactory
+        class RestartedStore(JsonProjectStateStore):
+            @property
+            def current(self):
+                return self.load()
+        for selected in (False, True):
+            with self.subTest(selected=selected), TemporaryDirectory() as directory:
+                task = make_task("task-1", status=TaskStatus.IN_PROGRESS if selected else TaskStatus.PENDING)
+                state = make_state((task,), current_task_id=task.id if selected else None)
+                state = replace(state, latest_safe_point=SafePoint(SafePointKind.TASK_READY if selected else SafePointKind.PLAN_MATERIALIZED, NOW, task.id if selected else None))
+                path = Path(directory) / "state.json"
+                JsonProjectStateStore(path).save(state)
+                store = RestartedStore(path)
+                worker = FakeWorkerSession()
+                supervisor = FakeSupervisor([review(SupervisorDecisionType.CONTINUE)])
+                cycle, _, _, _, _, _ = build_cycle(store=store, session=worker, supervisor=supervisor, git_delivery=FakeGitDelivery())
+                execution = ProjectExecutionService(store=store, scheduler=TaskScheduler(), task_cycle_factory=lambda: cycle, prompt_builder=TaskPromptBuilder(), clock=lambda: NOW, event_id_factory=IdFactory(), config=ProjectExecutionConfig(5), finalizer=FakeFinalizer(store))
+                execution.recover(RecoveryClassifier().classify(store.load()))
+                restored = JsonProjectStateStore(path).load()
+                self.assertEqual(len(worker.requests), 1)
+                self.assertEqual(tuple(item.id for item in restored.tasks), (task.id,))
+                self.assertEqual(restored.project.active_plan_id, state.project.active_plan_id)
+                self.assertEqual(len(restored.plans), 1)
+                self.assertIs(restored.project.status, ProjectStatus.DONE)
+
     def test_restart_before_worker_reuses_same_plan_and_task(self):
         source = make_project_state()
         task = replace(source.tasks[0], status=TaskStatus.IN_PROGRESS)
@@ -218,7 +283,7 @@ class ProcessRestartRecoveryTests(unittest.TestCase):
 
     def test_restart_after_report_never_invokes_worker_again(self):
         delivery = FakeGitDelivery()
-        store = FakeStore(cycle_state(), fail_on_save=5)
+        store = FakeStore(cycle_state(), fail_on_save=7)
         first, request, _, first_session, _, _ = build_cycle(
             store=store, git_delivery=delivery
         )

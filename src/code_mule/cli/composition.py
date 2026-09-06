@@ -396,6 +396,14 @@ class ProductionCliComposition:
             raise CliRecoveryRequired(plan.reason)
         try:
             with self._acquire_execution(verbose) as ownership:
+                state = self._load()
+                try:
+                    plan = RecoveryClassifier().classify(state, validate_workspace=True)
+                except RecoveryPreflightError as error:
+                    raise CliRecoveryRequired(str(error)) from error
+                if not plan.automatic_resume_allowed:
+                    raise CliRecoveryRequired(plan.reason)
+                runtime = self._runtime(state, ownership)
                 if plan.recovery_mode is RecoveryMode.FRESH_PLANNING:
                     objective = state.project.objective
                     if objective in (None, ""):
@@ -429,7 +437,6 @@ class ProductionCliComposition:
                         reset, SafePointKind.PROJECT_IDLE, now
                     )
                     self._store.save(reset)
-                    runtime = self._runtime(reset, ownership)
                     with runtime.renderer:
                         planned = runtime.planning.plan(
                             ProjectPlanningRequest(reset.project.id, objective)
@@ -440,7 +447,6 @@ class ProductionCliComposition:
                             else None
                         )
                 else:
-                    runtime = self._runtime(state, ownership)
                     with runtime.renderer:
                         outcome = runtime.execution.recover(plan)
         except KeyboardInterrupt:

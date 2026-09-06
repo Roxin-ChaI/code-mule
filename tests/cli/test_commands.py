@@ -193,10 +193,15 @@ class ProductionCommandTests(unittest.TestCase):
         self.assertEqual(store.load().project.status, ProjectStatus.DONE)
 
     def test_recover_reuses_materialized_plan(self):
+        import subprocess
+        from code_mule.recovery import SafePoint, SafePointKind
+        subprocess.run(("git", "init", "-q"), cwd=self.workspace, check=True)
+        subprocess.run(("git", "-c", "user.name=Recovery Test", "-c", "user.email=recovery@example.invalid", "commit", "--allow-empty", "-qm", "baseline"), cwd=self.workspace, check=True)
         composition = self.composition(self.runtime_factory)
         self.init(composition)
         store = JsonProjectStateStore(self.state_file)
         _FakePlanning(store).plan(SimpleNamespace())
+        store.save(replace(store.load(), latest_safe_point=SafePoint(SafePointKind.PLAN_MATERIALIZED, datetime.now(UTC))))
         plan_id = store.load().project.active_plan_id
 
         result = composition.recover(verbose=True)
@@ -205,6 +210,20 @@ class ProductionCommandTests(unittest.TestCase):
         self.assertIn("RECOVERY", result.output)
         self.assertEqual(len(store.load().plans), 1)
         self.assertEqual(store.load().plans[0].id, plan_id)
+
+    def test_fresh_planning_recovery_preserves_acquired_lease(self):
+        from code_mule.execution import ExecutionLeaseStatus
+        composition = self.composition(self.runtime_factory)
+        self.init(composition)
+        store = JsonProjectStateStore(self.state_file)
+        state = store.load()
+        store.save(replace(state, project=replace(state.project, status=ProjectStatus.PLANNING, objective="Build it")))
+        result = composition.recover()
+        self.assertIs(result.exit_code, CliExitCode.SUCCESS)
+        restored = store.load()
+        self.assertEqual(len(restored.plans), 1)
+        self.assertEqual(len(restored.execution_leases), 1)
+        self.assertIs(restored.execution_leases[0].status, ExecutionLeaseStatus.RELEASED)
 
     def test_live_owner_blocks_execution_but_allows_status_and_change(self):
         runtime_calls = []

@@ -38,7 +38,7 @@ The Execution Layer contains the Codex Worker. v0.1.0 permits at most one active
 
 ## State Layer
 
-The State Layer contains the Project State Store, the Source of Truth for identity, requirements, versioned Plans, Task state, execution evidence, quality, changes, decisions, gates, and events. It supports recovery independently of any conversation or model session.
+The State Layer contains the Project State Store, the Source of Truth for identity, requirements, versioned Plans, Task state, execution evidence, quality, changes, decisions, gates, events, the latest execution stop boundary, the latest typed Safe Point, and Worker-attempt lifecycle. Deterministic recovery classifies only these persisted facts and remains independent of any conversation or model session.
 
 ProjectEvents form an append-only audit trail. Current views may be derived from stored entities and events, but conversation transcripts alone are insufficient.
 

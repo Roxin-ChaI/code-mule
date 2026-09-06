@@ -97,7 +97,9 @@ owns state transitions, scheduling, verification, and Git delivery. See the
 - **Git-native delivery** — turn each accepted Task into one precise local commit.
 - **Requirement changes** — route CHANGE through impact analysis and Plan vN+1.
 - **Human Gates** — stop safely for Worker Input, approval, or external effects.
-- **Durable recovery** — recover from persisted `ProjectState`, not chat history.
+- **Deterministic recovery** — persist the latest execution boundary, Safe Point,
+  and Worker-attempt lifecycle; `code-mule recover` continues only when Git and
+  Plan continuity are proven from `ProjectState`.
 
 ## Human Control
 
@@ -214,6 +216,7 @@ Commands discover `.code-mule/project-state.json` from the target repository.
 | `run --objective "..."` / `run` | Start planning or continue RUNNING work |
 | `status` | Read deterministic Plan and Task progress |
 | `diagnose` | Explain blockers, recoverability, and the next Boss action (read-only) |
+| `recover` | Continue from a persisted, deterministically validated execution boundary |
 | `chat` | Open the natural-language Boss interface |
 | `ask "..."` | Ask a read-only project question |
 | `change "..."` / `change --apply` | Record CHANGE, then explicitly replan |

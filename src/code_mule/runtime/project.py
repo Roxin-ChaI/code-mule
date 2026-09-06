@@ -185,6 +185,9 @@ class ProjectExecutionService:
         if not plan.automatic_resume_allowed:
             raise InvalidProjectExecutionState("recovery plan is not executable")
         state = self._store.load()
+        from code_mule.recovery.service import RecoveryClassifier
+        if RecoveryClassifier().classify(state) != plan:
+            raise InvalidProjectExecutionState("recovery facts changed after preflight")
         if plan.recovery_mode is RecoveryMode.DISPATCH_FRESH_WORKER:
             if plan.task_id is None or state.project.current_task_id != plan.task_id:
                 raise InvalidProjectExecutionState("selected Task recovery identity mismatch")

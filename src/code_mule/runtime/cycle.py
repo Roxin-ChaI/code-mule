@@ -201,6 +201,10 @@ class TaskCycleService:
             if latest.project.status is ProjectStatus.CANCEL_REQUESTED:
                 self._cancel_current_task(task.id)
                 return self._cancelled_outcome(task.id, reports, decisions)
+            attempt = max((item.attempt for item in latest.execution_attempts if item.task_id == task.id), default=0) + 1
+            # Persist uncertainty before any external session startup. A crash in
+            # start() must never look like a Task that has not dispatched.
+            state = self._record_execution_started(latest, task, attempt, baseline, None)
             try:
                 self._emit_progress(
                     state,
@@ -221,15 +225,16 @@ class TaskCycleService:
                 return self._human_outcome(
                     task.id, reports, decisions, final_prompt=None
                 )
+            first_attempt = True
             while True:
                 task = self._task(state, request.task.id)
-                previous_attempts = tuple(
-                    item.attempt for item in state.execution_attempts if item.task_id == task.id
-                )
-                attempt = max(previous_attempts, default=0) + 1
-                state = self._record_execution_started(
-                    state, task, attempt, baseline, getattr(session, "thread_id", None)
-                )
+                if first_attempt:
+                    first_attempt = False
+                    state = update_attempt(self._store.load(), task.id, attempt, ExecutionAttemptStatus.WORKER_STARTED, thread_id=getattr(session, "thread_id", None))
+                    self._store.save(state)
+                else:
+                    attempt = max((item.attempt for item in state.execution_attempts if item.task_id == task.id), default=0) + 1
+                    state = self._record_execution_started(state, task, attempt, baseline, getattr(session, "thread_id", None))
                 if self._worker_identity_started is not None:
                     thread_id = session.thread_id
                     if thread_id in (None, ""):
@@ -605,6 +610,8 @@ class TaskCycleService:
         if len(reports) != 1:
             raise InvalidTaskCycleState("trusted Worker report must exist exactly once")
         report = reports[0]
+        if report.human_action is not None:
+            raise InvalidTaskCycleState("report recovery cannot bypass a Worker Human Gate")
         baselines = tuple(
             item for item in state.git_baselines
             if item.task_id == task.id and item.baseline_head == attempt.baseline_head
@@ -619,7 +626,19 @@ class TaskCycleService:
             terminal_at=attempt.terminal_at,
         )
         self._store.save(state)
-        review = self._supervisor.review(ReviewRequest(state, task, report))
+        try:
+            review = self._supervisor.review(ReviewRequest(state, task, report))
+        except BaseException as error:
+            self._transition_human_required(
+                self._store.load(), task,
+                event_types=("supervisor.review_failed", "task.human_required"),
+                metadata=supervisor_failure_metadata(error),
+                category=HumanActionCategory.SUPERVISOR_FAILURE,
+                summary="Supervisor review failed",
+                requested_action="Inspect the failure and choose an explicit resolution",
+                risk="Execution cannot continue without a trustworthy Supervisor decision",
+            )
+            raise
         state, decision = self._persist_decision(self._store.load(), task, review)
         state = update_attempt(
             state, task.id, attempt.attempt, ExecutionAttemptStatus.REVIEW_COMPLETED,
@@ -805,8 +824,9 @@ class TaskCycleService:
             recorded_at=operation_time,
             baseline_head=None if baseline is None else baseline.baseline_head,
         )
+        self._store.save(new_state)
         new_state = update_attempt(
-            new_state,
+            self._store.load(),
             task.id,
             attempt,
             ExecutionAttemptStatus.WORKER_STARTED,
@@ -821,6 +841,8 @@ class TaskCycleService:
         state, task = self._reload_task_state(task.id)
         if baseline.task_id != task.id:
             raise InvalidTaskCycleState("Git baseline targets a different task")
+        if baseline in state.git_baselines:
+            return state
         operation_time = self._clock()
         event = self._event(
             state,

@@ -79,6 +79,32 @@ class ExecutionOwnershipServiceTests(unittest.TestCase):
         self.assertEqual(len(self.store.load().execution_leases), 1)
         first.close()
 
+    def test_restarted_selected_task_acquires_and_releases_without_human_gate(self):
+        from code_mule.recovery import SafePoint, SafePointKind
+        state = self.store.load()
+        task = replace(state.tasks[0], status=TaskStatus.IN_PROGRESS)
+        self.store.save(replace(state, project=replace(state.project, current_task_id=task.id), tasks=(task,), latest_safe_point=SafePoint(SafePointKind.TASK_READY, NOW, task.id)))
+        self.store.save(replace(self.store.load(), execution_leases=(self.stale_lease(),)))
+        handle = self.service().acquire()
+        handle.close(interrupted=True)
+        restored = JsonProjectStateStore(self.root / "state.json").load()
+        self.assertEqual(restored.human_actions, ())
+        self.assertIs(restored.execution_leases[-1].status, ExecutionLeaseStatus.RELEASED)
+        self.assertIs(restored.project.status, ProjectStatus.RUNNING)
+
+    def test_restarted_report_boundary_preserves_terminal_evidence(self):
+        from code_mule.recovery import ExecutionAttempt, ExecutionAttemptStatus, SafePoint, SafePointKind
+        state = make_project_state()
+        task = state.tasks[0]
+        attempt = ExecutionAttempt(task.id, task.execution_attempts, ExecutionAttemptStatus.REPORT_PERSISTED, NOW, "thread-1", baseline_head="a" * 40, terminal_at=NOW)
+        self.store.save(replace(state, execution_attempts=(attempt,), latest_safe_point=SafePoint(SafePointKind.TASK_WORKER_COMPLETED, NOW, task.id)))
+        self.store.save(replace(self.store.load(), execution_leases=(self.stale_lease(thread_id="thread-1"),)))
+        handle = self.service().acquire()
+        handle.close(interrupted=True)
+        restored = JsonProjectStateStore(self.root / "state.json").load()
+        self.assertIs(restored.execution_attempts[-1].status, ExecutionAttemptStatus.REPORT_PERSISTED)
+        self.assertEqual(restored.human_actions, ())
+
     def test_acquisition_save_failure_releases_lock_before_any_owner_exists(self):
         class FailOnceStore:
             def __init__(inner_self, delegate):

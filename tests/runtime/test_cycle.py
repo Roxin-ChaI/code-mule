@@ -1039,7 +1039,7 @@ class TaskCycleFailureTests(unittest.TestCase):
         self.assertEqual(store.current.execution_reports, ())
 
     def test_report_save_failure_stops_before_supervisor_without_reexecution(self):
-        store = FakeStore(cycle_state(), fail_on_save=2)
+        store = FakeStore(cycle_state(), fail_on_save=5)
         supervisor = FakeSupervisor([review(SupervisorDecisionType.CONTINUE)])
         service, request, store, session, supervisor, _ = build_cycle(
             store=store, supervisor=supervisor
