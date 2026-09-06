@@ -23,6 +23,7 @@ from code_mule.project_verification.contracts import (
     ProjectVerificationResult,
     ProjectVerificationSpec,
 )
+from code_mule.recovery.contracts import ExecutionAttempt, ExecutionStopBoundary, SafePoint
 
 
 @dataclass
@@ -46,6 +47,9 @@ class ProjectState:
     git_commit_results: tuple[GitCommitResult, ...] = ()
     project_verification_spec: ProjectVerificationSpec | None = None
     project_verification_results: tuple[ProjectVerificationResult, ...] = ()
+    latest_execution_stop: ExecutionStopBoundary | None = None
+    latest_safe_point: SafePoint | None = None
+    execution_attempts: tuple[ExecutionAttempt, ...] = ()
 
 
 __all__ = ["ProjectState"]

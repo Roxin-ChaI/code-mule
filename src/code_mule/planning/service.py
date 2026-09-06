@@ -15,6 +15,8 @@ from code_mule.progress import (
     ProgressSink,
     resilient_progress_sink,
 )
+from code_mule.recovery import SafePointKind
+from code_mule.recovery.state import with_safe_point
 from code_mule.state.models import ProjectState
 from code_mule.supervisor.contracts import PlanProposal, PlanRequest
 from code_mule.supervisor import (
@@ -177,6 +179,9 @@ class ProjectPlanningService:
         final_state = replace(
             materialized,
             events=materialized.events + (completed_event, materialized_event),
+        )
+        final_state = with_safe_point(
+            final_state, SafePointKind.PLAN_MATERIALIZED, operation_time
         )
         if self._store.load().project.status is ProjectStatus.CANCELLED:
             raise ProjectPlanningStateError("planning was cancelled by the Boss")

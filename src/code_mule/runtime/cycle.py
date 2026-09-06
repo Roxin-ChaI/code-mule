@@ -38,11 +38,26 @@ from code_mule.progress import (
     resilient_progress_sink,
 )
 from code_mule.state.models import ProjectState
+from code_mule.recovery import (
+    BoundaryRecoverability,
+    ExecutionAttemptStatus,
+    ExecutionPhase,
+    ExecutionStopReason,
+    SafePointKind,
+    WorkerTerminalState,
+)
+from code_mule.recovery.state import (
+    start_attempt,
+    update_attempt,
+    with_safe_point,
+    with_stop_boundary,
+)
 from code_mule.supervisor.contracts import ReviewRequest, ReviewResult
 from code_mule.supervisor import supervisor_failure_metadata
 from code_mule.worker.contracts import (
     CodexApprovalRequired,
     CodexUserInputRequired,
+    CodexTurnTimeout,
     CodexWorkerError,
     WorkerTaskRequest,
     worker_failure_metadata,
@@ -208,8 +223,13 @@ class TaskCycleService:
                 )
             while True:
                 task = self._task(state, request.task.id)
-                state = self._record_execution_started(state, task)
-                attempt = task.execution_attempts + 1
+                previous_attempts = tuple(
+                    item.attempt for item in state.execution_attempts if item.task_id == task.id
+                )
+                attempt = max(previous_attempts, default=0) + 1
+                state = self._record_execution_started(
+                    state, task, attempt, baseline, getattr(session, "thread_id", None)
+                )
                 if self._worker_identity_started is not None:
                     thread_id = session.thread_id
                     if thread_id in (None, ""):
@@ -229,6 +249,7 @@ class TaskCycleService:
                     f"Task attempt {attempt} started",
                     attempt=attempt,
                 )
+
                 worker_request = WorkerTaskRequest(task, prompt, task.title)
                 try:
                     report = session.execute(
@@ -265,6 +286,17 @@ class TaskCycleService:
                         decisions,
                         final_prompt=None,
                     )
+
+                state = self._store.load()
+                state = update_attempt(
+                    state,
+                    task.id,
+                    attempt,
+                    ExecutionAttemptStatus.WORKER_COMPLETED,
+                    turn_id=getattr(session, "turn_id", None),
+                    terminal_at=self._clock(),
+                )
+                self._store.save(state)
 
                 self._emit_progress(
                     state,
@@ -374,6 +406,14 @@ class TaskCycleService:
 
                 persisted = self._store.load()
                 persisted_task = self._task(persisted, task.id)
+                persisted = update_attempt(
+                    persisted,
+                    task.id,
+                    attempt,
+                    ExecutionAttemptStatus.REVIEW_STARTED,
+                    terminal_at=self._latest_attempt(persisted, task.id).terminal_at,
+                )
+                self._store.save(persisted)
                 self._emit_progress(
                     persisted,
                     persisted_task,
@@ -415,11 +455,19 @@ class TaskCycleService:
                     metadata={"decision": review.decision.value},
                 )
                 state, decision = self._persist_decision(persisted, persisted_task, review)
+                state = update_attempt(
+                    state,
+                    task.id,
+                    attempt,
+                    ExecutionAttemptStatus.REVIEW_COMPLETED,
+                    terminal_at=self._latest_attempt(state, task.id).terminal_at,
+                )
+                self._store.save(state)
                 decisions += (decision,)
 
                 if review.decision is SupervisorDecisionType.CONTINUE:
                     if change_set is not None:
-                        if not self._deliver_task(change_set, persisted_task, report.attempt):
+                        if not self._deliver_task(change_set, persisted_task, attempt):
                             self._clear_worker_identity(task.id)
                             return self._human_outcome(
                                 task.id, reports, decisions, final_prompt=None
@@ -446,7 +494,7 @@ class TaskCycleService:
 
                 if review.decision is SupervisorDecisionType.DONE:
                     if change_set is not None:
-                        if not self._deliver_task(change_set, persisted_task, report.attempt):
+                        if not self._deliver_task(change_set, persisted_task, attempt):
                             self._clear_worker_identity(task.id)
                             return self._human_outcome(
                                 task.id, reports, decisions, final_prompt=None
@@ -542,6 +590,70 @@ class TaskCycleService:
         finally:
             session.close()
 
+    def resume_after_report(self, request: TaskCycleRequest) -> TaskCycleOutcome:
+        """Continue a trusted persisted report without creating a Worker."""
+
+        state = self._store.load()
+        task = self._validate_start(state, request)
+        attempt = self._latest_attempt(state, task.id)
+        if attempt.status is not ExecutionAttemptStatus.REPORT_PERSISTED:
+            raise InvalidTaskCycleState("recovery requires a report-persisted boundary")
+        reports = tuple(
+            item for item in state.execution_reports
+            if item.task_id == task.id and item.attempt == task.execution_attempts
+        )
+        if len(reports) != 1:
+            raise InvalidTaskCycleState("trusted Worker report must exist exactly once")
+        report = reports[0]
+        baselines = tuple(
+            item for item in state.git_baselines
+            if item.task_id == task.id and item.baseline_head == attempt.baseline_head
+        )
+        if self._git_delivery is None or len(baselines) != 1:
+            raise InvalidTaskCycleState("report recovery requires its original Git baseline")
+        change_set = self._git_delivery.prepare_change_set(
+            baselines[0], report, report.files_changed
+        )
+        state = update_attempt(
+            state, task.id, attempt.attempt, ExecutionAttemptStatus.REVIEW_STARTED,
+            terminal_at=attempt.terminal_at,
+        )
+        self._store.save(state)
+        review = self._supervisor.review(ReviewRequest(state, task, report))
+        state, decision = self._persist_decision(self._store.load(), task, review)
+        state = update_attempt(
+            state, task.id, attempt.attempt, ExecutionAttemptStatus.REVIEW_COMPLETED,
+            terminal_at=attempt.terminal_at,
+        )
+        self._store.save(state)
+        if review.decision not in {
+            SupervisorDecisionType.CONTINUE, SupervisorDecisionType.DONE
+        }:
+            self._transition_human_required(
+                state,
+                task,
+                event_types=("task.recovery_review_requires_human", "task.human_required"),
+                metadata={"decision": review.decision.value},
+                category=HumanActionCategory.SUPERVISOR_FAILURE,
+                summary="Recovered report requires further human-guided work",
+                requested_action="Inspect the review decision and choose an explicit resolution",
+                risk="A Worker will not be restarted automatically after recovery review",
+            )
+            return self._human_outcome(task.id, (report,), (decision,), final_prompt=None)
+        if not self._deliver_task(change_set, task, attempt.attempt):
+            return self._human_outcome(task.id, (report,), (decision,), final_prompt=None)
+        self._complete_task(self._store.load(), task, review.decision)
+        self._clear_worker_identity(task.id)
+        return TaskCycleOutcome(
+            task_id=task.id,
+            attempts=0,
+            final_decision=review.decision,
+            execution_reports=(report,),
+            decisions=(decision,),
+            final_prompt=None,
+            human_action_required=False,
+        )
+
     def _clear_worker_identity(self, task_id: str) -> None:
         if self._worker_identity_cleared is not None:
             self._worker_identity_cleared(task_id)
@@ -549,7 +661,8 @@ class TaskCycleService:
     def _emit_worker_failure(
         self, state: ProjectState, task: Task, error: CodexWorkerError
     ) -> None:
-        attempt = task.execution_attempts + 1
+        lifecycle = tuple(item for item in state.execution_attempts if item.task_id == task.id)
+        attempt = max(lifecycle, key=lambda item: item.attempt).attempt if lifecycle else task.execution_attempts + 1
         self._emit_progress(
             state,
             task,
@@ -664,7 +777,12 @@ class TaskCycleService:
         return matches[0]
 
     def _record_execution_started(
-        self, state: ProjectState, task: Task
+        self,
+        state: ProjectState,
+        task: Task,
+        attempt: int,
+        baseline: GitBaseline | None,
+        thread_id: str | None,
     ) -> ProjectState:
         state, task = self._reload_task_state(task.id)
         operation_time = self._clock()
@@ -673,12 +791,26 @@ class TaskCycleService:
             task,
             "task.execution_started",
             operation_time,
-            {"attempt": str(task.execution_attempts + 1)},
+            {"attempt": str(attempt)},
         )
         new_state = replace(
             state,
             project=replace(state.project, updated_at=operation_time),
             events=state.events + (event,),
+        )
+        new_state = start_attempt(
+            new_state,
+            task_id=task.id,
+            attempt=attempt,
+            recorded_at=operation_time,
+            baseline_head=None if baseline is None else baseline.baseline_head,
+        )
+        new_state = update_attempt(
+            new_state,
+            task.id,
+            attempt,
+            ExecutionAttemptStatus.WORKER_STARTED,
+            thread_id=thread_id,
         )
         self._store.save(new_state)
         return new_state
@@ -703,6 +835,14 @@ class TaskCycleService:
             git_baselines=state.git_baselines + (baseline,),
             events=state.events + (event,),
         )
+        new_state = with_safe_point(
+            new_state,
+            SafePointKind.TASK_BASELINE_CAPTURED,
+            operation_time,
+            task_id=task.id,
+            attempt=task.execution_attempts + 1,
+            head_sha=baseline.baseline_head,
+        )
         self._store.save(new_state)
         return new_state
 
@@ -720,6 +860,13 @@ class TaskCycleService:
             ):
                 raise GitOwnershipError("pending Human Gate blocks Git commit")
             operation_time = self._clock()
+            latest = update_attempt(
+                latest,
+                task.id,
+                attempt,
+                ExecutionAttemptStatus.DELIVERY_STARTED,
+                terminal_at=self._latest_attempt(latest, task.id).terminal_at,
+            )
             change_event = self._event(
                 latest,
                 latest_task,
@@ -751,6 +898,21 @@ class TaskCycleService:
                 project=replace(latest.project, updated_at=result.committed_at),
                 git_commit_results=latest.git_commit_results + (result,),
                 events=latest.events + (commit_event,),
+            )
+            committed = update_attempt(
+                committed,
+                task.id,
+                attempt,
+                ExecutionAttemptStatus.DELIVERED,
+                terminal_at=result.committed_at,
+            )
+            committed = with_safe_point(
+                committed,
+                SafePointKind.TASK_DELIVERED,
+                result.committed_at,
+                task_id=task.id,
+                attempt=attempt,
+                head_sha=result.commit_sha,
             )
             self._store.save(committed)
             self._emit_progress(
@@ -859,6 +1021,21 @@ class TaskCycleService:
             tasks=self._replace_task(state.tasks, updated_task),
             execution_reports=state.execution_reports + (report,),
             events=state.events + (event,),
+        )
+        new_state = update_attempt(
+            new_state,
+            task.id,
+            self._latest_attempt(new_state, task.id).attempt,
+            ExecutionAttemptStatus.REPORT_PERSISTED,
+            terminal_at=self._latest_attempt(new_state, task.id).terminal_at,
+        )
+        new_state = with_safe_point(
+            new_state,
+            SafePointKind.TASK_WORKER_COMPLETED,
+            report.created_at,
+            task_id=task.id,
+            attempt=self._latest_attempt(new_state, task.id).attempt,
+            head_sha=self._latest_attempt(new_state, task.id).baseline_head,
         )
         self._store.save(new_state)
         return new_state
@@ -988,8 +1165,22 @@ class TaskCycleService:
                 baseline_head=baseline_head,
                 partial_paths=partial_paths,
             )
-        return self._transition_human_required(
-            state,
+        latest = self._store.load()
+        lifecycle = tuple(item for item in latest.execution_attempts if item.task_id == task.id)
+        attempt = max(lifecycle, key=lambda item: item.attempt).attempt if lifecycle else task.execution_attempts + 1
+        if any(item.task_id == task.id and item.attempt == attempt for item in latest.execution_attempts):
+            latest = update_attempt(
+                latest,
+                task.id,
+                attempt,
+                ExecutionAttemptStatus.UNCERTAIN,
+                terminal_at=self._clock(),
+                failure_kind=type(error).__name__.lower()[:64],
+                partial_paths_exist=worker_input is not None and bool(worker_input.partial_paths),
+            )
+            self._store.save(latest)
+        transitioned = self._transition_human_required(
+            latest,
             task,
             event_types=("task.execution_failed", "task.human_required"),
             metadata=worker_failure_metadata(error),
@@ -999,6 +1190,32 @@ class TaskCycleService:
             risk=risk,
             worker_input=worker_input,
         )
+        if category is HumanActionCategory.RECOVERY_UNCERTAIN:
+            reason = (
+                ExecutionStopReason.WORKER_TIMEOUT
+                if isinstance(error, CodexTurnTimeout)
+                else ExecutionStopReason.WORKER_FAILED
+            )
+            transitioned = with_stop_boundary(
+                transitioned,
+                reason=reason,
+                phase=ExecutionPhase.WORKER,
+                safe_point=SafePointKind.HUMAN_GATE,
+                recoverability=BoundaryRecoverability.UNCERTAIN,
+                worker_started=bool(lifecycle),
+                worker_terminal_state=(
+                    WorkerTerminalState.TIMEOUT
+                    if isinstance(error, CodexTurnTimeout)
+                    else WorkerTerminalState.FAILED
+                ) if lifecycle else WorkerTerminalState.NOT_STARTED,
+                report_persisted=False,
+                recorded_at=self._clock(),
+                task_id=task.id,
+                attempt=attempt,
+                head_sha=None if baseline is None else baseline.baseline_head,
+            )
+            self._store.save(transitioned)
+        return transitioned
 
     def _record_report_human_action(
         self,
@@ -1246,6 +1463,13 @@ class TaskCycleService:
     def _reload_task_state(self, task_id: str) -> tuple[ProjectState, Task]:
         latest = self._store.load()
         return latest, self._task(latest, task_id)
+
+    @staticmethod
+    def _latest_attempt(state: ProjectState, task_id: str):
+        attempts = tuple(item for item in state.execution_attempts if item.task_id == task_id)
+        if not attempts:
+            raise InvalidTaskCycleState("Task execution attempt is unavailable")
+        return max(attempts, key=lambda item: item.attempt)
 
     @staticmethod
     def _human_outcome(

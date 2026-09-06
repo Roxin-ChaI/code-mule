@@ -21,6 +21,8 @@ from code_mule.progress import (
     resilient_progress_sink,
 )
 from code_mule.state.models import ProjectState
+from code_mule.recovery import SafePointKind
+from code_mule.recovery.state import with_safe_point
 from code_mule.supervisor import (
     ImpactAnalysisRequest,
     ImpactAnalysisResult,
@@ -210,6 +212,9 @@ class ChangeReplanningService:
                     },
                 ),
             ),
+        )
+        final = with_safe_point(
+            final, SafePointKind.PLAN_MATERIALIZED, operation_time
         )
         # This is the only save that exposes the replacement graph as RUNNING.
         if self._store.load().project.status is ProjectStatus.CANCELLED:

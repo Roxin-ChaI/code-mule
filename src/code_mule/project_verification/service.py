@@ -18,6 +18,14 @@ from code_mule.progress import (
     resilient_progress_sink,
 )
 from code_mule.state.models import ProjectState
+from code_mule.recovery import (
+    BoundaryRecoverability,
+    ExecutionPhase,
+    ExecutionStopReason,
+    SafePointKind,
+    WorkerTerminalState,
+)
+from code_mule.recovery.state import with_safe_point, with_stop_boundary
 from code_mule.supervisor import (
     FinalReviewRequest,
     FinalReviewResult,
@@ -389,6 +397,22 @@ class ProjectFinalizationService:
             self._event(completed, "project.completed", state.project.id, operation_time, {"verification_result_id": result.id}),
         )
         completed = replace(completed, events=completed.events + events)
+        completed = with_safe_point(
+            completed, SafePointKind.PROJECT_DONE, operation_time,
+            head_sha=result.verified_head,
+        )
+        completed = with_stop_boundary(
+            completed,
+            reason=ExecutionStopReason.EXECUTION_COMPLETED,
+            phase=ExecutionPhase.FINALIZATION,
+            safe_point=SafePointKind.PROJECT_DONE,
+            recoverability=BoundaryRecoverability.TERMINAL,
+            worker_started=False,
+            worker_terminal_state=WorkerTerminalState.NOT_STARTED,
+            report_persisted=False,
+            recorded_at=operation_time,
+            head_sha=result.verified_head,
+        )
         self._store.save(completed)
         return completed
 
@@ -430,6 +454,10 @@ class ProjectFinalizationService:
             project=replace(state.project, updated_at=now),
             events=state.events + (self._event(state, event_type, state.project.id, now, metadata),),
         )
+        if event_type == "project.verification_started":
+            updated = with_safe_point(
+                updated, SafePointKind.PROJECT_FINALIZING, now
+            )
         self._store.save(updated)
         progress_types = {
             "project.verification_started": (

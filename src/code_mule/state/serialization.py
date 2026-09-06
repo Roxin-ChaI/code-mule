@@ -44,12 +44,23 @@ from code_mule.project_verification.contracts import (
     ProjectVerificationSpec,
     ProjectVerificationStatus,
 )
+from code_mule.recovery.contracts import (
+    BoundaryRecoverability,
+    ExecutionAttempt,
+    ExecutionAttemptStatus,
+    ExecutionPhase,
+    ExecutionStopBoundary,
+    ExecutionStopReason,
+    SafePoint,
+    SafePointKind,
+    WorkerTerminalState,
+)
 
 from .models import ProjectState
 from code_mule.domain.worker_verification import WorkerCheckStatus, WorkerCheckType, WorkerVerificationCheck
 
 
-CURRENT_SCHEMA_VERSION = 11
+CURRENT_SCHEMA_VERSION = 12
 
 
 class UnsupportedStateSchema(ValueError):
@@ -448,6 +459,49 @@ def _verification_result_to_payload(
     }
 
 
+def _safe_point_to_payload(point: SafePoint) -> dict[str, object]:
+    return {
+        "kind": point.kind.value,
+        "recorded_at": point.recorded_at.isoformat(),
+        "task_id": point.task_id,
+        "attempt": point.attempt,
+        "head_sha": point.head_sha,
+    }
+
+
+def _execution_stop_to_payload(boundary: ExecutionStopBoundary) -> dict[str, object]:
+    return {
+        "reason": boundary.reason.value,
+        "phase": boundary.phase.value,
+        "safe_point": boundary.safe_point.value,
+        "recoverability": boundary.recoverability.value,
+        "worker_started": boundary.worker_started,
+        "worker_terminal_state": boundary.worker_terminal_state.value,
+        "report_persisted": boundary.report_persisted,
+        "recorded_at": boundary.recorded_at.isoformat(),
+        "task_id": boundary.task_id,
+        "attempt": boundary.attempt,
+        "head_sha": boundary.head_sha,
+    }
+
+
+def _execution_attempt_to_payload(attempt: ExecutionAttempt) -> dict[str, object]:
+    return {
+        "task_id": attempt.task_id,
+        "attempt": attempt.attempt,
+        "status": attempt.status.value,
+        "started_at": attempt.started_at.isoformat(),
+        "thread_id": attempt.thread_id,
+        "turn_id": attempt.turn_id,
+        "baseline_head": attempt.baseline_head,
+        "terminal_at": (
+            None if attempt.terminal_at is None else attempt.terminal_at.isoformat()
+        ),
+        "failure_kind": attempt.failure_kind,
+        "partial_paths_exist": attempt.partial_paths_exist,
+    }
+
+
 def serialize_project_state(state: ProjectState) -> dict[str, object]:
     """Convert a complete snapshot to a JSON-compatible object."""
 
@@ -500,6 +554,19 @@ def serialize_project_state(state: ProjectState) -> dict[str, object]:
         "project_verification_results": [
             _verification_result_to_payload(item)
             for item in state.project_verification_results
+        ],
+        "latest_execution_stop": (
+            None
+            if state.latest_execution_stop is None
+            else _execution_stop_to_payload(state.latest_execution_stop)
+        ),
+        "latest_safe_point": (
+            None
+            if state.latest_safe_point is None
+            else _safe_point_to_payload(state.latest_safe_point)
+        ),
+        "execution_attempts": [
+            _execution_attempt_to_payload(item) for item in state.execution_attempts
         ],
     }
 
@@ -820,6 +887,33 @@ def _migrate_v10_to_v11(root: dict[str, object]) -> dict[str, object]:
         report["verification_checks"] = None
         reports.append(report)
     return {**root, "schema_version": 11, "execution_reports": reports}
+
+
+def _migrate_v11_to_v12(root: dict[str, object]) -> dict[str, object]:
+    """Add conservative recovery evidence without inferring recoverability."""
+
+    project = _expect_object(_field(root, "project", "project state"), "project")
+    status = ProjectStatus(_expect_str(_field(project, "status", "project"), "project.status"))
+    updated_at = _expect_str(_field(project, "updated_at", "project"), "project.updated_at")
+    if status is ProjectStatus.IDLE:
+        safe_kind = SafePointKind.PROJECT_IDLE
+    elif status is ProjectStatus.DONE:
+        safe_kind = SafePointKind.PROJECT_DONE
+    else:
+        safe_kind = SafePointKind.UNCERTAIN
+    return {
+        **root,
+        "schema_version": 12,
+        "latest_execution_stop": None,
+        "latest_safe_point": {
+            "kind": safe_kind.value,
+            "recorded_at": updated_at,
+            "task_id": None,
+            "attempt": None,
+            "head_sha": None,
+        },
+        "execution_attempts": [],
+    }
 
 
 def _change_request_from_payload(value: object) -> ChangeRequest:
@@ -1498,6 +1592,52 @@ def _verification_result_from_payload(value: object) -> ProjectVerificationResul
     )
 
 
+def _safe_point_from_payload(value: object) -> SafePoint:
+    payload = _expect_object(value, "safe_point")
+    attempt_value = _field(payload, "attempt", "safe_point")
+    return SafePoint(
+        kind=SafePointKind(_expect_str(_field(payload, "kind", "safe_point"), "safe_point.kind")),
+        recorded_at=_datetime(_field(payload, "recorded_at", "safe_point"), "safe_point.recorded_at"),
+        task_id=_expect_optional_str(_field(payload, "task_id", "safe_point"), "safe_point.task_id"),
+        attempt=None if attempt_value is None else _expect_int(attempt_value, "safe_point.attempt"),
+        head_sha=_expect_optional_str(_field(payload, "head_sha", "safe_point"), "safe_point.head_sha"),
+    )
+
+
+def _execution_stop_from_payload(value: object) -> ExecutionStopBoundary:
+    payload = _expect_object(value, "execution_stop_boundary")
+    return ExecutionStopBoundary(
+        reason=ExecutionStopReason(_expect_str(_field(payload, "reason", "execution_stop_boundary"), "execution_stop_boundary.reason")),
+        phase=ExecutionPhase(_expect_str(_field(payload, "phase", "execution_stop_boundary"), "execution_stop_boundary.phase")),
+        safe_point=SafePointKind(_expect_str(_field(payload, "safe_point", "execution_stop_boundary"), "execution_stop_boundary.safe_point")),
+        recoverability=BoundaryRecoverability(_expect_str(_field(payload, "recoverability", "execution_stop_boundary"), "execution_stop_boundary.recoverability")),
+        worker_started=_expect_bool(_field(payload, "worker_started", "execution_stop_boundary"), "execution_stop_boundary.worker_started"),
+        worker_terminal_state=WorkerTerminalState(_expect_str(_field(payload, "worker_terminal_state", "execution_stop_boundary"), "execution_stop_boundary.worker_terminal_state")),
+        report_persisted=_expect_bool(_field(payload, "report_persisted", "execution_stop_boundary"), "execution_stop_boundary.report_persisted"),
+        recorded_at=_datetime(_field(payload, "recorded_at", "execution_stop_boundary"), "execution_stop_boundary.recorded_at"),
+        task_id=_expect_optional_str(_field(payload, "task_id", "execution_stop_boundary"), "execution_stop_boundary.task_id"),
+        attempt=(None if _field(payload, "attempt", "execution_stop_boundary") is None else _expect_int(_field(payload, "attempt", "execution_stop_boundary"), "execution_stop_boundary.attempt")),
+        head_sha=_expect_optional_str(_field(payload, "head_sha", "execution_stop_boundary"), "execution_stop_boundary.head_sha"),
+    )
+
+
+def _execution_attempt_from_payload(value: object) -> ExecutionAttempt:
+    payload = _expect_object(value, "execution_attempt")
+    terminal = _field(payload, "terminal_at", "execution_attempt")
+    return ExecutionAttempt(
+        task_id=_expect_str(_field(payload, "task_id", "execution_attempt"), "execution_attempt.task_id"),
+        attempt=_expect_int(_field(payload, "attempt", "execution_attempt"), "execution_attempt.attempt"),
+        status=ExecutionAttemptStatus(_expect_str(_field(payload, "status", "execution_attempt"), "execution_attempt.status")),
+        started_at=_datetime(_field(payload, "started_at", "execution_attempt"), "execution_attempt.started_at"),
+        thread_id=_expect_optional_str(_field(payload, "thread_id", "execution_attempt"), "execution_attempt.thread_id"),
+        turn_id=_expect_optional_str(_field(payload, "turn_id", "execution_attempt"), "execution_attempt.turn_id"),
+        baseline_head=_expect_optional_str(_field(payload, "baseline_head", "execution_attempt"), "execution_attempt.baseline_head"),
+        terminal_at=None if terminal is None else _datetime(terminal, "execution_attempt.terminal_at"),
+        failure_kind=_expect_optional_str(_field(payload, "failure_kind", "execution_attempt"), "execution_attempt.failure_kind"),
+        partial_paths_exist=_expect_bool(_field(payload, "partial_paths_exist", "execution_attempt"), "execution_attempt.partial_paths_exist"),
+    )
+
+
 def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     """Restore a complete snapshot, rejecting unknown or corrupt payloads."""
 
@@ -1507,7 +1647,7 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     schema_version = root["schema_version"]
     if type(schema_version) is not int:
         raise UnsupportedStateSchema("schema_version must be an integer")
-    if schema_version not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, CURRENT_SCHEMA_VERSION}:
+    if schema_version not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, CURRENT_SCHEMA_VERSION}:
         raise UnsupportedStateSchema(
             f"unsupported schema_version: {schema_version!r}"
         )
@@ -1540,6 +1680,9 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
         schema_version = 10
     if schema_version == 10:
         root = _migrate_v10_to_v11(root)
+        schema_version = 11
+    if schema_version == 11:
+        root = _migrate_v11_to_v12(root)
 
     try:
         quality_value = _field(root, "quality_status", "project state")
@@ -1639,6 +1782,25 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
                 _field(root, "project_verification_results", "project state"),
                 "project_verification_results",
                 _verification_result_from_payload,
+            ),
+            latest_execution_stop=(
+                None
+                if _field(root, "latest_execution_stop", "project state") is None
+                else _execution_stop_from_payload(
+                    _field(root, "latest_execution_stop", "project state")
+                )
+            ),
+            latest_safe_point=(
+                None
+                if _field(root, "latest_safe_point", "project state") is None
+                else _safe_point_from_payload(
+                    _field(root, "latest_safe_point", "project state")
+                )
+            ),
+            execution_attempts=_tuple_of(
+                _field(root, "execution_attempts", "project state"),
+                "execution_attempts",
+                _execution_attempt_from_payload,
             ),
         )
     except InvalidProjectState:

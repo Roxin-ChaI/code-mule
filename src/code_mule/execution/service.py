@@ -13,6 +13,15 @@ from typing import Protocol
 from code_mule.domain import HumanActionCategory, ProjectEvent, ProjectStatus, TaskStatus
 from code_mule.human import pending_action, request_human_action
 from code_mule.state.models import ProjectState
+from code_mule.recovery import (
+    BoundaryRecoverability,
+    ExecutionAttemptStatus,
+    ExecutionPhase,
+    ExecutionStopReason,
+    SafePointKind,
+    WorkerTerminalState,
+)
+from code_mule.recovery.state import update_attempt, with_safe_point, with_stop_boundary
 
 from .contracts import (
     ExecutionAlreadyOwned,
@@ -237,6 +246,21 @@ class ExecutionOwnershipService:
             return active
         operation_time = self.now()
         updated_state = state
+        if interrupted and state.project.status is ProjectStatus.PLANNING:
+            updated_state = with_safe_point(
+                state, SafePointKind.UNCERTAIN, operation_time
+            )
+            updated_state = with_stop_boundary(
+                updated_state,
+                reason=ExecutionStopReason.PLANNING_INTERRUPTED,
+                phase=ExecutionPhase.PLANNING,
+                safe_point=SafePointKind.UNCERTAIN,
+                recoverability=BoundaryRecoverability.RECOVERABLE,
+                worker_started=False,
+                worker_terminal_state=WorkerTerminalState.NOT_STARTED,
+                report_persisted=False,
+                recorded_at=operation_time,
+            )
         if (
             interrupted
             and state.project.status
@@ -249,8 +273,22 @@ class ExecutionOwnershipService:
             and state.project.current_task_id is not None
         ):
             if pending_action(state) is None:
+                attempts = tuple(
+                    item for item in state.execution_attempts
+                    if item.task_id == state.project.current_task_id
+                )
+                if attempts:
+                    latest_attempt = max(attempts, key=lambda item: item.attempt)
+                    updated_state = update_attempt(
+                        updated_state,
+                        latest_attempt.task_id,
+                        latest_attempt.attempt,
+                        ExecutionAttemptStatus.INTERRUPTED,
+                        terminal_at=operation_time,
+                        failure_kind="process_interrupted",
+                    )
                 updated_state = request_human_action(
-                    state,
+                    updated_state,
                     category=HumanActionCategory.RECOVERY_UNCERTAIN,
                     summary="Execution was interrupted during an active Task",
                     requested_action="Inspect repository and Task state before resolving",

@@ -95,7 +95,7 @@ class ProjectStateSerializationTests(unittest.TestCase):
         action = restored.execution_reports[0].human_action
         self.assertEqual(action.kind.value, "external_side_effect")
         self.assertTrue(restored.execution_reports[0].human_action_required)
-        self.assertEqual(serialize_project_state(restored)["schema_version"], 11)
+        self.assertEqual(serialize_project_state(restored)["schema_version"], 12)
 
 
 class InvalidProjectStateTests(unittest.TestCase):

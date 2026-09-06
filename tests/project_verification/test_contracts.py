@@ -100,7 +100,7 @@ class ProjectVerificationContractTests(unittest.TestCase):
         legacy.pop("project_verification_spec")
         legacy.pop("project_verification_results")
         migrated = deserialize_project_state(legacy)
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 11)
+        self.assertEqual(CURRENT_SCHEMA_VERSION, 12)
         self.assertIsNone(migrated.project.objective)
         self.assertIsNone(migrated.project_verification_spec)
         self.assertEqual(migrated.project_verification_results, ())

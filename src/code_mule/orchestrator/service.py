@@ -19,6 +19,14 @@ from code_mule.progress import (
     resilient_progress_sink,
 )
 from code_mule.state.models import ProjectState
+from code_mule.recovery import (
+    BoundaryRecoverability,
+    ExecutionPhase,
+    ExecutionStopReason,
+    SafePointKind,
+    WorkerTerminalState,
+)
+from code_mule.recovery.state import with_stop_boundary
 
 from .commands import ChangeCommand, PauseCommand, QueryCommand, ResumeCommand, StopCommand
 from .results import ChangeResult, CommandResult, ProjectStatusView, StopResult
@@ -182,6 +190,9 @@ class OrchestratorService:
                     ),
                 ),
             )
+            updated = self._control_boundary(
+                updated, ExecutionStopReason.BOSS_STOP, now
+            )
             self._store.save(updated)
             self._emit_cancellation_progress(updated, requested=True)
             return StopResult(
@@ -273,6 +284,18 @@ class OrchestratorService:
             ),
             tasks=tasks,
             events=state.events + events,
+        )
+        point = updated.latest_safe_point
+        updated = with_stop_boundary(
+            updated,
+            reason=ExecutionStopReason.BOSS_STOP,
+            phase=ExecutionPhase.CONTROL,
+            safe_point=SafePointKind.UNCERTAIN if point is None else point.kind,
+            recoverability=BoundaryRecoverability.TERMINAL,
+            worker_started=False,
+            worker_terminal_state=WorkerTerminalState.NOT_STARTED,
+            report_persisted=False,
+            recorded_at=now,
         )
         self._store.save(updated)
         self._emit_cancellation_progress(updated, requested=False)
@@ -376,6 +399,9 @@ class OrchestratorService:
             change_requests=state.change_requests + (change_request,),
             events=state.events + (event,),
         )
+        new_state = self._control_boundary(
+            new_state, ExecutionStopReason.CHANGE_REQUESTED, operation_time
+        )
         self._store.save(new_state)
         message = (
             "Change requested; finishing current task..."
@@ -432,6 +458,10 @@ class OrchestratorService:
             project=project,
             events=state.events + (event,),
         )
+        if target is ProjectStatus.PAUSED_BY_BOSS:
+            new_state = self._control_boundary(
+                new_state, ExecutionStopReason.BOSS_PAUSE, operation_time
+            )
         self._store.save(new_state)
         return CommandResult(
             project_id=state.project.id,
@@ -440,6 +470,37 @@ class OrchestratorService:
             state_changed=True,
             event_id=event_id,
             message=message,
+        )
+
+    @staticmethod
+    def _control_boundary(
+        state: ProjectState, reason: ExecutionStopReason, operation_time: datetime
+    ) -> ProjectState:
+        point = state.latest_safe_point
+        kind = SafePointKind.UNCERTAIN if point is None else point.kind
+        attempts = tuple(
+            item for item in state.execution_attempts
+            if item.task_id == state.project.current_task_id
+        )
+        latest = max(attempts, key=lambda item: item.attempt, default=None)
+        worker_started = latest is not None and latest.status.value != "prepared"
+        return with_stop_boundary(
+            state,
+            reason=reason,
+            phase=ExecutionPhase.CONTROL,
+            safe_point=kind,
+            recoverability=BoundaryRecoverability.RECOVERABLE,
+            worker_started=worker_started,
+            worker_terminal_state=(
+                WorkerTerminalState.UNKNOWN
+                if worker_started
+                else WorkerTerminalState.NOT_STARTED
+            ),
+            report_persisted=False,
+            recorded_at=operation_time,
+            task_id=state.project.current_task_id,
+            attempt=None if latest is None else latest.attempt,
+            head_sha=None if latest is None else latest.baseline_head,
         )
 
     @staticmethod
