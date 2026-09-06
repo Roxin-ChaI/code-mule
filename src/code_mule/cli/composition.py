@@ -1,7 +1,7 @@
 """Production composition root for Boss CLI commands."""
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 import os
 from pathlib import Path
@@ -15,7 +15,7 @@ from code_mule.domain.enums import (
     HumanResolutionStrategy,
     ProjectStatus,
 )
-from code_mule.domain.models import Project
+from code_mule.domain.models import Project, ProjectEvent
 from code_mule.diagnosis import ProjectDiagnosisService
 from code_mule.conversation import (
     BossConversationService,
@@ -73,6 +73,13 @@ from code_mule.replanning import (
     ChangeReplanningRequest,
     ChangeReplanningService,
 )
+from code_mule.recovery import (
+    RecoveryMode,
+    SafePointKind,
+    SafePoint,
+)
+from code_mule.recovery.service import RecoveryClassifier, RecoveryPreflightError
+from code_mule.recovery.state import with_safe_point
 from code_mule.runtime import (
     ProjectExecutionConfig,
     ProjectExecutionService,
@@ -112,6 +119,7 @@ class _PlanningService(Protocol):
 
 class _ExecutionService(Protocol):
     def run(self): ...
+    def recover(self, plan): ...
 
 
 class _ChangeService(Protocol):
@@ -158,6 +166,7 @@ def _empty_state(project_id: str, name: str, workspace: Path) -> ProjectState:
         execution_reports=(),
         quality_status=None,
         events=(),
+        latest_safe_point=SafePoint(SafePointKind.PROJECT_IDLE, now),
     )
 
 
@@ -376,6 +385,76 @@ class ProductionCliComposition:
             ("EXECUTION RESUMED", result.message, "")
             + render_project(self._load(), verbose=verbose),
         )
+
+    def recover(self, verbose: bool = False) -> CliCommandResult:
+        state = self._load()
+        try:
+            plan = RecoveryClassifier().classify(state, validate_workspace=True)
+        except RecoveryPreflightError as error:
+            raise CliRecoveryRequired(str(error)) from error
+        if not plan.automatic_resume_allowed:
+            raise CliRecoveryRequired(plan.reason)
+        try:
+            with self._acquire_execution(verbose) as ownership:
+                if plan.recovery_mode is RecoveryMode.FRESH_PLANNING:
+                    objective = state.project.objective
+                    if objective in (None, ""):
+                        raise CliRecoveryRequired(
+                            "planning recovery requires the persisted objective"
+                        )
+                    now = datetime.now(UTC)
+                    reset = replace(
+                        state,
+                        project=replace(
+                            state.project,
+                            status=ProjectStatus.IDLE,
+                            active_plan_id=None,
+                            current_task_id=None,
+                            updated_at=now,
+                        ),
+                        latest_execution_stop=None,
+                        events=state.events
+                        + (
+                            ProjectEvent(
+                                _id("recovery-event"),
+                                state.project.id,
+                                "planning.recovery_started",
+                                state.project.id,
+                                now,
+                                {"mode": plan.recovery_mode.value},
+                            ),
+                        ),
+                    )
+                    reset = with_safe_point(
+                        reset, SafePointKind.PROJECT_IDLE, now
+                    )
+                    self._store.save(reset)
+                    runtime = self._runtime(reset, ownership)
+                    with runtime.renderer:
+                        planned = runtime.planning.plan(
+                            ProjectPlanningRequest(reset.project.id, objective)
+                        )
+                        outcome = (
+                            runtime.execution.run()
+                            if planned.ready_for_execution
+                            else None
+                        )
+                else:
+                    runtime = self._runtime(state, ownership)
+                    with runtime.renderer:
+                        outcome = runtime.execution.recover(plan)
+        except KeyboardInterrupt:
+            self._raise_interrupted()
+        final = self._load()
+        lines = (
+            "RECOVERY",
+            f"From           {plan.from_safe_point.value.replace('_', ' ').title()}",
+            f"Mode           {plan.recovery_mode.value.replace('_', ' ').title()}",
+            f"Fresh Worker   {'Yes' if plan.fresh_worker_required else 'No'}",
+            "",
+        )
+        result = self._execution_result(final, outcome, verbose=verbose)
+        return CliCommandResult(result.exit_code, lines + result.output)
 
     def stop(self, verbose: bool = False) -> CliCommandResult:
         state = self._load()

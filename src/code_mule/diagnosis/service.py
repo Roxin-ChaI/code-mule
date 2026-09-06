@@ -11,6 +11,7 @@ from code_mule.domain.worker_verification import (
     safe_check_name,
 )
 from code_mule.state.models import ProjectState
+from code_mule.recovery.service import RecoveryClassifier
 
 from .contracts import (
     DiagnosisBlockerCategory,
@@ -148,6 +149,7 @@ class ProjectDiagnosisService:
             inconsistent = True
 
         classification = self._classification(state, pending, inconsistent)
+        recovery = RecoveryClassifier().classify(state)
         completed = tuple(task for task in tasks if task.status is TaskStatus.COMPLETED)
         latest_completed = max(completed, key=lambda task: task.updated_at, default=None)
         action = pending[0] if len(pending) == 1 else None
@@ -183,6 +185,18 @@ class ProjectDiagnosisService:
             verification=(
                 None if action is None else self._verification(state, action)
             ),
+            last_safe_point=(
+                None
+                if state.latest_safe_point is None
+                else state.latest_safe_point.kind.value
+            ),
+            stop_reason=(
+                None
+                if state.latest_execution_stop is None
+                else state.latest_execution_stop.reason.value
+            ),
+            recovery_mode=recovery.recovery_mode.value,
+            recovery_command=recovery.next_command,
         )
 
     def _classification(self, state, pending, inconsistent) -> _Classification:

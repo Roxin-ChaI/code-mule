@@ -40,6 +40,8 @@ class CliContractTests(unittest.TestCase):
             (["change", "--apply"], "change"),
             (["pause"], "pause"),
             (["resume"], "resume"),
+            (["recover"], "recover"),
+            (["recover", "--verbose"], "recover"),
             (["stop"], "stop"),
             (["inspect"], "inspect"),
             (["approve", "action-1"], "approve"),

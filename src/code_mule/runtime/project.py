@@ -22,6 +22,9 @@ from code_mule.progress import (
 from code_mule.scheduler import SchedulerError, TaskScheduler
 from code_mule.scheduler.selection import resolve_active_plan_graph
 from code_mule.state.models import ProjectState
+from code_mule.recovery import SafePointKind
+from code_mule.recovery import RecoveryMode, RecoveryPlan
+from code_mule.recovery.state import with_safe_point
 
 from .contracts import (
     InvalidProjectExecutionState,
@@ -41,6 +44,8 @@ class ProjectStateStore(Protocol):
 
 class TaskCycleRunner(Protocol):
     def execute(self, request: TaskCycleRequest) -> TaskCycleOutcome: ...
+
+    def resume_after_report(self, request: TaskCycleRequest) -> TaskCycleOutcome: ...
 
 
 class ProjectFinalizer(Protocol):
@@ -173,6 +178,46 @@ class ProjectExecutionService:
                 metadata={"error_type": type(error).__name__},
             )
             raise
+
+    def recover(self, plan: RecoveryPlan) -> ProjectExecutionOutcome:
+        """Execute only a classifier-approved recovery path."""
+
+        if not plan.automatic_resume_allowed:
+            raise InvalidProjectExecutionState("recovery plan is not executable")
+        state = self._store.load()
+        if plan.recovery_mode is RecoveryMode.DISPATCH_FRESH_WORKER:
+            if plan.task_id is None or state.project.current_task_id != plan.task_id:
+                raise InvalidProjectExecutionState("selected Task recovery identity mismatch")
+            task = self._task(state, plan.task_id)
+            if task.status is not TaskStatus.IN_PROGRESS:
+                raise InvalidProjectExecutionState("selected Task is not IN_PROGRESS")
+            now = self._clock()
+            reopened = replace(task, status=TaskStatus.REOPENED, updated_at=now)
+            state = replace(
+                state,
+                project=replace(state.project, current_task_id=None, updated_at=now),
+                tasks=self._replace_task(state.tasks, reopened),
+            )
+            self._store.save(state)
+            return self.run()
+        if plan.recovery_mode is RecoveryMode.CONTINUE_AFTER_REPORT:
+            if plan.task_id is None or state.project.current_task_id != plan.task_id:
+                raise InvalidProjectExecutionState("report recovery identity mismatch")
+            task = self._task(state, plan.task_id)
+            prompt = self._prompt_builder.build(state, task)
+            outcome = self._task_cycle_factory().resume_after_report(
+                TaskCycleRequest(task, prompt)
+            )
+            if outcome.human_action_required:
+                latest = self._store.load()
+                return self._outcome(
+                    latest, 0, 0, (), ProjectExecutionStopReason.HUMAN_REQUIRED,
+                    human_action_required=True,
+                )
+            return self.run()
+        if plan.recovery_mode in {RecoveryMode.RESUME_PLAN, RecoveryMode.CONTINUE_AFTER_INPUT}:
+            return self.run()
+        raise InvalidProjectExecutionState("unsupported executable recovery mode")
 
     def _run(self) -> ProjectExecutionOutcome:
         started = 0
@@ -436,6 +481,9 @@ class ProjectExecutionService:
             ),
             tasks=self._replace_task(state.tasks, updated_task),
             events=state.events + (event,),
+        )
+        updated = with_safe_point(
+            updated, SafePointKind.TASK_READY, operation_time, task_id=task.id
         )
         self._store.save(updated)
         return updated

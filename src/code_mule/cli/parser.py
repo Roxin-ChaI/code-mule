@@ -65,6 +65,11 @@ def build_parser() -> argparse.ArgumentParser:
     resume = commands.add_parser("resume", help="resume a Boss-paused project")
     _state_file(resume)
 
+    recover = commands.add_parser(
+        "recover", help="recover from a persisted execution boundary"
+    )
+    _state_file(recover)
+
     stop = commands.add_parser("stop", help="cancel the project at a safe boundary")
     _state_file(stop)
 

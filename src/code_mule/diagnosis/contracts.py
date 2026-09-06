@@ -54,6 +54,7 @@ class DiagnosisNextAction(StrEnum):
     RESUME = "code-mule resume"
     APPLY_CHANGE = "code-mule change --apply"
     STATUS = "code-mule status"
+    RECOVER = "code-mule recover"
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,10 @@ class ProjectDiagnosis:
     pending_action_id: str | None = None
     worker_input_question: str | None = None
     verification: VerificationDiagnosis | None = None
+    last_safe_point: str | None = None
+    stop_reason: str | None = None
+    recovery_mode: str | None = None
+    recovery_command: str | None = None
 
     def __post_init__(self) -> None:
         bounded = {

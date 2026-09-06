@@ -47,6 +47,8 @@ def render_project_diagnosis(
         f"Progress       {diagnosis.completed_tasks} / {diagnosis.total_tasks}",
         f"Current Task   {current}",
         f"Latest Done    {latest}",
+        f"Last Safe Point {humanize_identifier(diagnosis.last_safe_point or 'unknown')}",
+        f"Stop Reason    {humanize_identifier(diagnosis.stop_reason or 'none')}",
         "",
         "BLOCKER",
         "",
@@ -81,6 +83,8 @@ def render_project_diagnosis(
             f"latest_completed_task_id: {diagnosis.latest_completed_task_id or '-'}",
             f"latest_task_commit: {diagnosis.latest_task_commit or '-'}",
             f"pending_action_id: {diagnosis.pending_action_id or '-'}",
+            f"recovery_mode: {diagnosis.recovery_mode or '-'}",
+            f"recovery_command: {diagnosis.recovery_command or '-'}",
         )
         if diagnosis.worker_input_question is not None:
             lines += (f"worker_input_question: {diagnosis.worker_input_question}",)

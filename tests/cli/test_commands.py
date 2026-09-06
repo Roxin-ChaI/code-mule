@@ -49,6 +49,7 @@ class _FakeCommands:
     def apply_change(self, *values): return self._call("apply_change", *values)
     def pause(self, *values): return self._call("pause", *values)
     def resume(self, *values): return self._call("resume", *values)
+    def recover(self, *values): return self._call("recover", *values)
     def stop(self, *values): return self._call("stop", *values)
     def inspect(self, *values): return self._call("inspect", *values)
     def approve(self, *values): return self._call("approve", *values)
@@ -79,6 +80,9 @@ class _FakeExecution:
         plans = tuple(replace(plan, status=PlanStatus.COMPLETED) for plan in state.plans)
         self.store.save(replace(state, project=replace(state.project, status=ProjectStatus.DONE, current_task_id=None), tasks=tasks, plans=plans))
         return SimpleNamespace(stop_reason=ProjectExecutionStopReason.PLAN_COMPLETED, human_action_required=False)
+
+    def recover(self, plan):
+        return self.run()
 
 
 class _InterruptingExecution:
@@ -187,6 +191,20 @@ class ProductionCommandTests(unittest.TestCase):
         result = composition.run(None)
         self.assertEqual(result.exit_code, CliExitCode.SUCCESS)
         self.assertEqual(store.load().project.status, ProjectStatus.DONE)
+
+    def test_recover_reuses_materialized_plan(self):
+        composition = self.composition(self.runtime_factory)
+        self.init(composition)
+        store = JsonProjectStateStore(self.state_file)
+        _FakePlanning(store).plan(SimpleNamespace())
+        plan_id = store.load().project.active_plan_id
+
+        result = composition.recover(verbose=True)
+
+        self.assertEqual(result.exit_code, CliExitCode.SUCCESS)
+        self.assertIn("RECOVERY", result.output)
+        self.assertEqual(len(store.load().plans), 1)
+        self.assertEqual(store.load().plans[0].id, plan_id)
 
     def test_live_owner_blocks_execution_but_allows_status_and_change(self):
         runtime_calls = []
