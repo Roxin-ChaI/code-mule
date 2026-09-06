@@ -10,7 +10,7 @@
 工作流。
 
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB)
-![Tests 498](https://img.shields.io/badge/tests-498%20passed-2E7D32)
+![Tests 511](https://img.shields.io/badge/tests-511%20passed-2E7D32)
 ![ProjectState v11](https://img.shields.io/badge/ProjectState-v11-6A5ACD)
 
 ## Demo
@@ -211,6 +211,7 @@ code-mule chat
 | --- | --- |
 | `run --objective "..."` / `run` | 开始规划，或继续 RUNNING 工作 |
 | `status` | 读取确定性的 Plan 和 Task 进度 |
+| `diagnose` | 只读解释阻塞原因、可恢复性和 Boss 下一步操作 |
 | `chat` | 打开自然语言 Boss 界面 |
 | `ask "..."` | 查询项目，只读 |
 | `change "..."` / `change --apply` | 记录 CHANGE，再显式执行 replanning |

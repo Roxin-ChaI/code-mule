@@ -10,7 +10,7 @@ Turn one coding objective into a controlled **PLAN → CODE → REVIEW → VERIF
 COMMIT** workflow.
 
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB)
-![Tests 498](https://img.shields.io/badge/tests-498%20passed-2E7D32)
+![Tests 511](https://img.shields.io/badge/tests-511%20passed-2E7D32)
 ![ProjectState v11](https://img.shields.io/badge/ProjectState-v11-6A5ACD)
 
 ## Demo
@@ -213,6 +213,7 @@ Commands discover `.code-mule/project-state.json` from the target repository.
 | --- | --- |
 | `run --objective "..."` / `run` | Start planning or continue RUNNING work |
 | `status` | Read deterministic Plan and Task progress |
+| `diagnose` | Explain blockers, recoverability, and the next Boss action (read-only) |
 | `chat` | Open the natural-language Boss interface |
 | `ask "..."` | Ask a read-only project question |
 | `change "..."` / `change --apply` | Record CHANGE, then explicitly replan |

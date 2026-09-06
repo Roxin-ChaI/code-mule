@@ -72,6 +72,7 @@ identity when applicable:
 
 ```bash
 .venv/bin/code-mule status --verbose
+.venv/bin/code-mule diagnose --verbose
 .venv/bin/code-mule inspect --verbose
 ```
 
@@ -81,6 +82,9 @@ identity when applicable:
   its active Plan. Other states fail closed.
 - `status`: prints Plan version, task progress, current Task, blockers, and the
   Human Gate state without writing ProjectState.
+- `diagnose`: explains why execution is stopped or active, where a blocker
+  occurred, whether recovery is safe, and the exact next Boss command. It is
+  strictly read-only and does not acquire an execution lease or call a model.
 - `ask "question"`: executes the existing deterministic QUERY and is read-only.
 - `change "request"`: persists a ChangeRequest and moves RUNNING or paused work
   to CHANGE_REQUESTED without calling DeepSeek.
@@ -107,6 +111,28 @@ identity when applicable:
 structured text. Errors go to stderr. `--debug` before the command adds a
 sanitized traceback; credentials are never printed.
 
+## Project diagnosis
+
+`status` answers what the persisted state is. `diagnose` answers why that state
+exists and what the Boss should do next:
+
+```bash
+code-mule diagnose
+code-mule diagnose --verbose
+```
+
+The diagnosis is derived only from ProjectState: active Plan and Task progress,
+the current or latest completed Task, typed HumanAction, safe verification
+metadata, delivery evidence, and control status. Worker input, approval,
+external effects, verification failures, workspace blocks, uncertain recovery,
+PAUSE, and CHANGE each have deterministic classifications. Unknown or
+conflicting facts produce an uncertain diagnosis instead of a guessed cause.
+
+Verbose output may show the pending action ID, typed classification, safe
+Worker question, and latest delivery commit. It never shows prompts, model
+reasoning, raw protocol payloads, or credentials. Diagnosis never saves state,
+creates an event, starts a Worker, changes Git, or resolves a HumanAction.
+
 The TTY dashboard separates Project, current Task, Worker, Supervisor, and the
 five most recent real activities. It adapts to terminal width and uses an ASCII
 fallback when Unicode symbols are unavailable. Redirected output is ordered,
@@ -124,7 +150,7 @@ back up state before upgrading. See [release notes](releases/v0.1.1.md).
 
 Only model-dependent commands read `DEEPSEEK_API_KEY`. The optional
 `CODE_MULE_DEEPSEEK_MODEL` defaults to `deepseek-v4-flash`. The DeepSeek client
-uses `DefaultHttpx2Client(trust_env=False)`. `init`, `status`, `ask`, CHANGE
+uses `DefaultHttpx2Client(trust_env=False)`. `init`, `status`, `diagnose`, `ask`, CHANGE
 submission, `pause`, and `resume` do not require an API key.
 
 ## Exit codes
