@@ -4,10 +4,48 @@
 
 > Powered by prompts. Paid in tokens.
 
-> You define the goal. The mule does the coding.
+Human-supervised autonomous software engineering with DeepSeek + Codex.
 
-An autonomous software engineering runtime that plans, executes, reviews,
-verifies, and delivers coding tasks under explicit human control.
+Turn one coding objective into a controlled **PLAN → CODE → REVIEW → VERIFY →
+COMMIT** workflow.
+
+![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB)
+![Tests 498](https://img.shields.io/badge/tests-498%20passed-2E7D32)
+![ProjectState v11](https://img.shields.io/badge/ProjectState-v11-6A5ACD)
+
+## Demo
+
+Code Mule turns an objective into reviewed, local Git delivery:
+
+```text
+Boss Objective
+  → PLAN → Task → Codex Worker → Supervisor Review
+  → Verification → Local Git Commit → DONE
+
+PROJECT
+Status      Completed
+Plan        v1
+Progress    6 / 6
+
+PROJECT COMPLETED
+```
+
+When a product decision is missing, the Task stops safely:
+
+```text
+ACTION REQUIRED
+Category    Worker input
+Question    How should the leaderboard be persisted?
+Choices
+- localStorage
+- session memory
+
+code-mule answer <action-id> "localStorage"
+code-mule run
+```
+
+`answer` only records the decision. The next explicit `run` starts a fresh
+Worker session and continues the same Task.
 
 ## Why Code Mule
 
@@ -17,91 +55,84 @@ Typical agent workflows leave orchestration to the human:
 Human → ChatGPT → copy prompt → Codex → copy result → ChatGPT
 ```
 
-Code Mule runs that engineering loop while the Boss retains authority:
+Code Mule makes that loop a controlled engineering workflow:
 
 ```text
-Boss → Supervisor → Runtime → Codex Worker → Review → Git Delivery → Verification
+Boss → Supervisor → Runtime → Codex Worker → Review → Git Delivery
 ```
 
-The difference is durable `ProjectState`, deterministic orchestration,
-structured Supervisor contracts, explicit Human Gates, and safe interruption
-and recovery—not another free-form chat wrapper.
+The practical differences are:
 
-## Workflow
+- durable `ProjectState` instead of hidden conversation state;
+- deterministic orchestration instead of prose-driven control;
+- typed Human Gates for input, approval, and risky operations; and
+- Git-native, reviewed Task delivery.
+
+## How It Works
 
 ```text
-Boss Objective
-  → PLAN → Task Execution → Supervisor REVIEW → Verification → Git Commit
-  → Next Task → Final Verification → DONE
-
-CHANGE         → Safe Point → IMPACT_ANALYSIS → Plan vN+1 → Resume
-STOP           → Safe Point → CANCELLED
-HUMAN_REQUIRED → inspect → approve / reject / resolve
+Objective
+    ↓
+  PLAN
+    ↓
+Task → Codex Worker → REVIEW → VERIFY → COMMIT
+ ↑                                      ↓
+ └────────────── Next Task ─────────────┘
+                       ↓
+                 FINAL REVIEW
+                       ↓
+                      DONE
 ```
 
-## Core Capabilities
+The Supervisor proposes typed plans and decisions. The deterministic runtime
+owns state transitions, scheduling, verification, and Git delivery. See the
+[architecture](docs/architecture.md) for the internal boundaries.
 
-- Structured DeepSeek `PLAN`, `REVIEW`, `IMPACT_ANALYSIS`, and `FINAL_REVIEW`
-  drive autonomous planning, multi-task scheduling, and versioned replanning.
-- A local Codex Worker executes one bounded Task at a time; the deterministic
-  runtime owns dispatch, state transitions, validation, and Safe Points.
-- Boss CLI and conversational Chat expose queries, CHANGE, PAUSE/RESUME, STOP,
-  and action-scoped Human Resolution without giving the model state authority.
-- Single-owner execution, stale-lease detection, bounded Worker deadlines, and
-  crash recovery guards prevent duplicate or uncertain Worker execution.
-- Retryable Supervisor output failures use bounded full regeneration; domain
-  validation failures remain fail-closed and are never repaired heuristically.
-- Live terminal progress projects safe Worker/Supervisor activity without
-  exposing prompts, reasoning, credentials, or raw model responses.
-- Exact Task-owned paths are staged and committed locally; project completion
-  additionally requires configured checks, clean Git state, and final review.
+## Features
 
-## Architecture
+- **Autonomous planning** — convert one objective into a versioned Plan and
+  dependency-aware Tasks.
+- **Codex execution** — run one bounded local Worker on one Task at a time.
+- **Supervisor review** — review every Task before it can be delivered.
+- **Git-native delivery** — turn each accepted Task into one precise local commit.
+- **Requirement changes** — route CHANGE through impact analysis and Plan vN+1.
+- **Human Gates** — stop safely for Worker Input, approval, or external effects.
+- **Durable recovery** — recover from persisted `ProjectState`, not chat history.
+
+## Human Control
 
 ```text
-Boss CLI / Chat
-       ↓
-Deterministic Orchestrator
-       ↓
-Supervisor ───── ProjectState
-       ↓
-Task Runtime
-       ↓
-Codex Worker
-       ↓
-Verification
-       ↓
-Git Delivery
+CHANGE → Impact analysis → Replan
+INPUT  → Boss answer → Fresh-session continuation
+RISK   → Typed Human Gate
+STOP   → Safe cancellation, no rollback
 ```
 
-`ProjectState` is the source of truth. Model conversation history is not. The
-Supervisor returns typed proposals and decisions; it does not mutate state or
-execute Git commands.
+Models do not directly modify project state. Ambiguous side-effect requests do
+not execute, and approval is bound to one specific action.
 
-## Safety Model
+## Prerequisites
 
-Automatically allowed:
+- Python 3.12
+- Git and a target repository with at least one commit
+- [Codex CLI](https://developers.openai.com/codex/cli) with local authentication
+- A DeepSeek API key for Supervisor calls
 
-- local workspace edits and configured local verification;
-- precise staging with `git add -- <owned paths>`; and
-- local Task commits.
+Check the local Codex installation before starting:
 
-Human Gate required:
+```bash
+codex --version
+codex app-server --help
+```
 
-- push, force-push, tag, and release;
-- deployment and remote infrastructure mutation;
-- secret or API-key use when an operation requires it;
-- paid external actions; and
-- destructive or irreversible external side effects.
-
-High-risk side effects are never authorized by parsing model prose. Approval is
-bound to one typed HumanAction and cannot be reused.
+Real E2E has been validated with **Codex CLI 0.153.4**. This is a tested version,
+not a proven minimum version.
 
 ## Quick Start
 
 ### 1. Install Code Mule
 
-Clone and install the Code Mule tool with Python 3.12:
+Install the tool in its own directory:
 
 ```bash
 git clone https://github.com/Roxin-ChaI/code-mule.git /path/to/code-mule
@@ -109,38 +140,23 @@ cd /path/to/code-mule
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e .
-which code-mule
 code-mule --help
 ```
 
-`/path/to/code-mule` is the Code Mule tool repository, and its `.venv` contains
-the installed CLI. Keep this virtual environment activated when you change to
-the target project. In each new terminal, activate it again with
-`source /path/to/code-mule/.venv/bin/activate`, or invoke the CLI by its absolute
-path: `/path/to/code-mule/.venv/bin/code-mule`.
+`/path/to/code-mule` is the tool repository. Keep its virtual environment
+activated, or invoke `/path/to/code-mule/.venv/bin/code-mule` directly.
 
-### 2. Prepare a project workspace
+### 2. Prepare the target repository
 
-Code Mule repository is the tool itself; `--workspace` points to the target Git
-repository that Code Mule will modify. The two directories serve different
-purposes:
-
-- `/path/to/code-mule`: the Code Mule tool and its virtual environment.
-- `/path/to/my-project`: the target Git workspace that Code Mule modifies.
-
-Do not create Code Mule's `.venv` in the target workspace. If the target project
-needs its own `.venv`, that project must manage it in its own `.gitignore`.
-
-The target repository must have at least one commit and a clean working tree.
-For an existing project, change to its directory and check the baseline:
+`--workspace` points to a different Git repository that Code Mule will modify:
 
 ```bash
 cd /path/to/my-project
 git status --short
 ```
 
-Proceed only when `git status --short` prints nothing. For a new project, create
-the minimum Git baseline first:
+The target must have at least one commit, and the command above must print
+nothing. For a new repository, create a minimal baseline:
 
 ```bash
 mkdir -p /path/to/my-project
@@ -151,23 +167,20 @@ git add -- README.md
 git commit -m "chore: initial commit"
 ```
 
-This clean baseline lets Code Mule identify the changes produced by each Task.
-Code Mule does not automatically stash, reset, or overwrite unrelated local
-changes.
+The clean baseline identifies changes produced by each Task. Code Mule never
+automatically stashes, resets, cleans, or overwrites unrelated work.
 
-### 3. Initialize Code Mule
+### 3. Initialize the workspace
 
-Run initialization from inside the target project directory:
+Run this inside the target repository, not the Code Mule source repository:
 
 ```bash
 code-mule init --project-id my-project --name "My Project" --workspace "$PWD"
 ```
 
-Here, `$PWD` is the current target project—not the Code Mule source repository.
-The default state file is `.code-mule/project-state.json`. The `.code-mule/`
-directory is Code Mule runtime state; `code-mule init` registers that managed
-directory in the repository-local Git exclude so it does not break the clean
-baseline or modify the project's tracked `.gitignore`.
+State defaults to `.code-mule/project-state.json`. Initialization registers
+`.code-mule/` in the repository-local Git exclude without editing the tracked
+`.gitignore`, so managed state does not contaminate the Task baseline.
 
 ### 4. Configure DeepSeek
 
@@ -176,221 +189,105 @@ export DEEPSEEK_API_KEY="<your-deepseek-api-key>"
 export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
 ```
 
-Do not commit the API key to the target project or any configuration file.
+Do not commit the API key. Real Supervisor calls may incur provider charges.
 
-### 5. Run
-
-Start the real CLI workflow with an objective:
+### 5. Run an objective
 
 ```bash
 code-mule run --objective "Create a tested calculator"
 ```
 
-Code Mule drives the lifecycle:
-
-`Objective → PLAN → Tasks → REVIEW → Git Commit → Final Verification → DONE`
-
-### 6. Inspect / Control
-
-From the target project directory, inspect state or start a persistent Boss chat:
+### 6. Inspect and control
 
 ```bash
 code-mule status
 code-mule chat
 ```
 
-For example, ask about progress, request a change, or stop the project:
-
-```text
-You > How far have you got?
-You > Add JSON export support.
-You > Stop this project.
-```
-
-Commands discover `.code-mule/project-state.json` by default. `run` and
-`change --apply` are blocking; use another terminal for live control.
-
-### Troubleshooting
-
-Verify which installation provides the CLI:
-
-```bash
-which code-mule
-```
-
-The expected path is `/path/to/code-mule/.venv/bin/code-mule`. If it is missing,
-activate the Code Mule virtual environment again. Then, from
-`/path/to/my-project`, check Git cleanliness:
-
-```bash
-git status --short
-```
-
-The expected result is no output, including immediately after `code-mule init`.
-Any ordinary untracked, modified, or staged project file remains visible and
-must be handled explicitly; Code Mule never stashes, resets, or cleans it.
+Commands discover `.code-mule/project-state.json` from the target repository.
+`run` and `change --apply` are blocking; use another terminal for live control.
 
 ## Boss Controls
 
 | Command | Purpose |
 | --- | --- |
-| `run --objective "..."` | Plan a new project; `run` resumes RUNNING work |
-| `status` | Show deterministic project and Task status |
-| `chat` | Start the natural-language Boss interface |
-| `ask "..."` | Read-only project query |
-| `change "..."` | Record a requirement change |
-| `change --apply` | Run impact analysis, materialize Plan vN+1, and resume |
-| `pause` / `resume` | Pause at a control boundary or resume safely |
-| `stop` | Cancel at a Safe Point without rollback |
-| `inspect` | Inspect the pending HumanAction |
-| `approve ID` / `reject ID` | Resolve one exact approval action |
-| `answer ID "..."` | Answer one exact Worker input request |
+| `run --objective "..."` / `run` | Start planning or continue RUNNING work |
+| `status` | Read deterministic Plan and Task progress |
+| `chat` | Open the natural-language Boss interface |
+| `ask "..."` | Ask a read-only project question |
+| `change "..."` / `change --apply` | Record CHANGE, then explicitly replan |
+| `pause` / `resume` | Pause or resume at a valid control boundary |
+| `stop` | Cancel safely without rolling back completed work |
+| `inspect` | Inspect the pending typed HumanAction |
+| `approve ID` / `reject ID` | Decide one exact approval action |
+| `answer ID "..."` | Record an answer to one Worker Input action |
 | `resolve ID --strategy ...` | Resolve a typed non-approval action |
 
-Use `--verbose` on a command for IDs and raw control values. Use global
-`--debug` for a sanitized traceback.
+HumanAction commands are action-scoped. `answer` does not start a Worker;
+after it records the response and preserves partial work, a later explicit
+`run` revalidates the baseline and continues the same Task in a fresh session.
+See [Human Resolution](docs/human-resolution.md).
 
-When a Worker needs information, Code Mule stops in `HUMAN_REQUIRED` and
-`inspect` shows the bounded question and choices. Answer that exact action with
-`code-mule answer <action-id> "<answer>"`, then explicitly run `code-mule run`.
-Code Mule starts a fresh Worker session, verifies that the partial workspace
-changes still match the original clean Git baseline, and continues the same
-Task. The `answer` command itself starts no Worker and preserves partial work.
-It does not resume the closed Codex session or create a partial commit.
+## When to Use Code Mule
 
-Human actions have distinct meanings: `WORKER_INPUT` uses `answer` for a question
-or product choice; `WORKER_APPROVAL` and `EXTERNAL_SIDE_EFFECT` use `approve` /
-`reject` for the specific operation shown by `inspect`. Approval records that
-one decision and does not automatically execute the operation. Worker input can
-arrive through native Codex input requests or a typed end-of-turn report; both
-use the same fresh-session continuation described above.
+Code Mule fits local software work that benefits from:
 
-## CHANGE Example
+- multi-Task feature implementation;
+- a reviewable, one-Task-per-commit Git history;
+- product decisions that must stop for human input;
+- requirements that may change while execution is underway;
+- persisted state across Worker sessions; and
+- local verification before delivery.
 
-```text
-You > Add JSON export support.
+## Reliability & Safety
 
-Code Mule records CHANGE, lets the current Task reach a Safe Point, runs
-IMPACT_ANALYSIS, materializes Plan v2, and resumes only after `change --apply`.
-```
+- `ProjectState` is the durable source of truth.
+- One execution owner dispatches one Worker at a time.
+- Inactivity and hard turn timeouts are bounded independently.
+- Interrupted or uncertain execution fails closed and is never silently rerun.
+- Typed HumanActions preserve the exact decision boundary.
+- Delivery stages only exact Task-owned paths after verification and review.
+- Code Mule never automatically stashes, resets, or cleans the target repository.
+- Push, tag, release, deployment, and irreversible remote effects remain Human Gates.
 
-## Boss Chat
+Details: [Execution Recovery](docs/execution-recovery.md),
+[Git Delivery](docs/git-delivery.md), and
+[Project Verification](docs/project-verification.md).
 
-Examples accepted by `code-mule chat` include:
+## Validation
 
-- “现在做到哪一步了？”
-- “还有几个任务？”
-- “当前有什么问题？”
-- “再加一个 JSON 导出功能。”
-- “这个项目不做了。”
+Current v0.1.1 release-preparation baseline:
 
-Read-only facts come from `ProjectState`; the model does not estimate progress
-or directly mutate project state. Ambiguous side-effect requests ask for
-clarification.
+- **498 automated tests PASS**;
+- `compileall`, `pip check`, and `git diff --check` PASS;
+- real DeepSeek + Codex E2E: Plan v1, 6/6 Tasks, Worker Input → Boss answer
+  → fresh-session continuation, one delivery commit per Task, final review
+  APPROVE, and a clean Git workspace; and
+- real E2E validated with Codex CLI **0.153.4**.
 
-## Verification and Delivery
+In that disposable demo, unconfigured project-level test/lint/typecheck/build
+hooks were **SKIPPED**, and optional browser visual verification was **NOT_RUN**—
+neither is claimed as PASS. See the detailed
+[v0.1.1 release preparation notes](docs/releases/v0.1.1.md). No v0.1.1 GitHub
+Release has been created; the v0.1.0 tag and its historical evidence are unchanged.
 
-```text
-Task:
-Worker → verification → REVIEW → git add -- <owned paths> → local commit
-       → COMPLETED
+## Current Limitations
 
-Project:
-all Tasks complete → tests/lint/typecheck/build/git-clean → FINAL_REVIEW → DONE
-```
-
-Only configured project checks run; absent check categories are skipped rather
-than invented. Task `COMPLETED` does not imply Project `DONE`.
-
-## Reliability
-
-- Exactly one execution owner may dispatch work for a project.
-- Stale leases and interrupted Tasks are classified before recovery.
-- Every Worker turn has a configurable inactivity timeout plus a non-refreshable
-  hard maximum duration. Trusted current-turn activity refreshes only the idle
-  limit.
-- Either timeout fails closed to `HUMAN_REQUIRED`; partial work is not deleted,
-  reset, or automatically rerun.
-- Retryable structural Supervisor failures receive bounded fresh regeneration,
-  never JSON repair or validator bypass.
-- App-server processes and reader threads close on success, timeout, or Ctrl+C.
-
-## v0.1.1 Current Baseline
-
-Release preparation baseline: **498 tests passed**, `compileall`, `pip check`,
-and `git diff --check` PASS. Python 3.12 is required. Real E2E validated with
-**Codex CLI 0.153.4**; this is a tested version, not a proven minimum version.
-
-v0.1.1 fixes target Git baseline isolation, adds safe `WORKSPACE_BLOCK` retry,
-Worker Input answer/fresh-session continuation, dual inactivity/hard timeouts,
-safe Codex failure diagnostics, and typed Worker human actions. Verification
-failures are now distinct from Git ownership failures: required checks must PASS;
-optional NOT_RUN is allowed, but optional FAIL/UNKNOWN still blocks delivery.
-Exact Git ownership, clean baselines, HEAD checks, and precise staging remain strict.
-
-ProjectState is now **schema v11**, with migrations from historical schemas v1–v10.
-New state may not be readable by older Code Mule versions. Back up state before
-upgrading; forward migration does not promise backward/downgrade compatibility.
-
-The latest Boss-run real DeepSeek + Codex E2E completed Plan v1, **6/6 Tasks**,
-one delivery commit per Task, final Supervisor review APPROVE, and a clean Git
-workspace. T4 exercised a typed Worker Input report: Boss chose `localStorage`,
-then an explicit `run` continued the same Task in a fresh Worker session.
-
-Verification scope matters:
-
-- Project-level test/lint/typecheck/build hooks were unconfigured and **SKIPPED**;
-  the required Git-clean check passed.
-- Worker T6 independently recorded automated tests **20/20 PASS**, JavaScript
-  syntax PASS, and `git diff --check` PASS.
-- Browser visual verification was optional **NOT_RUN**. No manual browser
-  acceptance is claimed; the input gate in this run had no partial edits.
-
-See [v0.1.1 release notes](docs/releases/v0.1.1.md) for migration, safety, and
-verification details. v0.1.0's tag remains unchanged; this preparation does not
-create a v0.1.1 tag or release.
-
-## Historical v0.1.0 Validation
-
-Original v0.1.0 release-candidate baseline (historical, not the current baseline):
-
-- 441 automated tests PASS on Python 3.12.13;
-- `code-mule==0.1.0` fresh editable install and `pip check` PASS;
-- real local Codex full-system E2E PASS; and
-- real DeepSeek + real Codex release E2E PASS.
-
-The authenticated release E2E verified:
-
-```text
-Objective → real PLAN → real Codex Worker → real REVIEW → CHANGE → Safe Point
-→ real IMPACT_ANALYSIS → Plan v2 → Task commits → Project Verification
-→ real FINAL_REVIEW → DONE
-```
-
-Final evidence: Plan v2, 3/3 Tasks completed, 3 Task commits, 3 unique Codex
-sessions, verification PASS, `FINAL_REVIEW` APPROVE, clean workspace, released
-execution leases, and no duplicate Worker.
-
-## Current Scope and Limitations
-
-- One local Worker and local-machine execution ownership; no distributed
-  scheduler, daemon, parallel Worker, or Web UI.
-- An interrupted Codex turn is not transparently reconnected; uncertain work
-  requires inspection and explicit resolution.
-- Push, tag, release, deployment, and other gated external effects remain
-  manual Human Gate operations.
-- Verification commands are trusted deterministic project configuration, not
-  an OS-level network sandbox.
+- One local Worker only; no distributed or parallel execution and no daemon.
+- No Web UI.
+- An interrupted Codex turn is not transparently reconnected.
+- Remote and irreversible side effects remain Human Gates.
+- Completed projects cannot currently be reopened with CHANGE; DONE does not
+  transition to CHANGE_REQUESTED.
+- Project verification runs configured hooks only; it does not invent missing checks.
 
 ## Documentation
 
 - [Architecture](docs/architecture.md)
 - [Boss CLI](docs/cli.md)
-- [Boss Chat](docs/boss-chat.md)
 - [Human Resolution](docs/human-resolution.md)
 - [Execution Recovery](docs/execution-recovery.md)
 - [Git Delivery](docs/git-delivery.md)
 - [Project Verification](docs/project-verification.md)
-- [Project Cancellation](docs/project-cancellation.md)
-- [Release Readiness](docs/release-readiness.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [v0.1.1 Release Notes](docs/releases/v0.1.1.md)
