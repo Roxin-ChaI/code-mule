@@ -7,8 +7,9 @@
 # and exposes a stable launcher:
 #   ~/.local/bin/code-mule
 #
-# The repository-local .venv is never required and no shell configuration is
-# modified unless the Boss explicitly passes --configure-shell.
+# The repository-local .venv is never required. Shell configuration is
+# modified only when the launcher directory is missing from PATH. Pass
+# --no-configure-shell to keep this installer from touching a shell rc file.
 #
 set -euo pipefail
 
@@ -29,8 +30,10 @@ Options:
   --python PATH      Python 3.12 executable to use (default: python3.12)
   --no-deps          install the CLI without the openai model dependency
                      (deterministic/air-gapped use; model commands will not run)
-  --configure-shell  explicitly append the launcher directory to the detected
-                     shell rc file (zshrc/bashrc); never done by default
+  --no-configure-shell
+                     install the CLI without modifying any shell rc file
+  --configure-shell  legacy: equivalent to the default automatic behavior
+                     (append the launcher directory to the detected rc file)
   --reinstall        refresh an existing Code Mule installation in place
                      (default behavior is the same safe refresh; no deletion)
   -h, --help         show this help
@@ -46,11 +49,52 @@ warn() {
     printf 'Warning: %s\n' "$*" >&2
 }
 
+# Returns 0 when an rc file already carries the Code Mule managed block.
+rc_has_code_mule_block() {
+    [ -f "$1" ] && grep -Fq "# >>> code-mule >>>" "$1" 2>/dev/null
+}
+
+# Conservative idempotency detection for an equivalent existing PATH export.
+rc_has_equivalent_path() {
+    [ -f "$1" ] || return 1
+    local literal
+    grep -Fq "$export_line" "$1" && return 0
+    if [ "$bin_dir" = "$HOME/.local/bin" ]; then
+        literal="export PATH=\"$HOME/.local/bin:\$PATH\""
+        grep -Fq "$literal" "$1" && return 0
+        grep -Fq 'export PATH="~/.local/bin:$PATH"' "$1" && return 0
+        literal="export PATH=$HOME/.local/bin:\$PATH"
+        grep -Fq "$literal" "$1" && return 0
+    else
+        literal="export PATH=\"$bin_dir:\$PATH\""
+        grep -Fq "$literal" "$1" && return 0
+    fi
+    return 1
+}
+
+# Appends exactly one Code Mule-managed block. Creates a one-time backup for
+# an existing non-empty rc file. Never rewrites or reorders user content.
+append_code_mule_block() {
+    local rc="$1"
+    local backup="$rc.code-mule.bak"
+    mkdir -p "$(dirname "$rc")" || return 1
+    if [ -f "$rc" ] && [ -s "$rc" ] && [ ! -e "$backup" ]; then
+        cp "$rc" "$backup" || return 1
+        echo "Backup: $backup"
+    fi
+    {
+        printf '\n# >>> code-mule >>>\n'
+        printf '%s\n' "$export_line"
+        printf '# <<< code-mule <<<\n'
+    } >> "$rc" || return 1
+    return 0
+}
+
 prefix=""
 bin_dir=""
 python_bin=""
 no_deps=0
-configure_shell=0
+configure_shell=1
 shell_rc="${CODE_MULE_SHELL_RC:-}"
 
 while [ "$#" -gt 0 ]; do
@@ -72,6 +116,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --no-deps)
             no_deps=1
+            shift
+            ;;
+        --no-configure-shell)
+            configure_shell=0
             shift
             ;;
         --configure-shell)
@@ -266,62 +314,104 @@ status: ready
 EOF
 
 # ---------------------------------------------------------------------------
-# PATH guidance (never silently edits shell configuration).
+# PATH configuration (automatic by default; opt out with --no-configure-shell).
 # ---------------------------------------------------------------------------
 path_included=0
 case ":$PATH:" in
     *":$bin_dir:"*) path_included=1 ;;
 esac
 
-if [ "$path_included" -eq 1 ]; then
-    echo "PATH is already configured for: $bin_dir"
+if [ "$bin_dir" = "$HOME/.local/bin" ]; then
+    export_line='export PATH="$HOME/.local/bin:$PATH"'
 else
-    if [ "$bin_dir" = "$HOME/.local/bin" ]; then
-        export_suggestion='export PATH="$HOME/.local/bin:$PATH"'
-    else
-        export_suggestion="export PATH=\"$bin_dir:\$PATH\""
-    fi
-    echo
-    echo "Add this directory to PATH:"
-    echo
-    echo "  $export_suggestion"
-    echo
-    echo "To make it permanent, add that line to ~/.zshrc or ~/.bashrc."
-    echo "You can also run: bash scripts/install.sh --configure-shell"
+    export_line="export PATH=\"$bin_dir:\$PATH\""
 fi
 
-# ---------------------------------------------------------------------------
-# Explicit-only shell configuration.
-# ---------------------------------------------------------------------------
-if [ "$configure_shell" -eq 1 ]; then
+shell_config_summary=""
+if [ "$path_included" -eq 1 ]; then
+    shell_config_summary="PATH already configured.
+
+Code Mule installed successfully."
+elif [ "$configure_shell" -eq 0 ]; then
+    shell_config_summary="Automatic PATH configuration skipped (--no-configure-shell).
+
+Code Mule installed successfully.
+
+To use code-mule in a new terminal, add this line to your shell rc:
+  $export_line"
+else
+    detect_rc_result=0
+    configure_result=0
     if [ -z "$shell_rc" ]; then
-        case "${SHELL:-}" in
-            */zsh) shell_rc="${ZDOTDIR:-$HOME}/.zshrc" ;;
-            *) shell_rc="$HOME/.bashrc" ;;
+        shell_name="$(basename "${SHELL:-}" 2>/dev/null || true)"
+        case "$shell_name" in
+            zsh)
+                shell_rc="${ZDOTDIR:-$HOME}/.zshrc"
+                ;;
+            bash)
+                if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ]; then
+                    # macOS Terminal opens interactive login shells; bash reads
+                    # .bash_profile there before .bashrc.
+                    shell_rc="$HOME/.bash_profile"
+                else
+                    shell_rc="$HOME/.bashrc"
+                fi
+                ;;
+            *)
+                detect_rc_result=1
+                ;;
         esac
     fi
-    if [ "$bin_dir" = "$HOME/.local/bin" ]; then
-        export_line='export PATH="$HOME/.local/bin:$PATH"'
+
+    if [ "$detect_rc_result" -eq 1 ]; then
+        shell_config_summary="Code Mule installed successfully.
+
+Automatic PATH configuration could not be completed
+(unsupported shell: ${SHELL:-unknown}).
+Add this line to your shell rc:
+  $export_line"
     else
-        export_line="export PATH=\"$bin_dir:\$PATH\""
-    fi
-    mkdir -p "$(dirname "$shell_rc")"
-    if [ -f "$shell_rc" ] && grep -Fq "$export_line" "$shell_rc" 2>/dev/null; then
-        echo "Shell configuration already contains the PATH export: $shell_rc"
-    else
-        {
-            printf '\n# Code Mule PATH (added by scripts/install.sh --configure-shell)\n'
-            printf '%s\n' "$export_line"
-        } >> "$shell_rc"
-        echo "Appended the PATH export to: $shell_rc"
-        echo "Open a new terminal (or source $shell_rc) before running code-mule."
+        if [ -e "$shell_rc" ] || [ -L "$shell_rc" ]; then
+            if [ -L "$shell_rc" ] || [ ! -f "$shell_rc" ]; then
+                configure_result=1
+            fi
+        fi
+        if [ "$configure_result" -eq 1 ]; then
+            shell_config_summary="Code Mule installed successfully.
+
+Automatic PATH configuration could not be completed
+(shell rc is a symlink or special file: $shell_rc).
+Add this line to your shell rc manually:
+  $export_line"
+        else
+            if rc_has_code_mule_block "$shell_rc" \
+                || rc_has_equivalent_path "$shell_rc"; then
+                shell_config_summary="PATH already configured in shell rc: $shell_rc
+
+Code Mule installed successfully.
+
+Open a new terminal and run:
+  code-mule doctor"
+            elif append_code_mule_block "$shell_rc"; then
+                shell_config_summary="Shell PATH configured: $shell_rc
+
+Code Mule installed successfully.
+
+Open a new terminal and run:
+  code-mule doctor"
+            else
+                shell_config_summary="Code Mule installed successfully.
+
+Automatic PATH configuration could not be completed
+for $shell_rc.
+Add this line to your shell rc manually:
+  $export_line"
+            fi
+        fi
     fi
 fi
 
-echo
-echo "Done. Verify from any directory in a new terminal:"
-echo "  command -v code-mule"
-echo "  code-mule --help"
+printf '%s\n' "$shell_config_summary"
 
 [ "$dependencies_ok" -eq 1 ] || exit 1
 exit 0
