@@ -16,6 +16,7 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual(int(CliExitCode.INVALID_PROJECT_STATE), 3)
         self.assertEqual(int(CliExitCode.HUMAN_ACTION_REQUIRED), 4)
         self.assertEqual(int(CliExitCode.PROVIDER_OR_WORKER_FAILURE), 5)
+        self.assertEqual(int(CliExitCode.ENVIRONMENT_CHECK_FAILED), 6)
         self.assertEqual(
             InvalidCliProjectState("invalid").exit_code,
             CliExitCode.INVALID_PROJECT_STATE,
@@ -30,6 +31,10 @@ class CliContractTests(unittest.TestCase):
     def test_parser_exposes_all_boss_commands(self):
         parser = build_parser()
         cases = (
+            (["doctor"], "doctor"),
+            (["doctor", "--verbose"], "doctor"),
+            (["start", "--objective", "build it"], "start"),
+            (["start"], "start"),
             (["init", "--project-id", "p", "--name", "Project"], "init"),
             (["run", "--objective", "build it"], "run"),
             (["status"], "status"),

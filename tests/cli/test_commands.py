@@ -40,6 +40,8 @@ class _FakeCommands:
             raise self.error
         return self.result
 
+    def doctor(self, *values): return self._call("doctor", *values)
+    def start(self, *values): return self._call("start", *values)
     def init_project(self, *values): return self._call("init", *values)
     def run(self, *values): return self._call("run", *values)
     def status(self, *values): return self._call("status", *values)
@@ -538,6 +540,19 @@ class CliProcessBoundaryTests(unittest.TestCase):
         code, output, errors = self.invoke(["diagnose", "--verbose"], commands)
         self.assertEqual((code, output, errors), (0, "ok\n", ""))
         self.assertEqual(commands.calls, [("diagnose", (True,))])
+
+        commands = _FakeCommands()
+        code, output, errors = self.invoke(["doctor"], commands)
+        self.assertEqual((code, output, errors), (0, "ok\n", ""))
+        self.assertEqual(commands.calls, [("doctor", (False,))])
+
+        commands = _FakeCommands()
+        code, output, errors = self.invoke(
+            ["start", "--objective", "Build it"],
+            commands,
+        )
+        self.assertEqual((code, output, errors), (0, "ok\n", ""))
+        self.assertEqual(commands.calls, [("start", ("Build it", False))])
 
     def test_dispatches_human_resolution_commands(self):
         cases = (

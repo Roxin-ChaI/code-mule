@@ -25,6 +25,8 @@ from code_mule.presentation.terminal import TerminalDashboard, DashboardSection
 
 
 class BossCliCommands(Protocol):
+    def doctor(self, verbose: bool = False) -> CliCommandResult: ...
+    def start(self, objective: str | None, verbose: bool = False) -> CliCommandResult: ...
     def init_project(self, project_id: str, name: str, workspace: Path, verbose: bool = False) -> CliCommandResult: ...
     def run(self, objective: str | None, verbose: bool = False) -> CliCommandResult: ...
     def status(self, verbose: bool = False) -> CliCommandResult: ...
@@ -67,6 +69,13 @@ def _dispatch(
     commands: BossCliCommands, arguments: object, input_stream: TextIO
 ) -> CliCommandResult:
     command = getattr(arguments, "command")
+    if command == "doctor":
+        return commands.doctor(getattr(arguments, "verbose"))
+    if command == "start":
+        return commands.start(
+            getattr(arguments, "objective"),
+            getattr(arguments, "verbose"),
+        )
     if command == "init":
         return commands.init_project(
             getattr(arguments, "project_id"),

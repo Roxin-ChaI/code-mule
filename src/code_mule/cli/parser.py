@@ -32,6 +32,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
+    doctor = commands.add_parser("doctor", help="check environment and workspace readiness")
+    _state_file(doctor)
+
+    start = commands.add_parser(
+        "start",
+        help="initialize and start a new project from the current directory",
+    )
+    start.add_argument("--objective")
+    _state_file(start)
+
     init = commands.add_parser("init", help="initialize an IDLE project")
     init.add_argument("--project-id", required=True)
     init.add_argument("--name", required=True)
