@@ -10,8 +10,8 @@ Turn one coding objective into a controlled **PLAN → CODE → REVIEW → VERIF
 COMMIT** workflow.
 
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB)
-![Tests 511](https://img.shields.io/badge/tests-511%20passed-2E7D32)
-![ProjectState v11](https://img.shields.io/badge/ProjectState-v11-6A5ACD)
+![Tests 562](https://img.shields.io/badge/tests-562%20passed-2E7D32)
+![ProjectState v12](https://img.shields.io/badge/ProjectState-v12-6A5ACD)
 
 ## Demo
 
@@ -208,6 +208,30 @@ code-mule chat
 
 Commands discover `.code-mule/project-state.json` from the target repository.
 `run` and `change --apply` are blocking; use another terminal for live control.
+
+On an interactive terminal, `status`, `diagnose`, `recover`, and HumanAction
+output use one responsive, scrollback-friendly dashboard. It expands for wide
+terminals and wraps without dropping commands or IDs on narrow terminals:
+
+```text
+┌────────────────────────────────────────────────────────────┐
+│ CODE MULE · Calculator                                     │
+├────────────────────────────────────────────────────────────┤
+│ Status         Running                                     │
+│ Plan           v2                                          │
+│ Progress       █████████████░░░░░░░  4 / 6                │
+│ Current        Implement leaderboard                       │
+│ Safe Point     Task delivered                              │
+└────────────────────────────────────────────────────────────┘
+```
+
+Pipes, redirected output, CI, and `TERM=dumb` keep the stable plain-text form
+with no ANSI sequences. `NO_COLOR` is supported; meaning never depends on
+colour. Preview the layout without reading project state or calling a model:
+
+```bash
+.venv/bin/python scripts/preview_terminal.py --width 80
+```
 
 ## Boss Controls
 

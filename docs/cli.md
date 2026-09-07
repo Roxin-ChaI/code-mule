@@ -53,17 +53,52 @@ terminal in the same directory for `status`, Chat, CHANGE, PAUSE, or STOP.
 ## Default output
 
 Boss-facing output uses readable labels and hides storage identifiers and raw
-control enums:
+control enums. Interactive terminals receive one shared dashboard layout:
 
 ```text
-PROJECT
-Calculator
+┌────────────────────────────────────────────────────────────┐
+│ CODE MULE · Calculator                                     │
+├────────────────────────────────────────────────────────────┤
+│ Project        Calculator                                  │
+│ Status         Running                                     │
+│ Plan           v2                                          │
+│ Progress       ████████████░░░░░░░░  3 / 5               │
+│ Current        Add tests                                   │
+│ Safe Point     Task delivered                              │
+└────────────────────────────────────────────────────────────┘
+```
 
-Status      Running
-Plan        v2
-Progress    3 / 5
-Current     T4 · Add tests
-Boss action None
+The layout reads the actual terminal width and uses most of the available
+space, capped at a readable maximum. It uses a single column at 60–79 columns
+and wraps safely below 60. CJK, combining characters, common emoji, long action
+IDs, and commands are measured by display cells and are wrapped rather than
+truncated.
+
+`status`, `diagnose`, `recover`, and `inspect` use the same section, label,
+padding, border, and wrapping rules. Empty Boss Action panels are omitted.
+`--verbose` adds a separate INTERNAL panel; normal output keeps internal IDs,
+thread/turn identities, raw enums, and SHAs hidden.
+
+Live `run` output is an append-only activity stream such as `→ Worker started`
+and `✓ Task committed`, with bounded waiting updates. It does not repaint a
+complete dashboard for every event. The final state is rendered once as the
+full dashboard. Project verification displays `Skipped` separately from
+`Passed`.
+
+When stdout is piped, redirected, running under CI, or `TERM=dumb`, Code Mule
+retains its stable line-oriented representation. This fallback has no cursor
+control or ANSI dependency. Non-Unicode output uses a safe ASCII representation.
+`NO_COLOR` is honored; current output does not require colour to communicate
+state.
+
+Use the deterministic in-memory preview for manual visual checking. It neither
+loads ProjectState nor starts DeepSeek or Codex:
+
+```bash
+.venv/bin/python scripts/preview_terminal.py --width 40
+.venv/bin/python scripts/preview_terminal.py --width 80
+.venv/bin/python scripts/preview_terminal.py --width 120 --diagnose
+.venv/bin/python scripts/preview_terminal.py --plain
 ```
 
 Add `--verbose` after a command to expose `project_id`, `active_plan_id`, Plan

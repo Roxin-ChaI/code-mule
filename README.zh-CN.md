@@ -10,8 +10,8 @@
 工作流。
 
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB)
-![Tests 511](https://img.shields.io/badge/tests-511%20passed-2E7D32)
-![ProjectState v11](https://img.shields.io/badge/ProjectState-v11-6A5ACD)
+![Tests 562](https://img.shields.io/badge/tests-562%20passed-2E7D32)
+![ProjectState v12](https://img.shields.io/badge/ProjectState-v12-6A5ACD)
 
 ## Demo
 
@@ -206,6 +206,30 @@ code-mule chat
 
 相关命令会从目标仓库发现 `.code-mule/project-state.json`。`run` 和
 `change --apply` 是阻塞命令；需要实时控制时可使用另一个终端。
+
+在交互终端中，`status`、`diagnose`、`recover` 和 HumanAction 使用统一的
+响应式 dashboard，并保留普通终端滚屏。宽终端会充分展开，窄终端会换行，
+不会丢失命令或 ID：
+
+```text
+┌────────────────────────────────────────────────────────────┐
+│ CODE MULE · Calculator                                     │
+├────────────────────────────────────────────────────────────┤
+│ Status         Running                                     │
+│ Plan           v2                                          │
+│ Progress       █████████████░░░░░░░  4 / 6                │
+│ Current        Implement leaderboard                       │
+│ Safe Point     Task delivered                              │
+└────────────────────────────────────────────────────────────┘
+```
+
+pipe、重定向、CI 和 `TERM=dumb` 环境仍输出稳定的纯文本，不带 ANSI 控制符。
+支持 `NO_COLOR`，所有状态都同时有文字说明，不依赖颜色。以下命令仅预览
+内存中的确定性示例，不读取项目状态，也不调用模型：
+
+```bash
+.venv/bin/python scripts/preview_terminal.py --width 80
+```
 
 ## Boss 控制命令
 
