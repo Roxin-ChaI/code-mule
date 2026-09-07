@@ -442,11 +442,33 @@ class AutomaticPathConfigTests(unittest.TestCase):
             )
         raise AssertionError(f"unsupported shell fixture: {shell}")
 
-    def assert_block_present(self, rc: Path, *, expected_count: int = 1):
+    def zsh_rc_files(self, home: Path):
+        return (
+            [home / ".zprofile", home / ".zshrc"]
+            if platform.system() == "Darwin"
+            else [home / ".zshrc"]
+        )
+
+    def assert_block_present(
+        self,
+        rc: Path,
+        *,
+        expected_count: int = 1,
+        default_home_path: bool = False,
+    ):
         content = rc.read_text(encoding="utf-8")
         self.assertEqual(content.count("# >>> code-mule >>>"), expected_count)
         self.assertEqual(content.count("# <<< code-mule <<<"), expected_count)
-        self.assertIn(f'export PATH="{self.bin_dir}:$PATH"', content)
+        self.assertIn('case ":$PATH:" in', content)
+        if default_home_path:
+            self.assertIn(
+                'export PATH="$HOME/.local/bin:$PATH"',
+                content,
+            )
+            self.assertIn('":$HOME/.local/bin:"*)', content)
+        else:
+            self.assertIn(f'export PATH="{self.bin_dir}:$PATH"', content)
+            self.assertIn(f'":{self.bin_dir}:"*)', content)
         return content
 
     def test_default_install_configures_zsh_rc(self):
@@ -454,7 +476,8 @@ class AutomaticPathConfigTests(unittest.TestCase):
         self.assertIn("Shell PATH configured:", output)
         self.assertIn("Code Mule installed successfully.", output)
         self.assertIn("Open a new terminal and run:", output)
-        self.assert_block_present(self.expected_rc(self.homes["zsh"], "/bin/zsh"))
+        for rc in self.zsh_rc_files(self.homes["zsh"]):
+            self.assert_block_present(rc)
 
     def test_default_install_configures_bash_rc(self):
         output = self.outputs["bash"]
@@ -465,15 +488,17 @@ class AutomaticPathConfigTests(unittest.TestCase):
     def test_path_already_present_does_not_modify_rc(self):
         output = self.outputs["path_present"]
         self.assertIn("PATH already configured.", output)
-        rc = self.expected_rc(self.homes["path_present"], "/bin/zsh")
-        self.assertFalse(rc.exists())
+        for rc in self.zsh_rc_files(self.homes["path_present"]):
+            self.assertFalse(rc.exists())
 
     def test_second_install_does_not_duplicate_block_or_backup(self):
         second = self.outputs["existing_second"]
-        self.assertIn("PATH already configured in shell rc:", second)
-        rc = self.expected_rc(self.homes["existing"], "/bin/zsh")
-        self.assert_block_present(rc)
-        backup = rc.with_name(rc.name + ".code-mule.bak")
+        self.assertNotIn("Backup:", second)
+        for rc in self.zsh_rc_files(self.homes["existing"]):
+            self.assert_block_present(rc)
+        backup = (self.homes["existing"] / ".zshrc").with_name(
+            ".zshrc.code-mule.bak"
+        )
         self.assertTrue(backup.exists())
         self.assertEqual(
             list(self.homes["existing"].glob("*.code-mule.bak")),
@@ -492,6 +517,7 @@ class AutomaticPathConfigTests(unittest.TestCase):
         remainder = content[len(original):]
         self.assertIn("# >>> code-mule >>>", remainder)
         self.assertIn("# <<< code-mule <<<", remainder)
+        self.assertIn('case ":$PATH:" in', remainder)
         self.assertNotIn("existing user configuration", remainder)
 
     def test_backup_is_created_before_modifying_existing_rc(self):
@@ -509,23 +535,22 @@ class AutomaticPathConfigTests(unittest.TestCase):
     def test_no_configure_shell_does_not_modify_rc(self):
         output = self.outputs["no_config"]
         self.assertIn("Automatic PATH configuration skipped", output)
-        rc = self.expected_rc(self.homes["no_config"], "/bin/zsh")
-        self.assertFalse(rc.exists())
+        for rc in self.zsh_rc_files(self.homes["no_config"]):
+            self.assertFalse(rc.exists())
 
     def test_legacy_configure_shell_matches_default(self):
         output = self.outputs["legacy"]
         self.assertIn("Shell PATH configured:", output)
-        self.assert_block_present(
-            self.expected_rc(self.homes["legacy"], "/bin/zsh")
-        )
+        for rc in self.zsh_rc_files(self.homes["legacy"]):
+            self.assert_block_present(rc)
 
     def test_unknown_shell_installs_with_manual_fallback(self):
         output = self.outputs["unknown"]
         self.assertIn("Code Mule installed successfully.", output)
         self.assertIn("Automatic PATH configuration could not be completed", output)
         self.assertIn("export PATH=", output)
-        rc = self.homes["unknown"] / ".zshrc"
-        self.assertFalse(rc.exists())
+        self.assertFalse((self.homes["unknown"] / ".zshrc").exists())
+        self.assertFalse((self.homes["unknown"] / ".zprofile").exists())
         self.assertFalse((self.homes["unknown"] / ".bashrc").exists())
         self.assertFalse((self.homes["unknown"] / ".bash_profile").exists())
 
@@ -538,7 +563,7 @@ class AutomaticPathConfigTests(unittest.TestCase):
 
     def test_symlink_rc_is_not_followed_or_overwritten(self):
         output = self.outputs["symlink"]
-        self.assertIn("symlink or special file", output)
+        self.assertIn("could not be completed", output)
         self.assertIn("Code Mule installed successfully.", output)
         target = self.homes["symlink"] / "real-rc.txt"
         self.assertEqual(target.read_text(encoding="utf-8"), "keep me\n")
@@ -578,10 +603,24 @@ class AutomaticPathConfigTests(unittest.TestCase):
                         rc.read_text(encoding="utf-8"),
                         export_line,
                     )
-                    self.assertIn(
-                        "PATH already configured in shell rc:",
-                        completed.stdout,
-                    )
+                    if platform.system() == "Darwin":
+                        self.assertIn(
+                            "PATH already configured in shell rc:",
+                            completed.stdout,
+                        )
+                        profile = home / ".zprofile"
+                        profile_content = profile.read_text(encoding="utf-8")
+                        self.assertIn("# >>> code-mule >>>", profile_content)
+                        self.assertIn(
+                            'export PATH="$HOME/.local/bin:$PATH"',
+                            profile_content,
+                        )
+                    else:
+                        self.assertIn(
+                            "PATH already configured in shell rc:",
+                            completed.stdout,
+                        )
+                        self.assertFalse((home / ".zprofile").exists())
                     self.assertFalse(list(home.glob("*.code-mule.bak")))
 
     def test_installer_never_sources_or_evals_user_rc(self):
@@ -637,49 +676,131 @@ class AutomaticPathConfigTests(unittest.TestCase):
                 0,
                 completed.stdout + completed.stderr,
             )
-            rc = home / ".zshrc"
-            self.assertTrue(rc.exists())
-            content = rc.read_text(encoding="utf-8")
-            self.assertIn("# >>> code-mule >>>", content)
-            self.assertIn(
-                'export PATH="$HOME/.local/bin:$PATH"',
-                content,
-            )
+            for rc in self.zsh_rc_files(home):
+                self.assert_block_present(
+                    rc,
+                    default_home_path=True,
+                )
             launcher = home / ".local" / "bin" / "code-mule"
             self.assertTrue(launcher.exists())
-
-            original_parts = os.environ.get("PATH", "").split(":")
-            filtered = [
-                part
-                for part in original_parts
-                if part
-                and not part.endswith(".venv/bin")
-                and not part.endswith(".venv/Scripts")
-            ]
-            new_shell_path = (
-                f"{home}/.local/bin:"
-                + ":".join(dict.fromkeys([*filtered, path]))
-            )
+            self.assertTrue(os.access(launcher, os.X_OK))
             new_shell = {
                 "HOME": str(home),
                 "SHELL": "/bin/zsh",
-                "PATH": new_shell_path,
+                "TERM": "xterm-256color",
+                "PATH": path,
+                "PYTHONPATH": "",
+                "VIRTUAL_ENV": "",
+            }
+            self.assertNotIn(".venv/bin", new_shell["PATH"])
+            for mode in ("-lic", "-ic"):
+                with self.subTest(mode=mode):
+                    found = run_command(
+                        (
+                            "/bin/zsh",
+                            mode,
+                            "-c",
+                            "command -v code-mule "
+                            "&& code-mule --help >/dev/null",
+                        ),
+                        environment=new_shell,
+                    )
+                    self.assertEqual(
+                        found.returncode,
+                        0,
+                        found.stdout + found.stderr,
+                    )
+                    self.assertEqual(found.stdout.strip(), str(launcher))
+
+    def test_legacy_zshrc_block_is_migrated_with_backup(self):
+        with TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            original = (
+                "alias user='echo user'\n"
+                "export EDITOR=code\n"
+                "\n"
+                "# >>> code-mule >>>\n"
+                'export PATH="$HOME/.local/bin:$PATH"\n'
+                "# <<< code-mule <<<\n"
+            )
+            (home / ".zshrc").write_text(original, encoding="utf-8")
+            completed = run_command(
+                ("bash", str(INSTALL_SCRIPT), "--no-deps"),
+                environment={
+                    "HOME": str(home),
+                    "SHELL": "/bin/zsh",
+                    "PATH": self.system_path,
+                    "PYTHONPATH": "",
+                    "VIRTUAL_ENV": "",
+                },
+                timeout=180,
+            )
+            self.assertEqual(
+                completed.returncode,
+                0,
+                completed.stdout + completed.stderr,
+            )
+            rc = home / ".zshrc"
+            content = rc.read_text(encoding="utf-8")
+            self.assertIn("alias user='echo user'", content)
+            self.assertIn("export EDITOR=code", content)
+            self.assertIn("# >>> code-mule >>>", content)
+            self.assertIn('case ":$PATH:" in', content)
+            self.assertEqual(content.count("# >>> code-mule >>>"), 1)
+            backup = home / ".zshrc.code-mule.bak"
+            self.assertEqual(backup.read_text(encoding="utf-8"), original)
+            for rc_file in self.zsh_rc_files(home):
+                self.assertTrue(rc_file.exists())
+            env = {
+                "HOME": str(home),
+                "SHELL": "/bin/zsh",
+                "TERM": "xterm-256color",
+                "PATH": self.system_path,
                 "PYTHONPATH": "",
                 "VIRTUAL_ENV": "",
             }
             found = run_command(
-                ("bash", "-c", "command -v code-mule"),
-                environment=new_shell,
+                (
+                    "/bin/zsh",
+                    "-lic",
+                    "-c",
+                    "command -v code-mule",
+                ),
+                environment=env,
             )
-            self.assertEqual(found.returncode, 0, found.stdout + found.stderr)
-            self.assertEqual(found.stdout.strip(), str(launcher))
-            help_run = run_command(
-                ("bash", "-c", "code-mule --help"),
-                environment=new_shell,
+            self.assertEqual(found.returncode, 0, found.stderr)
+            self.assertTrue(found.stdout.strip())
+
+    def test_zdotdir_is_honored_for_zsh_startup_files(self):
+        if platform.system() != "Darwin":
+            self.skipTest("macOS zsh startup strategy")
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            home = root / "home"
+            home.mkdir()
+            zdotdir = root / "config" / "zsh"
+            zdotdir.mkdir(parents=True)
+            completed = run_command(
+                ("bash", str(INSTALL_SCRIPT), "--no-deps"),
+                environment={
+                    "HOME": str(home),
+                    "ZDOTDIR": str(zdotdir),
+                    "SHELL": "/bin/zsh",
+                    "PATH": self.system_path,
+                    "PYTHONPATH": "",
+                    "VIRTUAL_ENV": "",
+                },
+                timeout=180,
             )
-            self.assertEqual(help_run.returncode, 0, help_run.stderr)
-            self.assertIn("usage: code-mule", help_run.stdout)
-            self.assertNotIn(".venv/bin", new_shell["PATH"])
+            self.assertEqual(
+                completed.returncode,
+                0,
+                completed.stdout + completed.stderr,
+            )
+            self.assertTrue((zdotdir / ".zprofile").exists())
+            self.assertTrue((zdotdir / ".zshrc").exists())
+            self.assertFalse((home / ".zprofile").exists())
+            self.assertFalse((home / ".zshrc").exists())
 
 
 if __name__ == "__main__":

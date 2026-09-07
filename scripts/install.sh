@@ -51,7 +51,16 @@ warn() {
 
 # Returns 0 when an rc file already carries the Code Mule managed block.
 rc_has_code_mule_block() {
-    [ -f "$1" ] && grep -Fq "# >>> code-mule >>>" "$1" 2>/dev/null
+    [ -f "$1" ] && grep -Fq "# >>> code-mule >>>" "$1" 2>/dev/null \
+        && grep -Fq "# <<< code-mule <<<" "$1" 2>/dev/null
+}
+
+# A managed block is only migrated/rewritten when it is well formed.
+rc_has_closed_code_mule_block() {
+    [ -f "$1" ] || return 1
+    start_line="$(grep -n -F "# >>> code-mule >>>" "$1" 2>/dev/null | head -n 1 | cut -d: -f1 || true)"
+    end_line="$(grep -n -F "# <<< code-mule <<<" "$1" 2>/dev/null | head -n 1 | cut -d: -f1 || true)"
+    [ -n "$start_line" ] && [ -n "$end_line" ] && [ "$end_line" -gt "$start_line" ]
 }
 
 # Conservative idempotency detection for an equivalent existing PATH export.
@@ -72,20 +81,89 @@ rc_has_equivalent_path() {
     return 1
 }
 
-# Appends exactly one Code Mule-managed block. Creates a one-time backup for
-# an existing non-empty rc file. Never rewrites or reorders user content.
-append_code_mule_block() {
+# Creates one-time backup only when an existing non-empty file will change.
+backup_rc_file() {
     local rc="$1"
     local backup="$rc.code-mule.bak"
-    mkdir -p "$(dirname "$rc")" || return 1
     if [ -f "$rc" ] && [ -s "$rc" ] && [ ! -e "$backup" ]; then
         cp "$rc" "$backup" || return 1
         echo "Backup: $backup"
     fi
+    return 0
+}
+
+# Removes only the exact Code Mule marker range; all other content is kept.
+remove_code_mule_block() {
+    local rc="$1"
+    local temporary="$rc.code-mule.tmp.$$"
+    if ! sed '/^# >>> code-mule >>>$/,/^# <<< code-mule <<<$/d' "$rc" \
+        > "$temporary" 2>/dev/null; then
+        rm -f -- "$temporary"
+        return 1
+    fi
+    mv "$temporary" "$rc" || {
+        rm -f -- "$temporary"
+        return 1
+    }
+    return 0
+}
+
+# Builds one guarded Code Mule managed block. The guard avoids appending a
+# duplicate directory when a login profile already initialized PATH.
+build_managed_block() {
+    local export_value
+    if [ "$bin_dir" = "$HOME/.local/bin" ]; then
+        export_value='$HOME/.local/bin'
+    else
+        export_value="$bin_dir"
+    fi
+    managed_block="# >>> code-mule >>>
+case \":\$PATH:\" in
+  *\":$export_value:\"*) ;;
+  *) export PATH=\"$export_value:\$PATH\" ;;
+esac
+# <<< code-mule <<<"
+}
+
+# Ensures one rc file carries exactly the current managed block. Existing Code
+# Mule marker ranges are migrated in place; user content outside the markers is
+# never changed. Returns 0 on success or when already current.
+ensure_rc_managed() {
+    local rc="$1"
+    if [ -e "$rc" ] || [ -L "$rc" ]; then
+        if [ -L "$rc" ] || [ ! -f "$rc" ]; then
+            return 1
+        fi
+    fi
+    mkdir -p "$(dirname "$rc")" || return 1
+
+    had_block=0
+    if rc_has_code_mule_block "$rc"; then
+        had_block=1
+    elif [ -f "$rc" ] && grep -Fq "# >>> code-mule >>>" "$rc" 2>/dev/null; then
+        if ! rc_has_closed_code_mule_block "$rc"; then
+            return 1
+        fi
+        had_block=1
+    fi
+
+    if [ "$had_block" -eq 1 ]; then
+        existing_block="$(
+            sed -n '/^# >>> code-mule >>>$/,/^# <<< code-mule <<<$/p' "$rc" 2>/dev/null
+        )"
+        if [ "$existing_block" = "$managed_block" ]; then
+            return 0
+        fi
+        backup_rc_file "$rc" || return 1
+        remove_code_mule_block "$rc" || return 1
+    fi
+
+    if [ "$had_block" -eq 0 ] && rc_has_equivalent_path "$rc"; then
+        return 0
+    fi
+    backup_rc_file "$rc" || return 1
     {
-        printf '\n# >>> code-mule >>>\n'
-        printf '%s\n' "$export_line"
-        printf '# <<< code-mule <<<\n'
+        printf '\n%s\n' "$managed_block"
     } >> "$rc" || return 1
     return 0
 }
@@ -327,91 +405,107 @@ else
     export_line="export PATH=\"$bin_dir:\$PATH\""
 fi
 
-shell_config_summary=""
+configured_files=()
+failed_rc_files=()
+detect_rc_result=0
 if [ "$path_included" -eq 1 ]; then
-    shell_config_summary="PATH already configured.
-
-Code Mule installed successfully."
+    echo "PATH already configured."
+    echo
+    echo "Code Mule installed successfully."
 elif [ "$configure_shell" -eq 0 ]; then
-    shell_config_summary="Automatic PATH configuration skipped (--no-configure-shell).
-
-Code Mule installed successfully.
-
-To use code-mule in a new terminal, add this line to your shell rc:
-  $export_line"
+    echo "Automatic PATH configuration skipped (--no-configure-shell)."
+    echo
+    echo "Code Mule installed successfully."
+    echo
+    echo "To use code-mule in a new terminal, add this line to your shell rc:"
+    echo "  $export_line"
 else
-    detect_rc_result=0
-    configure_result=0
+    rc_files=()
     if [ -z "$shell_rc" ]; then
         shell_name="$(basename "${SHELL:-}" 2>/dev/null || true)"
         case "$shell_name" in
             zsh)
-                shell_rc="${ZDOTDIR:-$HOME}/.zshrc"
+                zsh_home="${ZDOTDIR:-$HOME}"
+                if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ]; then
+                    # macOS Terminal windows are login shells. PATH is
+                    # environment initialization, so .zprofile is the primary
+                    # file; .zshrc remains as a guarded non-login fallback.
+                    rc_files=("$zsh_home/.zprofile" "$zsh_home/.zshrc")
+                else
+                    rc_files=("$zsh_home/.zshrc")
+                fi
                 ;;
             bash)
                 if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ]; then
                     # macOS Terminal opens interactive login shells; bash reads
                     # .bash_profile there before .bashrc.
-                    shell_rc="$HOME/.bash_profile"
+                    rc_files=("$HOME/.bash_profile")
                 else
-                    shell_rc="$HOME/.bashrc"
+                    rc_files=("$HOME/.bashrc")
                 fi
                 ;;
             *)
                 detect_rc_result=1
                 ;;
         esac
+    else
+        rc_files=("$shell_rc")
     fi
 
     if [ "$detect_rc_result" -eq 1 ]; then
-        shell_config_summary="Code Mule installed successfully.
-
-Automatic PATH configuration could not be completed
-(unsupported shell: ${SHELL:-unknown}).
-Add this line to your shell rc:
-  $export_line"
+        echo "Code Mule installed successfully."
+        echo
+        echo "Automatic PATH configuration could not be completed"
+        echo "(unsupported shell: ${SHELL:-unknown})."
+        echo "Add this line to your shell rc:"
+        echo "  $export_line"
     else
-        if [ -e "$shell_rc" ] || [ -L "$shell_rc" ]; then
-            if [ -L "$shell_rc" ] || [ ! -f "$shell_rc" ]; then
-                configure_result=1
-            fi
-        fi
-        if [ "$configure_result" -eq 1 ]; then
-            shell_config_summary="Code Mule installed successfully.
-
-Automatic PATH configuration could not be completed
-(shell rc is a symlink or special file: $shell_rc).
-Add this line to your shell rc manually:
-  $export_line"
-        else
-            if rc_has_code_mule_block "$shell_rc" \
-                || rc_has_equivalent_path "$shell_rc"; then
-                shell_config_summary="PATH already configured in shell rc: $shell_rc
-
-Code Mule installed successfully.
-
-Open a new terminal and run:
-  code-mule doctor"
-            elif append_code_mule_block "$shell_rc"; then
-                shell_config_summary="Shell PATH configured: $shell_rc
-
-Code Mule installed successfully.
-
-Open a new terminal and run:
-  code-mule doctor"
+        build_managed_block
+        for shell_rc in "${rc_files[@]}"; do
+            if ensure_rc_managed "$shell_rc"; then
+                if rc_has_code_mule_block "$shell_rc"; then
+                    configured_files+=("$shell_rc")
+                else
+                    echo "PATH already configured in shell rc: $shell_rc"
+                fi
             else
-                shell_config_summary="Code Mule installed successfully.
-
-Automatic PATH configuration could not be completed
-for $shell_rc.
-Add this line to your shell rc manually:
-  $export_line"
+                failed_rc_files+=("$shell_rc")
             fi
-        fi
+        done
     fi
 fi
 
-printf '%s\n' "$shell_config_summary"
+if [ "${#failed_rc_files[@]}" -gt 0 ]; then
+    echo "Code Mule installed successfully."
+    echo
+    echo "Automatic PATH configuration could not be completed for:"
+    for shell_rc in "${failed_rc_files[@]}"; do
+        echo "  $shell_rc"
+    done
+    echo "Add this line to your shell rc manually:"
+    echo "  $export_line"
+fi
+
+if [ "${#configured_files[@]}" -gt 0 ]; then
+    for shell_rc in "${configured_files[@]}"; do
+        echo "Shell PATH configured: $shell_rc"
+    done
+    echo
+    echo "Code Mule installed successfully."
+    echo
+    echo "Open a new terminal and run:"
+    echo "  code-mule doctor"
+elif [ "${#failed_rc_files[@]}" -eq 0 ] \
+    && [ "$path_included" -eq 0 ] \
+    && [ "$configure_shell" -eq 1 ] \
+    && [ "$detect_rc_result" -eq 0 ]; then
+    # Every target file already had an equivalent PATH export.
+    echo
+    echo "Code Mule installed successfully."
+    echo
+    echo "Open a new terminal and run:"
+    echo "  code-mule doctor"
+fi
 
 [ "$dependencies_ok" -eq 1 ] || exit 1
 exit 0
