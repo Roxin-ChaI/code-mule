@@ -8,8 +8,6 @@ from pathlib import Path
 from typing import Protocol, TextIO
 from uuid import uuid4
 
-from openai import DefaultHttpx2Client, OpenAI
-
 from code_mule.domain.enums import (
     ChangeRequestStatus,
     HumanResolutionStrategy,
@@ -34,6 +32,13 @@ from code_mule.git_delivery import (
     GitDeliveryService,
     GitWorkspaceIsolationError,
     register_state_exclusion,
+)
+from code_mule.onboarding import (
+    DoctorService,
+    StartDecision,
+    StartPreflightService,
+    render_doctor,
+    workspace_slug,
 )
 from code_mule.execution import (
     ExecutionAlreadyOwned,
@@ -93,10 +98,6 @@ from code_mule.scheduler import TaskScheduler
 from code_mule.state.models import ProjectState
 from code_mule.state.serialization import InvalidProjectState
 from code_mule.state.store import JsonProjectStateStore, ProjectStateNotFound
-from code_mule.supervisor.providers.deepseek import (
-    DeepSeekSupervisorConfig,
-    DeepSeekSupervisorModelClient,
-)
 from code_mule.supervisor.service import SupervisorService
 from code_mule.worker import (
     CodexWorkerConfig,
@@ -111,6 +112,7 @@ from .contracts import (
     CliHumanActionRequired,
     CliProjectAlreadyRunning,
     CliRecoveryRequired,
+    CliUsageError,
     InvalidCliProjectState,
 )
 
@@ -218,6 +220,127 @@ class ProductionCliComposition:
             CliExitCode.SUCCESS,
             lines,
         )
+
+    def doctor(self, verbose: bool = False) -> CliCommandResult:
+        report = DoctorService(environment=self._environment).diagnose(
+            Path.cwd(),
+            self._state_file,
+        )
+        lines = render_doctor(report, verbose=verbose)
+        code = (
+            CliExitCode.SUCCESS
+            if report.healthy
+            else CliExitCode.ENVIRONMENT_CHECK_FAILED
+        )
+        return CliCommandResult(code, lines)
+
+    def start(
+        self,
+        objective: str | None,
+        verbose: bool = False,
+    ) -> CliCommandResult:
+        workspace = Path.cwd().expanduser().resolve()
+        self._validate_workspace_path(workspace)
+        preflight = StartPreflightService(
+            environment=self._environment
+        ).preflight(workspace, self._state_file)
+        if preflight.decision is StartDecision.EXISTING_PROJECT:
+            return self._existing_project_start(preflight, objective, verbose)
+        if preflight.decision is not StartDecision.READY_TO_INIT:
+            return self._blocked_start(preflight, verbose)
+        if objective in (None, ""):
+            raise CliUsageError(
+                "start requires --objective for a new project"
+            )
+        if self._runtime_factory is None and not self._environment.get(
+            "DEEPSEEK_API_KEY"
+        ):
+            lines = (
+                "MODEL NOT CONFIGURED",
+                "",
+                "DEEPSEEK_API_KEY is required to start model work.",
+                "No Code Mule project was initialized.",
+                "",
+                "Next",
+                "  export DEEPSEEK_API_KEY=...",
+                f'  code-mule start --objective "{objective}"',
+            )
+            return CliCommandResult(
+                CliExitCode.PROVIDER_OR_WORKER_FAILURE,
+                lines,
+            )
+        self.init_project(
+            workspace_slug(workspace.name),
+            workspace.name,
+            workspace,
+            verbose=verbose,
+        )
+        return self.run(objective, verbose=verbose)
+
+    def _blocked_start(
+        self,
+        preflight,
+        verbose: bool,
+    ) -> CliCommandResult:
+        lines = [
+            preflight.heading,
+            "",
+            preflight.reason,
+            "No state, Git, or workspace changes were made.",
+        ]
+        probe = preflight.probe
+        if probe is not None and probe.status_entries:
+            lines += ["", "Changed"]
+            lines += tuple(f"  {entry}" for entry in probe.status_entries)
+        if preflight.next_commands:
+            lines += ["", "Next"]
+            lines += tuple(f"  {command}" for command in preflight.next_commands)
+        return CliCommandResult(CliExitCode.INVALID_PROJECT_STATE, tuple(lines))
+
+    def _existing_project_start(
+        self,
+        preflight,
+        objective: str | None,
+        verbose: bool,
+    ) -> CliCommandResult:
+        state = self._load()
+        diagnosis = self._diagnosis_service.diagnose(state)
+        next_command = self._existing_next_command(state, diagnosis, objective)
+        lines = [
+            preflight.heading,
+            "",
+            "Existing Code Mule project detected.",
+            "No re-initialization was performed.",
+            "",
+            f"Workspace   {state.project.workspace}",
+            f"Project     {diagnosis.project_name}",
+            f"Status      {status_label(state.project.status)}",
+            f"Plan        {'—' if diagnosis.active_plan_version is None else f'v{diagnosis.active_plan_version}'}",
+        ]
+        if next_command is not None:
+            lines += ["", "Next", f"  {next_command}"]
+        if verbose:
+            lines += (
+                "",
+                f"project_id: {state.project.id}",
+                f"project_status: {state.project.status.value}",
+                f"state_file: {self._state_file}",
+            )
+        return CliCommandResult(CliExitCode.SUCCESS, tuple(lines))
+
+    def _existing_next_command(self, state, diagnosis, objective: str | None) -> str:
+        if state.project.status is ProjectStatus.IDLE:
+            return (
+                "code-mule run --objective "
+                + (
+                    f'"{objective}"'
+                    if objective not in (None, "")
+                    else '"..."'
+                )
+            )
+        if diagnosis.recommended_next_action.value == "none":
+            return "code-mule status"
+        return diagnosis.recommended_next_action.value
 
     def run(self, objective: str | None, verbose: bool = False) -> CliCommandResult:
         state = self._load()
@@ -605,6 +728,19 @@ class ProductionCliComposition:
         api_key = self._environment.get("DEEPSEEK_API_KEY")
         if not api_key:
             return CompositeBossIntentRouter(deterministic=deterministic)
+        try:
+            from openai import DefaultHttpx2Client, OpenAI
+
+            from code_mule.supervisor.providers.deepseek import (
+                DeepSeekSupervisorConfig,
+                DeepSeekSupervisorModelClient,
+            )
+        except ImportError as error:
+            raise CliExecutionFailure(
+                "The openai model dependency is not installed in this Code Mule "
+                "environment. Re-run scripts/install.sh with network access."
+            ) from error
+
         model = self._environment.get(
             "CODE_MULE_DEEPSEEK_MODEL", "deepseek-v4-flash"
         )
@@ -647,6 +783,18 @@ class ProductionCliComposition:
             raise CliExecutionFailure(
                 "DEEPSEEK_API_KEY is required for model-dependent commands"
             )
+        try:
+            from openai import DefaultHttpx2Client, OpenAI
+
+            from code_mule.supervisor.providers.deepseek import (
+                DeepSeekSupervisorConfig,
+                DeepSeekSupervisorModelClient,
+            )
+        except ImportError as error:
+            raise CliExecutionFailure(
+                "The openai model dependency is not installed in this Code Mule "
+                "environment. Re-run scripts/install.sh with network access."
+            ) from error
         model = self._environment.get(
             "CODE_MULE_DEEPSEEK_MODEL", "deepseek-v4-flash"
         )

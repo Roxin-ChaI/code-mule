@@ -10,6 +10,7 @@ class CliExitCode(IntEnum):
     INVALID_PROJECT_STATE = 3
     HUMAN_ACTION_REQUIRED = 4
     PROVIDER_OR_WORKER_FAILURE = 5
+    ENVIRONMENT_CHECK_FAILED = 6
 
 
 class CliError(RuntimeError):
