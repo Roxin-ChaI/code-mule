@@ -10,7 +10,7 @@
 工作流。
 
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB)
-![Tests 562](https://img.shields.io/badge/tests-562%20passed-2E7D32)
+![Tests 591](https://img.shields.io/badge/tests-591%20passed-2E7D32)
 ![ProjectState v12](https://img.shields.io/badge/ProjectState-v12-6A5ACD)
 
 ## Demo
@@ -118,98 +118,93 @@ STOP   → Safe cancellation, no rollback
 - 已完成本地认证的 [Codex CLI](https://developers.openai.com/codex/cli)
 - 用于 Supervisor 调用的 DeepSeek API key
 
-开始前检查本地 Codex：
+安装后可用 `code-mule doctor` 检查以上所有项目，并明确提示缺什么。真实 E2E
+已使用 **Codex CLI 0.153.4** 验证。这是实测版本，不代表已证明的最低支持
+版本；`doctor` 不会把较低版本自动判为不兼容。
 
-```bash
-codex --version
-codex app-server --help
-```
+## 快速开始（Boss）
 
-真实 E2E 已使用 **Codex CLI 0.153.4** 验证。这是实测版本，不代表已证明的
-最低支持版本。
+只需安装一次，之后都在你的目标仓库中工作。你不需要理解 virtualenv activation，
+也不需要知道 Code Mule 源码或安装位置。
 
-## 快速开始
-
-### 1. 安装 Code Mule
-
-将工具安装在独立目录中：
+### 1. 一次性安装 Code Mule
 
 ```bash
 git clone https://github.com/Roxin-ChaI/code-mule.git /path/to/code-mule
 cd /path/to/code-mule
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -e .
+bash scripts/install.sh
+```
+
+安装器会创建独立应用环境 `~/.local/share/code-mule/venv`，并在
+`~/.local/bin/code-mule` 建立稳定 launcher。它不会安装到系统 Python，不依赖
+仓库 `.venv`，也不会在未经你明确选择 `--configure-shell` 时修改 shell 配置。
+
+如果 `~/.local/bin` 不在 PATH 中，安装器会打印一行建议。之后请**新开一个
+终端**：
+
+```bash
+command -v code-mule
 code-mule --help
 ```
 
-`/path/to/code-mule` 是工具仓库。保持这个虚拟环境处于激活状态，或直接运行
-`/path/to/code-mule/.venv/bin/code-mule`。
+### 2. 检查环境
 
-### 2. 准备目标仓库
+```bash
+code-mule doctor
+```
 
-`--workspace` 指向另一个 Git 仓库，也就是 Code Mule 实际修改的项目：
+每行都应为 `PASS`、`CONFIGURED` 或 `READY`。如果 DeepSeek 显示
+`NOT CONFIGURED`，在 shell 中导出 key（不要提交它）：
+
+```bash
+export DEEPSEEK_API_KEY="<your-deepseek-api-key>"
+```
+
+可用 `CODE_MULE_DEEPSEEK_MODEL` 覆盖默认的 `deepseek-v4-flash`。真实
+Supervisor 调用可能产生费用。
+
+### 3. 在目标仓库启动项目
 
 ```bash
 cd /path/to/my-project
-git status --short
+code-mule start --objective "创建一个有测试的计算器"
 ```
 
-目标仓库必须至少有一个 commit，且上面的命令必须没有输出。新项目可以先建立
-最小 baseline：
+`start` 以当前目录为 workspace、以目录名为项目名、以安全确定性的 slug 作为
+project id，初始化 `.code-mule/project-state.json` 并立即执行该目标。
+
+目标仓库必须是至少有一个初始 commit、且 working tree clean 的 Git 仓库。
+新仓库可先建立最小 baseline：
 
 ```bash
 mkdir -p /path/to/my-project
 cd /path/to/my-project
 git init
 printf "# My Project\n" > README.md
-git add -- README.md
+git add README.md
 git commit -m "chore: initial commit"
 ```
 
-clean baseline 用于识别每个 Task 自己产生的修改。Code Mule 不会自动 stash、
-reset、clean 或覆盖无关本地修改。
+`start` 不会重新初始化已有项目，不会替你执行 `git init`，也永远不会 stash、
+reset、clean 或替你创建 commit。被阻塞时会明确指出下一步。
 
-### 3. 初始化 workspace
+### 4. 之后回到项目
 
-请在目标仓库中执行，而不是在 Code Mule 源码仓库中执行：
-
-```bash
-code-mule init --project-id my-project --name "My Project" --workspace "$PWD"
-```
-
-默认 state 位于 `.code-mule/project-state.json`。初始化会把 `.code-mule/`
-登记到 repository-local Git exclude，不修改 tracked `.gitignore`，因此托管状态
-不会污染 Task baseline。
-
-### 4. 配置 DeepSeek
-
-```bash
-export DEEPSEEK_API_KEY="<your-deepseek-api-key>"
-export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
-```
-
-不要提交 API key。真实 Supervisor 调用可能产生费用。
-
-### 5. 执行目标
-
-```bash
-code-mule run --objective "创建一个有测试的计算器"
-```
-
-### 6. 查看与控制
+在新终端中，从同一项目目录执行：
 
 ```bash
 code-mule status
-code-mule chat
+code-mule diagnose
+code-mule recover
 ```
 
-相关命令会从目标仓库发现 `.code-mule/project-state.json`。`run` 和
-`change --apply` 是阻塞命令；需要实时控制时可使用另一个终端。
+默认 state 文件是当前目录下的 `.code-mule/project-state.json`，因此命令会自动
+发现项目。初始化会把 `.code-mule/` 登记到 repository-local Git exclude，不修改
+tracked `.gitignore`，托管状态不会污染 Task baseline。`run` 和 `change --apply`
+是阻塞命令；需要实时控制时可使用另一个终端。
 
 在交互终端中，`status`、`diagnose`、`recover` 和 HumanAction 使用统一的
-响应式 dashboard，并保留普通终端滚屏。宽终端会充分展开，窄终端会换行，
-不会丢失命令或 ID：
+响应式 dashboard，并保留普通终端滚屏：
 
 ```text
 ┌────────────────────────────────────────────────────────────┐
@@ -224,17 +219,45 @@ code-mule chat
 ```
 
 pipe、重定向、CI 和 `TERM=dumb` 环境仍输出稳定的纯文本，不带 ANSI 控制符。
-支持 `NO_COLOR`，所有状态都同时有文字说明，不依赖颜色。以下命令仅预览
-内存中的确定性示例，不读取项目状态，也不调用模型：
+支持 `NO_COLOR`，所有状态都同时有文字说明，不依赖颜色。
+
+## 显式控制 / Contributor
+
+需要显式命令的 Boss 也可以用相同方式初始化：
+
+```bash
+code-mule init --project-id my-project --name "My Project" --workspace "$PWD"
+code-mule run --objective "创建一个有测试的计算器"
+```
+
+参与 Code Mule 源码开发时，使用仓库本地 editable 安装（不要把这种方式作为
+普通 Boss 的 Quick Start）：
+
+```bash
+cd /path/to/code-mule
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -e .
+.venv/bin/code-mule --help
+```
+
+开发预览命令示例：
 
 ```bash
 .venv/bin/python scripts/preview_terminal.py --width 80
+```
+
+源码改动后刷新持久安装：
+
+```bash
+bash scripts/install.sh
 ```
 
 ## Boss 控制命令
 
 | 命令 | 用途 |
 | --- | --- |
+| `doctor` | 只读检查 Code Mule、Python、Git、Codex、DeepSeek 与 workspace 就绪状态 |
+| `start --objective "..."` | 用默认值初始化当前 Git workspace 并执行首个目标 |
 | `run --objective "..."` / `run` | 开始规划，或继续 RUNNING 工作 |
 | `status` | 读取确定性的 Plan 和 Task 进度 |
 | `diagnose` | 只读解释阻塞原因、可恢复性和 Boss 下一步操作 |
@@ -282,7 +305,7 @@ Code Mule 适合需要以下能力的本地软件开发：
 
 当前 v0.1.1 发布准备基线：
 
-- **498 项自动化测试 PASS**；
+- **591 项自动化测试 PASS**，包括不激活仓库 `.venv` 的真实 shell 重启回归测试；
 - `compileall`、`pip check` 和 `git diff --check` PASS；
 - 真实 DeepSeek + Codex E2E：Plan v1、6/6 Tasks、Worker Input → Boss answer
   → fresh-session continuation、每个 Task 一个 delivery commit、最终 review

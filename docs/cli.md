@@ -1,54 +1,119 @@
 # Boss CLI
 
 The `code-mule` command is the formal Boss control surface for one persisted
-project. Install the repository and its runtime dependency into Python 3.12:
+project.
+
+## Persistent installation
+
+Install once into an isolated application environment. The repository `.venv`
+is **not** required afterwards:
 
 ```bash
-python3.12 -m venv .venv
-.venv/bin/python -m pip install -e .
+git clone https://github.com/Roxin-ChaI/code-mule.git /path/to/code-mule
+cd /path/to/code-mule
+bash scripts/install.sh
+```
+
+The installer:
+
+- checks for Python 3.12 and fails with a clear message when it is missing;
+- creates `~/.local/share/code-mule/venv/` as an isolated application
+  environment, separate from any target workspace;
+- installs the current package there and creates the stable launcher
+  `~/.local/bin/code-mule`;
+- never installs into system Python, never modifies `/usr/local`, and never
+  deletes an existing environment;
+- refreshes an existing Code Mule installation in place (re-run the same
+  script; `--reinstall` makes the intent explicit);
+- fails closed when `~/.local/bin/code-mule` already belongs to another tool;
+- does not overwrite unrelated executables;
+- does not silently edit `~/.zshrc` or `~/.bashrc`. If
+  `~/.local/bin` is not on `PATH`, it prints the export line. A Boss may run
+  `bash scripts/install.sh --configure-shell` to append that line explicitly.
+
+`--no-deps` installs the local CLI without the `openai` model dependency for
+deterministic/air-gapped environments; local commands such as `--help`,
+`doctor`, `start` preflight, `status`, and `diagnose` still work, while model
+commands explain that dependencies are missing.
+
+After installation, open a **new terminal** and confirm:
+
+```bash
+command -v code-mule
+code-mule --help
 ```
 
 ## Quick start
 
 ```bash
-CODE_MULE_BIN="$(pwd)/.venv/bin/code-mule"
-mkdir -p /tmp/code-mule-workspace
-cd /tmp/code-mule-workspace
-git init
-git config user.name "Code Mule Boss"
-git config user.email "boss@example.invalid"
-touch README.md
-git add -- README.md
-git commit -m "chore: initialize workspace"
-
-"$CODE_MULE_BIN" init \
-  --project-id calculator \
-  --name "Calculator" \
-  --workspace "$PWD"
-
 export DEEPSEEK_API_KEY="..."
 export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
-# Terminal A
-"$CODE_MULE_BIN" run --objective "Create a tested calculator"
+code-mule doctor
+
+cd /path/to/my-project   # a Git repository with an initial commit
+git status --short       # must print nothing
+code-mule start --objective "Create a tested calculator"
 
 # Terminal B, from the same directory while run is active
-"$CODE_MULE_BIN" status
-"$CODE_MULE_BIN" chat
-"$CODE_MULE_BIN" change "Add multiply support"
+code-mule status
+code-mule chat
+code-mule change "Add multiply support"
 
 # After run stops at the CHANGE Safe Point
-"$CODE_MULE_BIN" change --apply
+code-mule change --apply
 ```
 
 The default state file is `.code-mule/project-state.json` under the current
 directory, so subsequent commands automatically discover the initialized
-project when run there. Pass
-`--state-file PATH` to every command when using another location. `init` never
-overwrites an existing state file and persists an absolute Worker workspace.
+project when run there. Pass `--state-file PATH` to every command when using
+another location. `start` performs the same deterministic Git preflight as
+`init` before any side effects: it never re-initializes an existing project,
+never runs `git init`, never creates a Boss commit, and blocks dirty or
+HEAD-less repositories with concrete next steps. `init` never overwrites an
+existing state file and persists an absolute Worker workspace.
+
+The explicit initialization form remains available:
+
+```bash
+code-mule init --project-id calculator --name "Calculator" --workspace "$PWD"
+code-mule run --objective "Create a tested calculator"
+```
+
 The workspace must be a clean Git repository with an initial commit before
 execution because every Task starts from a recorded Git HEAD.
 `run` and `change --apply` are blocking execution commands. Use a second
 terminal in the same directory for `status`, Chat, CHANGE, PAUSE, or STOP.
+
+## Environment doctor
+
+`doctor` is deterministic and local-only. It checks:
+
+- Code Mule version and CLI location;
+- the running Python runtime (3.12);
+- the `git` executable;
+- the `codex` executable, `codex --version`, and `codex app-server --help`
+  (no minimum-version compatibility claim; Codex 0.153.4 remains the
+  real-E2E-tested version);
+- only whether `DEEPSEEK_API_KEY` exists — it never prints the key, calls the
+  API, checks balance, or sends a request; and
+- the current workspace Git repository, HEAD, working-tree cleanliness, and
+  existing Code Mule project state.
+
+Healthy output uses the stable rows:
+
+```text
+DOCTOR
+Code Mule   PASS
+Python      PASS
+Git         PASS
+Codex       PASS
+DeepSeek    CONFIGURED
+Workspace   READY
+```
+
+Problems print the failing row plus the exact fix. `--verbose` adds versions,
+binary locations, repository facts, and the current project status without
+ever printing credentials or raw command output.
 
 ## Default output
 
@@ -111,8 +176,23 @@ identity when applicable:
 .venv/bin/code-mule inspect --verbose
 ```
 
+The preview script prints a non-blocking warning when a requested preview width
+exceeds the current terminal width, because the shell may wrap the output:
+
+```text
+Requested preview width exceeds current terminal width. Output may wrap.
+```
+
 ## Commands
 
+- `doctor`: runs the deterministic local environment and workspace checks
+  described above; it never starts a Worker, never composes a model runtime,
+  and never prints credentials.
+- `start --objective "..."`: preflights the current directory (existing
+  project / dirty / no HEAD / outside Git), then initializes with deterministic
+  defaults and runs the objective. With no existing project and no
+  `DEEPSEEK_API_KEY`, it fails before creating state and prints the exact
+  environment step.
 - `run`: an IDLE project requires `--objective`; a RUNNING project continues
   its active Plan. Other states fail closed.
 - `status`: prints Plan version, task progress, current Task, blockers, and the
@@ -180,7 +260,7 @@ line-oriented, and contains no ANSI or spinner control characters.
 Normal errors identify the failing boundary and give a safe next command.
 Tracebacks remain exclusive to global `--debug` mode.
 
-The current v0.1.1 baseline uses ProjectState schema v11 and was real-E2E
+The current v0.1.1 baseline uses ProjectState schema v12 and was real-E2E
 validated with Codex CLI 0.153.4 (not a minimum-version claim). Historical state
 migrations remain supported, but old Code Mule versions may not read new state;
 back up state before upgrading. See [release notes](releases/v0.1.1.md).
@@ -191,6 +271,10 @@ Only model-dependent commands read `DEEPSEEK_API_KEY`. The optional
 `CODE_MULE_DEEPSEEK_MODEL` defaults to `deepseek-v4-flash`. The DeepSeek client
 uses `DefaultHttpx2Client(trust_env=False)`. `init`, `status`, `diagnose`, `ask`, CHANGE
 submission, `pause`, and `resume` do not require an API key.
+`doctor` reports whether the key is configured without reading its value.
+`start` requires the key before initializing a new project so that a failed
+environment never leaves a half-started project that a later `start` would
+refuse to re-initialize.
 
 ## Exit codes
 
@@ -199,6 +283,7 @@ submission, `pause`, and `resume` do not require an API key.
 - `3`: invalid or unrecoverable project state
 - `4`: human action required
 - `5`: provider or Worker failure
+- `6`: environment check failed (`doctor` found missing or broken prerequisites)
 
 HUMAN_REQUIRED is a fail-closed Human Gate. Use `inspect` and an action-scoped
 decision; neither `run` nor `resume` silently clears it. See

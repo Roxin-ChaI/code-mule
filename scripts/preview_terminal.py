@@ -3,6 +3,7 @@
 import argparse
 from dataclasses import replace
 from datetime import UTC, datetime
+import shutil
 import sys
 
 from code_mule.domain import Project, ProjectStatus
@@ -29,6 +30,12 @@ def main():
     parser.add_argument("--diagnose", action="store_true")
     parser.add_argument("--plain", action="store_true")
     arguments = parser.parse_args()
+    terminal_columns = shutil.get_terminal_size((80, 24)).columns
+    if arguments.width is not None and arguments.width > terminal_columns:
+        print(
+            "Requested preview width exceeds current terminal width. "
+            "Output may wrap."
+        )
     terminal = TerminalDashboard.for_stream(sys.stdout, width=arguments.width)
     if arguments.plain:
         terminal = replace(terminal, interactive=False)

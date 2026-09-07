@@ -10,7 +10,7 @@ Turn one coding objective into a controlled **PLAN → CODE → REVIEW → VERIF
 COMMIT** workflow.
 
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB)
-![Tests 562](https://img.shields.io/badge/tests-562%20passed-2E7D32)
+![Tests 591](https://img.shields.io/badge/tests-591%20passed-2E7D32)
 ![ProjectState v12](https://img.shields.io/badge/ProjectState-v12-6A5ACD)
 
 ## Demo
@@ -115,103 +115,104 @@ not execute, and approval is bound to one specific action.
 
 ## Prerequisites
 
-- Python 3.12
+- Python 3.12 (the installer verifies this for you)
 - Git and a target repository with at least one commit
 - [Codex CLI](https://developers.openai.com/codex/cli) with local authentication
 - A DeepSeek API key for Supervisor calls
 
-Check the local Codex installation before starting:
+After installation, `code-mule doctor` checks all of these and prints exactly
+what is missing. Real E2E has been validated with **Codex CLI 0.153.4**; that is
+a tested version, not a proven minimum version, and `doctor` does not treat an
+older CLI as incompatible.
 
-```bash
-codex --version
-codex app-server --help
-```
+## Quick Start (Boss)
 
-Real E2E has been validated with **Codex CLI 0.153.4**. This is a tested version,
-not a proven minimum version.
+Install once, then work only from your target repository. You never need to
+activate a virtual environment or know where Code Mule lives.
 
-## Quick Start
-
-### 1. Install Code Mule
-
-Install the tool in its own directory:
+### 1. Install Code Mule once
 
 ```bash
 git clone https://github.com/Roxin-ChaI/code-mule.git /path/to/code-mule
 cd /path/to/code-mule
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -e .
+bash scripts/install.sh
+```
+
+The installer creates an isolated application environment at
+`~/.local/share/code-mule/venv` and a stable launcher at
+`~/.local/bin/code-mule`. It never installs into your system Python, never
+requires the repository's `.venv`, and does not change your shell configuration
+without your explicit `--configure-shell` choice.
+
+If `~/.local/bin` is not on `PATH`, the installer prints one line to add. After
+that, open a **new terminal**:
+
+```bash
+command -v code-mule
 code-mule --help
 ```
 
-`/path/to/code-mule` is the tool repository. Keep its virtual environment
-activated, or invoke `/path/to/code-mule/.venv/bin/code-mule` directly.
+### 2. Check the environment
 
-### 2. Prepare the target repository
+```bash
+code-mule doctor
+```
 
-`--workspace` points to a different Git repository that Code Mule will modify:
+Every row must read `PASS`, `CONFIGURED`, or `READY`. If DeepSeek is
+`NOT CONFIGURED`, export the key in your shell (never commit it):
+
+```bash
+export DEEPSEEK_API_KEY="<your-deepseek-api-key>"
+```
+
+`CODE_MULE_DEEPSEEK_MODEL` optionally overrides the default
+`deepseek-v4-flash`. Real Supervisor calls may incur provider charges.
+
+### 3. Start a project in your repository
 
 ```bash
 cd /path/to/my-project
-git status --short
+code-mule start --objective "Create a tested calculator"
 ```
 
-The target must have at least one commit, and the command above must print
-nothing. For a new repository, create a minimal baseline:
+`start` uses the current directory as the workspace, the directory name as the
+project name, and a safe deterministic project id. It initializes
+`.code-mule/project-state.json` and immediately runs the objective.
+
+Your repository must be a Git repository with at least one initial commit and a
+clean working tree. For a brand-new repository:
 
 ```bash
 mkdir -p /path/to/my-project
 cd /path/to/my-project
 git init
 printf "# My Project\n" > README.md
-git add -- README.md
+git add README.md
 git commit -m "chore: initial commit"
 ```
 
-The clean baseline identifies changes produced by each Task. Code Mule never
-automatically stashes, resets, cleans, or overwrites unrelated work.
+`start` never re-initializes an existing project, never runs `git init` for you,
+and never stashes, resets, cleans, or creates commits. Blocked workspaces stop
+with the exact next step.
 
-### 3. Initialize the workspace
+### 4. Return later
 
-Run this inside the target repository, not the Code Mule source repository:
-
-```bash
-code-mule init --project-id my-project --name "My Project" --workspace "$PWD"
-```
-
-State defaults to `.code-mule/project-state.json`. Initialization registers
-`.code-mule/` in the repository-local Git exclude without editing the tracked
-`.gitignore`, so managed state does not contaminate the Task baseline.
-
-### 4. Configure DeepSeek
-
-```bash
-export DEEPSEEK_API_KEY="<your-deepseek-api-key>"
-export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
-```
-
-Do not commit the API key. Real Supervisor calls may incur provider charges.
-
-### 5. Run an objective
-
-```bash
-code-mule run --objective "Create a tested calculator"
-```
-
-### 6. Inspect and control
+From the same project directory in a new terminal:
 
 ```bash
 code-mule status
-code-mule chat
+code-mule diagnose
+code-mule recover
 ```
 
-Commands discover `.code-mule/project-state.json` from the target repository.
+The default state file is `.code-mule/project-state.json` under the current
+directory, so commands discover the project automatically. Initialization
+registers `.code-mule/` in the repository-local Git exclude without editing the
+tracked `.gitignore`, so managed state never contaminates a Task baseline.
 `run` and `change --apply` are blocking; use another terminal for live control.
 
 On an interactive terminal, `status`, `diagnose`, `recover`, and HumanAction
-output use one responsive, scrollback-friendly dashboard. It expands for wide
-terminals and wraps without dropping commands or IDs on narrow terminals:
+output use one responsive, scrollback-friendly dashboard:
 
 ```text
 ┌────────────────────────────────────────────────────────────┐
@@ -227,16 +228,26 @@ terminals and wraps without dropping commands or IDs on narrow terminals:
 
 Pipes, redirected output, CI, and `TERM=dumb` keep the stable plain-text form
 with no ANSI sequences. `NO_COLOR` is supported; meaning never depends on
-colour. Preview the layout without reading project state or calling a model:
+colour.
+
+## Advanced / explicit control
+
+Bosses who prefer explicit commands can initialize exactly the same project:
 
 ```bash
-.venv/bin/python scripts/preview_terminal.py --width 80
+code-mule init --project-id my-project --name "My Project" --workspace "$PWD"
+code-mule run --objective "Create a tested calculator"
 ```
+
+The contributor flow for building Code Mule itself is documented under
+[Contributor / Development Setup](#contributor--development-setup).
 
 ## Boss Controls
 
 | Command | Purpose |
 | --- | --- |
+| `doctor` | Check Code Mule, Python, Git, Codex, DeepSeek, and workspace readiness (local-only) |
+| `start --objective "..."` | Initialize the current Git workspace with defaults and run the first objective |
 | `run --objective "..."` / `run` | Start planning or continue RUNNING work |
 | `status` | Read deterministic Plan and Task progress |
 | `diagnose` | Explain blockers, recoverability, and the next Boss action (read-only) |
@@ -255,6 +266,34 @@ HumanAction commands are action-scoped. `answer` does not start a Worker;
 after it records the response and preserves partial work, a later explicit
 `run` revalidates the baseline and continues the same Task in a fresh session.
 See [Human Resolution](docs/human-resolution.md).
+
+## Contributor / Development Setup
+
+Contributors working on Code Mule itself keep the existing repository-local
+editable install:
+
+```bash
+cd /path/to/code-mule
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -e .
+.venv/bin/code-mule --help
+```
+
+This is intentionally **not** the Boss installation path. The repository `.venv`
+is for development and manual smoke scripts only:
+
+```bash
+.venv/bin/python scripts/preview_terminal.py --width 80
+```
+
+Reinstall a persistent launcher after source changes from this repo:
+
+```bash
+bash scripts/install.sh
+```
+
+The installer refreshes the isolated application environment in place; it never
+deletes an existing environment.
 
 ## When to Use Code Mule
 
@@ -286,7 +325,8 @@ Details: [Execution Recovery](docs/execution-recovery.md),
 
 Current v0.1.1 release-preparation baseline:
 
-- **498 automated tests PASS**;
+- **591 automated tests PASS**, including a real shell restart regression that
+  runs the persistent launcher without the repository `.venv` on `PATH`;
 - `compileall`, `pip check`, and `git diff --check` PASS;
 - real DeepSeek + Codex E2E: Plan v1, 6/6 Tasks, Worker Input → Boss answer
   → fresh-session continuation, one delivery commit per Task, final review
@@ -303,6 +343,8 @@ Release has been created; the v0.1.0 tag and its historical evidence are unchang
 
 - One local Worker only; no distributed or parallel execution and no daemon.
 - No Web UI.
+- No PyPI/Homebrew distribution yet; persistent installation is a repository
+  bootstrap script, with pipx/PyPI/Homebrew as future distribution options.
 - An interrupted Codex turn is not transparently reconnected.
 - Remote and irreversible side effects remain Human Gates.
 - Completed projects cannot currently be reopened with CHANGE; DONE does not
