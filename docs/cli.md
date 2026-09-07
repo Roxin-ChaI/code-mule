@@ -22,9 +22,11 @@ The installer:
 - installs the current package there and creates the stable launcher
   `~/.local/bin/code-mule`;
 - when `~/.local/bin` is missing from `PATH`, automatically detects the shell
-  and appends one managed Code Mule PATH block to the correct rc file:
-  `~/.zshrc` for zsh (honoring `ZDOTDIR`), and `~/.bash_profile` on macOS or
-  `~/.bashrc` elsewhere for bash;
+  and appends one managed Code Mule PATH block to the correct startup file:
+  for zsh, `${ZDOTDIR:-$HOME}/.zprofile` plus a guarded
+  `${ZDOTDIR:-$HOME}/.zshrc` fallback on macOS (login environment plus
+  non-login interactive), or `${ZDOTDIR:-$HOME}/.zshrc` elsewhere; for bash,
+  `~/.bash_profile` on macOS or `~/.bashrc` elsewhere;
 - never installs into system Python, never modifies `/usr/local`, and never
   deletes an existing environment;
 - refreshes an existing Code Mule installation in place (re-run the same
@@ -34,12 +36,16 @@ The installer:
 - never rewrites, deletes, or reorders existing rc content; it only appends a
   `# >>> code-mule >>>` … `# <<< code-mule <<<` managed block and never repeats
   it;
-- creates a one-time backup (for example `~/.zshrc.code-mule.bak`) only when an
-  existing non-empty rc file is about to be modified;
+- creates a one-time backup (for example `~/.zprofile.code-mule.bak` or
+  `~/.zshrc.code-mule.bak`) only when an existing non-empty rc file is about to
+  be modified;
 - fails closed for symlinked or special rc files, prints the manual fallback,
   and still completes the Code Mule installation;
 - refuses to follow symlink rc paths and never sources, evaluates, or runs rc
-  content.
+  content;
+- migrates an older unguarded Code Mule block from `~/.zshrc` to the guarded
+  current block and adds the macOS `~/.zprofile` entry, without touching any
+  user content outside the managed markers.
 
 `--no-deps` installs the local CLI without the `openai` model dependency for
 deterministic/air-gapped environments; local commands such as `--help`,

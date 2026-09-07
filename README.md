@@ -10,7 +10,7 @@ Turn one coding objective into a controlled **PLAN → CODE → REVIEW → VERIF
 COMMIT** workflow.
 
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB)
-![Tests 607](https://img.shields.io/badge/tests-607%20passed-2E7D32)
+![Tests 609](https://img.shields.io/badge/tests-609%20passed-2E7D32)
 ![ProjectState v12](https://img.shields.io/badge/ProjectState-v12-6A5ACD)
 
 ## Demo
@@ -155,10 +155,12 @@ code-mule --help
 Shell configuration is automatic, idempotent, and opt-out-only. Repeat runs
 never duplicate the PATH entry or create a second backup. If an rc file already
 exists and must be changed, the first change is backed up to
-`~/.zshrc.code-mule.bak` (or the matching rc backup name). Contributors who
-prefer no rc changes can install with `bash scripts/install.sh
---no-configure-shell`; that advanced flow prints the manual PATH fallback
-instead.
+`~/.zprofile.code-mule.bak` / `~/.zshrc.code-mule.bak` (or the matching rc
+backup name). On macOS the installer configures the login shell environment
+file first (`~/.zprofile`) and keeps a guarded `~/.zshrc` fallback for
+non-login interactive shells. Contributors who prefer no rc changes can install
+with `bash scripts/install.sh --no-configure-shell`; that advanced flow prints
+the manual PATH fallback instead.
 
 ### 2. Check the environment
 
@@ -334,7 +336,7 @@ Details: [Execution Recovery](docs/execution-recovery.md),
 
 Current v0.1.1 release-preparation baseline:
 
-- **607 automated tests PASS**, including real shell restart regressions that
+- **609 automated tests PASS**, including real shell restart regressions that
   runs the persistent launcher without the repository `.venv` on `PATH`;
 - `compileall`, `pip check`, and `git diff --check` PASS;
 - real DeepSeek + Codex E2E: Plan v1, 6/6 Tasks, Worker Input → Boss answer

@@ -10,7 +10,7 @@
 工作流。
 
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB)
-![Tests 607](https://img.shields.io/badge/tests-607%20passed-2E7D32)
+![Tests 609](https://img.shields.io/badge/tests-609%20passed-2E7D32)
 ![ProjectState v12](https://img.shields.io/badge/ProjectState-v12-6A5ACD)
 
 ## Demo
@@ -149,7 +149,9 @@ code-mule --help
 
 shell PATH 配置默认自动完成、幂等，并可通过 `--no-configure-shell` 显式跳过。
 重复安装不会重复追加 PATH，也不会创建重复 backup；只有首次需要修改已有 rc
-文件时才会创建一次备份（例如 `~/.zshrc.code-mule.bak`）。
+文件时才会创建一次备份（例如 `~/.zprofile.code-mule.bak`）。macOS 上安装器
+优先写入登录 shell 环境文件 `~/.zprofile`，并为非登录交互 zsh 保留受保护的
+`~/.zshrc` fallback。
 
 ### 2. 检查环境
 
@@ -312,7 +314,7 @@ Code Mule 适合需要以下能力的本地软件开发：
 
 当前 v0.1.1 发布准备基线：
 
-- **607 项自动化测试 PASS**，包括不激活仓库 `.venv` 的真实 shell 重启回归测试；
+- **609 项自动化测试 PASS**，包括不激活仓库 `.venv` 的真实 shell 重启回归测试；
 - `compileall`、`pip check` 和 `git diff --check` PASS；
 - 真实 DeepSeek + Codex E2E：Plan v1、6/6 Tasks、Worker Input → Boss answer
   → fresh-session continuation、每个 Task 一个 delivery commit、最终 review
