@@ -21,20 +21,35 @@ The installer:
   environment, separate from any target workspace;
 - installs the current package there and creates the stable launcher
   `~/.local/bin/code-mule`;
+- when `~/.local/bin` is missing from `PATH`, automatically detects the shell
+  and appends one managed Code Mule PATH block to the correct rc file:
+  `~/.zshrc` for zsh (honoring `ZDOTDIR`), and `~/.bash_profile` on macOS or
+  `~/.bashrc` elsewhere for bash;
 - never installs into system Python, never modifies `/usr/local`, and never
   deletes an existing environment;
 - refreshes an existing Code Mule installation in place (re-run the same
   script; `--reinstall` makes the intent explicit);
 - fails closed when `~/.local/bin/code-mule` already belongs to another tool;
 - does not overwrite unrelated executables;
-- does not silently edit `~/.zshrc` or `~/.bashrc`. If
-  `~/.local/bin` is not on `PATH`, it prints the export line. A Boss may run
-  `bash scripts/install.sh --configure-shell` to append that line explicitly.
+- never rewrites, deletes, or reorders existing rc content; it only appends a
+  `# >>> code-mule >>>` … `# <<< code-mule <<<` managed block and never repeats
+  it;
+- creates a one-time backup (for example `~/.zshrc.code-mule.bak`) only when an
+  existing non-empty rc file is about to be modified;
+- fails closed for symlinked or special rc files, prints the manual fallback,
+  and still completes the Code Mule installation;
+- refuses to follow symlink rc paths and never sources, evaluates, or runs rc
+  content.
 
 `--no-deps` installs the local CLI without the `openai` model dependency for
 deterministic/air-gapped environments; local commands such as `--help`,
 `doctor`, `start` preflight, `status`, and `diagnose` still work, while model
 commands explain that dependencies are missing.
+
+`--no-configure-shell` installs the CLI without touching any shell rc file and
+prints the manual PATH export instead. `--configure-shell` is accepted for
+backward compatibility and is equivalent to the default automatic behavior; it
+is no longer part of the recommended flow.
 
 After installation, open a **new terminal** and confirm:
 
@@ -42,6 +57,9 @@ After installation, open a **new terminal** and confirm:
 command -v code-mule
 code-mule --help
 ```
+
+The installer cannot update the already-running parent shell, so new Terminal
+windows (not the one that ran the installer) are the acceptance target.
 
 ## Quick start
 

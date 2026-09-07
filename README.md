@@ -10,7 +10,7 @@ Turn one coding objective into a controlled **PLAN → CODE → REVIEW → VERIF
 COMMIT** workflow.
 
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB)
-![Tests 591](https://img.shields.io/badge/tests-591%20passed-2E7D32)
+![Tests 607](https://img.shields.io/badge/tests-607%20passed-2E7D32)
 ![ProjectState v12](https://img.shields.io/badge/ProjectState-v12-6A5ACD)
 
 ## Demo
@@ -141,16 +141,24 @@ bash scripts/install.sh
 The installer creates an isolated application environment at
 `~/.local/share/code-mule/venv` and a stable launcher at
 `~/.local/bin/code-mule`. It never installs into your system Python, never
-requires the repository's `.venv`, and does not change your shell configuration
-without your explicit `--configure-shell` choice.
+requires the repository's `.venv`, and — when `~/.local/bin` is not already on
+your `PATH` — safely appends one managed Code Mule PATH block to your shell rc
+file so a new terminal can find `code-mule`.
 
-If `~/.local/bin` is not on `PATH`, the installer prints one line to add. After
-that, open a **new terminal**:
+Close and reopen the terminal:
 
 ```bash
 command -v code-mule
 code-mule --help
 ```
+
+Shell configuration is automatic, idempotent, and opt-out-only. Repeat runs
+never duplicate the PATH entry or create a second backup. If an rc file already
+exists and must be changed, the first change is backed up to
+`~/.zshrc.code-mule.bak` (or the matching rc backup name). Contributors who
+prefer no rc changes can install with `bash scripts/install.sh
+--no-configure-shell`; that advanced flow prints the manual PATH fallback
+instead.
 
 ### 2. Check the environment
 
@@ -293,7 +301,8 @@ bash scripts/install.sh
 ```
 
 The installer refreshes the isolated application environment in place; it never
-deletes an existing environment.
+deletes an existing environment. Re-running with default options also refreshes
+the managed PATH block if it is ever removed.
 
 ## When to Use Code Mule
 
@@ -325,7 +334,7 @@ Details: [Execution Recovery](docs/execution-recovery.md),
 
 Current v0.1.1 release-preparation baseline:
 
-- **591 automated tests PASS**, including a real shell restart regression that
+- **607 automated tests PASS**, including real shell restart regressions that
   runs the persistent launcher without the repository `.venv` on `PATH`;
 - `compileall`, `pip check`, and `git diff --check` PASS;
 - real DeepSeek + Codex E2E: Plan v1, 6/6 Tasks, Worker Input → Boss answer

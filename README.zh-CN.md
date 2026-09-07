@@ -10,7 +10,7 @@
 工作流。
 
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB)
-![Tests 591](https://img.shields.io/badge/tests-591%20passed-2E7D32)
+![Tests 607](https://img.shields.io/badge/tests-607%20passed-2E7D32)
 ![ProjectState v12](https://img.shields.io/badge/ProjectState-v12-6A5ACD)
 
 ## Demo
@@ -137,15 +137,19 @@ bash scripts/install.sh
 
 安装器会创建独立应用环境 `~/.local/share/code-mule/venv`，并在
 `~/.local/bin/code-mule` 建立稳定 launcher。它不会安装到系统 Python，不依赖
-仓库 `.venv`，也不会在未经你明确选择 `--configure-shell` 时修改 shell 配置。
+仓库 `.venv`；当 `~/.local/bin` 不在 `PATH` 中时，会自动向正确的 shell rc
+文件追加一段 Code Mule 管理的 PATH 配置，使新终端可以直接使用 `code-mule`。
 
-如果 `~/.local/bin` 不在 PATH 中，安装器会打印一行建议。之后请**新开一个
-终端**：
+关闭并重新打开终端：
 
 ```bash
 command -v code-mule
 code-mule --help
 ```
+
+shell PATH 配置默认自动完成、幂等，并可通过 `--no-configure-shell` 显式跳过。
+重复安装不会重复追加 PATH，也不会创建重复 backup；只有首次需要修改已有 rc
+文件时才会创建一次备份（例如 `~/.zshrc.code-mule.bak`）。
 
 ### 2. 检查环境
 
@@ -252,6 +256,9 @@ python3.12 -m venv .venv
 bash scripts/install.sh
 ```
 
+安装器不会删除已有环境；默认再次执行仍会确保托管 PATH block 存在，若被移除
+会自动补回。
+
 ## Boss 控制命令
 
 | 命令 | 用途 |
@@ -305,7 +312,7 @@ Code Mule 适合需要以下能力的本地软件开发：
 
 当前 v0.1.1 发布准备基线：
 
-- **591 项自动化测试 PASS**，包括不激活仓库 `.venv` 的真实 shell 重启回归测试；
+- **607 项自动化测试 PASS**，包括不激活仓库 `.venv` 的真实 shell 重启回归测试；
 - `compileall`、`pip check` 和 `git diff --check` PASS；
 - 真实 DeepSeek + Codex E2E：Plan v1、6/6 Tasks、Worker Input → Boss answer
   → fresh-session continuation、每个 Task 一个 delivery commit、最终 review
