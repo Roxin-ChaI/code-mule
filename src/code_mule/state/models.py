@@ -13,6 +13,7 @@ from code_mule.domain.models import (
     Plan,
     Project,
     ProjectEvent,
+    ProjectRevision,
     QualityStatus,
     Requirement,
     Task,
@@ -50,6 +51,7 @@ class ProjectState:
     latest_execution_stop: ExecutionStopBoundary | None = None
     latest_safe_point: SafePoint | None = None
     execution_attempts: tuple[ExecutionAttempt, ...] = ()
+    revisions: tuple[ProjectRevision, ...] = ()
 
 
 __all__ = ["ProjectState"]

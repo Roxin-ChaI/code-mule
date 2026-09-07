@@ -12,6 +12,8 @@ from code_mule.domain.enums import (
     PlanStatus,
     ProjectStatus,
     RequirementStatus,
+    RevisionCheckStatus,
+    RevisionStatus,
     SupervisorDecisionType,
     TaskStatus,
     WorkerHumanActionKind,
@@ -27,6 +29,7 @@ from code_mule.domain.models import (
     Plan,
     Project,
     ProjectEvent,
+    ProjectRevision,
     QualityStatus,
     Requirement,
     Task,
@@ -60,7 +63,7 @@ from .models import ProjectState
 from code_mule.domain.worker_verification import WorkerCheckStatus, WorkerCheckType, WorkerVerificationCheck
 
 
-CURRENT_SCHEMA_VERSION = 12
+CURRENT_SCHEMA_VERSION = 13
 
 
 class UnsupportedStateSchema(ValueError):
@@ -102,6 +105,12 @@ def _expect_int(value: object, context: str) -> int:
     if type(value) is not int:
         raise InvalidProjectState(f"{context} must be an integer")
     return cast(int, value)
+
+
+def _expect_optional_int(value: object, context: str) -> int | None:
+    if value is None:
+        return None
+    return _expect_int(value, context)
 
 
 def _expect_bool(value: object, context: str) -> bool:
@@ -181,6 +190,11 @@ def _plan_to_payload(plan: Plan) -> dict[str, object]:
         "requirement_ids": list(plan.requirement_ids),
         "milestone_ids": list(plan.milestone_ids),
         "created_at": plan.created_at.isoformat(),
+        "base_plan_id": plan.base_plan_id,
+        "base_plan_version": plan.base_plan_version,
+        "change_request_id": plan.change_request_id,
+        "revision_number": plan.revision_number,
+        "reused_task_ids": list(plan.reused_task_ids),
     }
 
 
@@ -207,6 +221,8 @@ def _task_to_payload(task: Task) -> dict[str, object]:
         "execution_attempts": task.execution_attempts,
         "created_at": task.created_at.isoformat(),
         "updated_at": task.updated_at.isoformat(),
+        "supersedes_task_id": task.supersedes_task_id,
+        "derived_from_task_ids": list(task.derived_from_task_ids),
     }
 
 
@@ -219,6 +235,10 @@ def _change_request_to_payload(change_request: ChangeRequest) -> dict[str, objec
         "affected_requirement_ids": list(change_request.affected_requirement_ids),
         "created_by": change_request.created_by,
         "created_at": change_request.created_at.isoformat(),
+        "requested_revision": change_request.requested_revision,
+        "base_revision": change_request.base_revision,
+        "base_plan_id": change_request.base_plan_id,
+        "base_plan_version": change_request.base_plan_version,
     }
 
 
@@ -502,6 +522,28 @@ def _execution_attempt_to_payload(attempt: ExecutionAttempt) -> dict[str, object
     }
 
 
+def _project_revision_to_payload(revision: ProjectRevision) -> dict[str, object]:
+    return {
+        "revision_number": revision.revision_number,
+        "started_at": revision.started_at.isoformat(),
+        "lifecycle_status": revision.lifecycle_status.value,
+        "plan_id": revision.plan_id,
+        "plan_version": revision.plan_version,
+        "base_revision": revision.base_revision,
+        "change_request_id": revision.change_request_id,
+        "completed_at": (
+            None
+            if revision.completed_at is None
+            else revision.completed_at.isoformat()
+        ),
+        "baseline_head": revision.baseline_head,
+        "completion_head": revision.completion_head,
+        "verification_status": revision.verification_status.value,
+        "final_review_status": revision.final_review_status.value,
+        "verification_result_id": revision.verification_result_id,
+    }
+
+
 def serialize_project_state(state: ProjectState) -> dict[str, object]:
     """Convert a complete snapshot to a JSON-compatible object."""
 
@@ -567,6 +609,9 @@ def serialize_project_state(state: ProjectState) -> dict[str, object]:
         ),
         "execution_attempts": [
             _execution_attempt_to_payload(item) for item in state.execution_attempts
+        ],
+        "revisions": [
+            _project_revision_to_payload(item) for item in state.revisions
         ],
     }
 
@@ -662,6 +707,25 @@ def _plan_from_payload(value: object) -> Plan:
         created_at=_datetime(
             _field(payload, "created_at", "plan"), "plan.created_at"
         ),
+        base_plan_id=_expect_optional_str(
+            _field(payload, "base_plan_id", "plan"), "plan.base_plan_id"
+        ),
+        base_plan_version=_expect_optional_int(
+            _field(payload, "base_plan_version", "plan"),
+            "plan.base_plan_version",
+        ),
+        change_request_id=_expect_optional_str(
+            _field(payload, "change_request_id", "plan"),
+            "plan.change_request_id",
+        ),
+        revision_number=_expect_optional_int(
+            _field(payload, "revision_number", "plan"),
+            "plan.revision_number",
+        ),
+        reused_task_ids=_strings(
+            _field(payload, "reused_task_ids", "plan"),
+            "plan.reused_task_ids",
+        ),
     )
 
 
@@ -718,6 +782,14 @@ def _task_from_payload(value: object) -> Task:
         requirement_ids=_strings(
             _field(payload, "requirement_ids", "task"),
             "task.requirement_ids",
+        ),
+        supersedes_task_id=_expect_optional_str(
+            _field(payload, "supersedes_task_id", "task"),
+            "task.supersedes_task_id",
+        ),
+        derived_from_task_ids=_strings(
+            _field(payload, "derived_from_task_ids", "task"),
+            "task.derived_from_task_ids",
         ),
     )
 
@@ -916,6 +988,177 @@ def _migrate_v11_to_v12(root: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _migrate_v12_to_v13(root: dict[str, object]) -> dict[str, object]:
+    """Add versioned revision history without fabricating completion evidence."""
+
+    migrated = dict(root)
+    plans: list[dict[str, object]] = []
+    for entity in _expect_list(
+        _field(root, "plans", "project state"), "plans"
+    ):
+        plan = dict(_expect_object(entity, "plan"))
+        plan.setdefault("base_plan_id", None)
+        plan.setdefault("base_plan_version", None)
+        plan.setdefault("change_request_id", None)
+        plan.setdefault("revision_number", None)
+        plan.setdefault("reused_task_ids", [])
+        plans.append(plan)
+    migrated["plans"] = plans
+    tasks: list[dict[str, object]] = []
+    for entity in _expect_list(
+        _field(root, "tasks", "project state"), "tasks"
+    ):
+        task = dict(_expect_object(entity, "task"))
+        task.setdefault("supersedes_task_id", None)
+        task.setdefault("derived_from_task_ids", [])
+        tasks.append(task)
+    migrated["tasks"] = tasks
+    changes: list[dict[str, object]] = []
+    for entity in _expect_list(
+        _field(root, "change_requests", "project state"),
+        "change_requests",
+    ):
+        change = dict(_expect_object(entity, "change_request"))
+        change.setdefault("requested_revision", None)
+        change.setdefault("base_revision", None)
+        change.setdefault("base_plan_id", None)
+        change.setdefault("base_plan_version", None)
+        changes.append(change)
+    migrated["change_requests"] = changes
+
+    project = _expect_object(
+        _field(root, "project", "project state"), "project"
+    )
+    status_value = _expect_str(
+        _field(project, "status", "project"), "project.status"
+    )
+    status = ProjectStatus(status_value)
+    active_plan_id = _expect_optional_str(
+        _field(project, "active_plan_id", "project"),
+        "project.active_plan_id",
+    )
+    active_plan = next(
+        (
+            plan
+            for plan in _expect_list(
+                _field(root, "plans", "project state"), "plans"
+            )
+            if _expect_object(plan, "plan").get("id") == active_plan_id
+        ),
+        None,
+    )
+    plan_version = (
+        None
+        if active_plan is None
+        else _expect_object(active_plan, "plan").get("version")
+    )
+    revisions: list[dict[str, object]] = []
+    if status is not ProjectStatus.IDLE:
+        started_at = _expect_str(
+            _field(project, "created_at", "project"), "project.created_at"
+        )
+        completed_at = None
+        lifecycle = RevisionStatus.IN_PROGRESS.value
+        verification = RevisionCheckStatus.NOT_RUN.value
+        final_review = RevisionCheckStatus.NOT_RUN.value
+        completion_head = None
+        if status is ProjectStatus.DONE:
+            lifecycle = RevisionStatus.COMPLETED.value
+            completed_at = _expect_str(
+                _field(project, "updated_at", "project"),
+                "project.updated_at",
+            )
+            verification, final_review = _legacy_completion_evidence(
+                root, active_plan_id
+            )
+            completion_head = _legacy_completion_head(root)
+        revisions.append(
+            {
+                "revision_number": 1,
+                "started_at": started_at,
+                "lifecycle_status": lifecycle,
+                "plan_id": active_plan_id,
+                "plan_version": plan_version,
+                "base_revision": None,
+                "change_request_id": None,
+                "completed_at": completed_at,
+                "baseline_head": None,
+                "completion_head": completion_head,
+                "verification_status": verification,
+                "final_review_status": final_review,
+                "verification_result_id": None,
+            }
+        )
+    migrated["revisions"] = revisions
+    migrated["schema_version"] = 13
+    return migrated
+
+
+def _legacy_completion_evidence(
+    root: dict[str, object], active_plan_id: str | None
+) -> tuple[str, str]:
+    results = _expect_list(
+        _field(root, "project_verification_results", "project state"),
+        "project_verification_results",
+    )
+    matching = tuple(
+        result
+        for result in results
+        if _expect_object(result, "project_verification_result").get("plan_id")
+        == active_plan_id
+    )
+    if not matching:
+        return RevisionCheckStatus.UNKNOWN.value, RevisionCheckStatus.UNKNOWN.value
+    result = matching[-1]
+    payload = _expect_object(result, "project_verification_result")
+    decision = payload.get("final_review_decision")
+    checks = _expect_list(
+        _field(payload, "checks", "project_verification_result"),
+        "project_verification_result.checks",
+    )
+    all_passed = checks and all(
+        not _expect_object(check, "project_verification_check").get("required")
+        or _expect_object(check, "project_verification_check").get("status")
+        == "pass"
+        for check in checks
+    )
+    approved = all_passed and decision == "approve"
+    return (
+        (
+            RevisionCheckStatus.PASS.value
+            if approved
+            else RevisionCheckStatus.UNKNOWN.value
+        ),
+        (
+            RevisionCheckStatus.PASS.value
+            if approved
+            else RevisionCheckStatus.UNKNOWN.value
+        ),
+    )
+
+
+def _legacy_completion_head(root: dict[str, object]) -> str | None:
+    stop = _field(root, "latest_execution_stop", "project state")
+    if stop is not None:
+        head = _expect_object(stop, "execution_stop_boundary").get("head_sha")
+        if isinstance(head, str) and head:
+            return head
+    safe = _field(root, "latest_safe_point", "project state")
+    if safe is not None:
+        head = _expect_object(safe, "safe_point").get("head_sha")
+        if isinstance(head, str) and head:
+            return head
+    commits = _expect_list(
+        _field(root, "git_commit_results", "project state"),
+        "git_commit_results",
+    )
+    if commits:
+        head = _expect_object(commits[-1], "git_commit_result").get("commit_sha")
+        if isinstance(head, str) and head:
+            return head
+    return None
+
+
 def _change_request_from_payload(value: object) -> ChangeRequest:
     payload = _expect_object(value, "change_request")
     return ChangeRequest(
@@ -945,6 +1188,22 @@ def _change_request_from_payload(value: object) -> ChangeRequest:
         created_at=_datetime(
             _field(payload, "created_at", "change_request"),
             "change_request.created_at",
+        ),
+        requested_revision=_expect_optional_int(
+            _field(payload, "requested_revision", "change_request"),
+            "change_request.requested_revision",
+        ),
+        base_revision=_expect_optional_int(
+            _field(payload, "base_revision", "change_request"),
+            "change_request.base_revision",
+        ),
+        base_plan_id=_expect_optional_str(
+            _field(payload, "base_plan_id", "change_request"),
+            "change_request.base_plan_id",
+        ),
+        base_plan_version=_expect_optional_int(
+            _field(payload, "base_plan_version", "change_request"),
+            "change_request.base_plan_version",
         ),
     )
 
@@ -1638,6 +1897,72 @@ def _execution_attempt_from_payload(value: object) -> ExecutionAttempt:
     )
 
 
+def _project_revision_from_payload(value: object) -> ProjectRevision:
+    payload = _expect_object(value, "project_revision")
+    completed_at = _field(payload, "completed_at", "project_revision")
+    return ProjectRevision(
+        revision_number=_expect_int(
+            _field(payload, "revision_number", "project_revision"),
+            "project_revision.revision_number",
+        ),
+        started_at=_datetime(
+            _field(payload, "started_at", "project_revision"),
+            "project_revision.started_at",
+        ),
+        lifecycle_status=RevisionStatus(
+            _expect_str(
+                _field(payload, "lifecycle_status", "project_revision"),
+                "project_revision.lifecycle_status",
+            )
+        ),
+        plan_id=_expect_optional_str(
+            _field(payload, "plan_id", "project_revision"),
+            "project_revision.plan_id",
+        ),
+        plan_version=_expect_optional_int(
+            _field(payload, "plan_version", "project_revision"),
+            "project_revision.plan_version",
+        ),
+        base_revision=_expect_optional_int(
+            _field(payload, "base_revision", "project_revision"),
+            "project_revision.base_revision",
+        ),
+        change_request_id=_expect_optional_str(
+            _field(payload, "change_request_id", "project_revision"),
+            "project_revision.change_request_id",
+        ),
+        completed_at=(
+            None
+            if completed_at is None
+            else _datetime(completed_at, "project_revision.completed_at")
+        ),
+        baseline_head=_expect_optional_str(
+            _field(payload, "baseline_head", "project_revision"),
+            "project_revision.baseline_head",
+        ),
+        completion_head=_expect_optional_str(
+            _field(payload, "completion_head", "project_revision"),
+            "project_revision.completion_head",
+        ),
+        verification_status=RevisionCheckStatus(
+            _expect_str(
+                _field(payload, "verification_status", "project_revision"),
+                "project_revision.verification_status",
+            )
+        ),
+        final_review_status=RevisionCheckStatus(
+            _expect_str(
+                _field(payload, "final_review_status", "project_revision"),
+                "project_revision.final_review_status",
+            )
+        ),
+        verification_result_id=_expect_optional_str(
+            _field(payload, "verification_result_id", "project_revision"),
+            "project_revision.verification_result_id",
+        ),
+    )
+
+
 def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     """Restore a complete snapshot, rejecting unknown or corrupt payloads."""
 
@@ -1647,7 +1972,21 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     schema_version = root["schema_version"]
     if type(schema_version) is not int:
         raise UnsupportedStateSchema("schema_version must be an integer")
-    if schema_version not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, CURRENT_SCHEMA_VERSION}:
+    if schema_version not in {
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        CURRENT_SCHEMA_VERSION,
+    }:
         raise UnsupportedStateSchema(
             f"unsupported schema_version: {schema_version!r}"
         )
@@ -1683,6 +2022,9 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
         schema_version = 11
     if schema_version == 11:
         root = _migrate_v11_to_v12(root)
+        schema_version = 12
+    if schema_version == 12:
+        root = _migrate_v12_to_v13(root)
 
     try:
         quality_value = _field(root, "quality_status", "project state")
@@ -1801,6 +2143,11 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
                 _field(root, "execution_attempts", "project state"),
                 "execution_attempts",
                 _execution_attempt_from_payload,
+            ),
+            revisions=_tuple_of(
+                _field(root, "revisions", "project state"),
+                "revisions",
+                _project_revision_from_payload,
             ),
         )
     except InvalidProjectState:

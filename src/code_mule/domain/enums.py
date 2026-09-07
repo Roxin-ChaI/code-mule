@@ -60,6 +60,20 @@ class ChangeRequestStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class RevisionStatus(StrEnum):
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class RevisionCheckStatus(StrEnum):
+    NOT_RUN = "not_run"
+    RUNNING = "running"
+    PASS = "pass"
+    FAIL = "fail"
+    UNKNOWN = "unknown"
+
+
 class HumanActionCategory(StrEnum):
     WORKER_APPROVAL = "worker_approval"
     WORKER_INPUT = "worker_input"
@@ -105,6 +119,8 @@ __all__ = [
     "PlanStatus",
     "ProjectStatus",
     "RequirementStatus",
+    "RevisionCheckStatus",
+    "RevisionStatus",
     "SupervisorDecisionType",
     "TaskStatus",
 ]

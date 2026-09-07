@@ -12,6 +12,8 @@ from .enums import (
     PlanStatus,
     ProjectStatus,
     RequirementStatus,
+    RevisionCheckStatus,
+    RevisionStatus,
     SupervisorDecisionType,
     TaskStatus,
     WorkerHumanActionKind,
@@ -56,6 +58,8 @@ class Task:
     created_at: datetime
     updated_at: datetime
     requirement_ids: tuple[str, ...] = ()
+    supersedes_task_id: str | None = None
+    derived_from_task_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _require_non_empty(self.id, "id")
@@ -63,6 +67,16 @@ class Task:
         _require_non_empty(self.title, "title")
         if self.execution_attempts < 0:
             raise ValueError("execution_attempts must be non-negative")
+        if self.supersedes_task_id == "":
+            raise ValueError("supersedes_task_id must not be empty")
+        if self.supersedes_task_id == self.id:
+            raise ValueError("task cannot supersede itself")
+        if self.id in self.derived_from_task_ids:
+            raise ValueError("task cannot derive from itself")
+        if self.supersedes_task_id is not None and (
+            self.supersedes_task_id in self.derived_from_task_ids
+        ):
+            raise ValueError("supersedes_task_id conflicts with derived lineage")
 
 
 @dataclass
@@ -83,10 +97,25 @@ class Plan:
     requirement_ids: tuple[str, ...]
     milestone_ids: tuple[str, ...]
     created_at: datetime
+    base_plan_id: str | None = None
+    base_plan_version: int | None = None
+    change_request_id: str | None = None
+    revision_number: int | None = None
+    reused_task_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.version < 1:
             raise ValueError("version must be at least 1")
+        if (self.base_plan_id is None) != (self.base_plan_version is None):
+            raise ValueError(
+                "base_plan_id and base_plan_version must be provided together"
+            )
+        if self.base_plan_version is not None and self.base_plan_version < 1:
+            raise ValueError("base_plan_version must be at least 1")
+        if self.revision_number is not None and self.revision_number < 1:
+            raise ValueError("revision_number must be at least 1")
+        if self.base_plan_id == "":
+            raise ValueError("base_plan_id must not be empty")
 
 
 @dataclass
@@ -119,6 +148,61 @@ class ChangeRequest:
     affected_requirement_ids: tuple[str, ...]
     created_by: str
     created_at: datetime
+    requested_revision: int | None = None
+    base_revision: int | None = None
+    base_plan_id: str | None = None
+    base_plan_version: int | None = None
+
+    def __post_init__(self) -> None:
+        _require_non_empty(self.id, "id")
+        _require_non_empty(self.project_id, "project_id")
+        _require_non_empty(self.description, "description")
+        _require_non_empty(self.created_by, "created_by")
+        if self.requested_revision is not None and self.requested_revision < 1:
+            raise ValueError("requested_revision must be at least 1")
+        if self.base_revision is not None and self.base_revision < 1:
+            raise ValueError("base_revision must be at least 1")
+        if self.base_plan_version is not None and self.base_plan_version < 1:
+            raise ValueError("base_plan_version must be at least 1")
+        if (self.base_plan_id is None) != (self.base_plan_version is None):
+            raise ValueError(
+                "base_plan_id and base_plan_version must be provided together"
+            )
+
+
+@dataclass
+class ProjectRevision:
+    """One immutable historical execution revision of a project."""
+
+    revision_number: int
+    started_at: datetime
+    lifecycle_status: RevisionStatus = RevisionStatus.IN_PROGRESS
+    plan_id: str | None = None
+    plan_version: int | None = None
+    base_revision: int | None = None
+    change_request_id: str | None = None
+    completed_at: datetime | None = None
+    baseline_head: str | None = None
+    completion_head: str | None = None
+    verification_status: RevisionCheckStatus = RevisionCheckStatus.NOT_RUN
+    final_review_status: RevisionCheckStatus = RevisionCheckStatus.NOT_RUN
+    verification_result_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.revision_number < 1:
+            raise ValueError("revision_number must be at least 1")
+        if self.plan_version is not None and self.plan_version < 1:
+            raise ValueError("plan_version must be at least 1")
+        if self.base_revision is not None and self.base_revision < 1:
+            raise ValueError("base_revision must be at least 1")
+        if self.plan_id == "":
+            raise ValueError("plan_id must not be empty")
+        if self.change_request_id == "":
+            raise ValueError("change_request_id must not be empty")
+        if self.baseline_head == "" or self.completion_head == "":
+            raise ValueError("Git head must not be empty")
+        if self.completed_at is not None and self.completed_at < self.started_at:
+            raise ValueError("completed_at cannot precede started_at")
 
 
 @dataclass
@@ -331,6 +415,7 @@ __all__ = [
     "Plan",
     "Project",
     "ProjectEvent",
+    "ProjectRevision",
     "QualityStatus",
     "Requirement",
     "Task",
