@@ -102,7 +102,7 @@ class DashboardPresentationTests(unittest.TestCase):
         self.assertIn("DeepSeek    Failed", output)
         self.assertIn("! Supervisor review failed", output)
 
-    def test_narrow_terminal_truncates_every_line_safely(self):
+    def test_narrow_terminal_wraps_instead_of_truncating(self):
         narrow = replace(
             snapshot(),
             current_task_title="A very long task title that cannot fit in a narrow terminal",
@@ -110,7 +110,8 @@ class DashboardPresentationTests(unittest.TestCase):
         )
         lines = render(narrow, width=24)
         self.assertTrue(all(len(line) <= 24 for line in lines))
-        self.assertTrue(any(line.endswith("…") for line in lines))
+        self.assertNotIn("…", "\n".join(lines))
+        self.assertIn("terminal", "\n".join(lines))
 
     def test_ascii_fallback_has_no_unicode_symbols(self):
         output = "\n".join(render(snapshot(), ascii_only=True))

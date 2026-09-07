@@ -14,10 +14,12 @@ from code_mule.state.models import ProjectState
 
 from .models import human_action_view, project_view
 from .labels import humanize_identifier, status_label
+from .terminal import TerminalDashboard
+from .panels import project_dashboard, diagnosis_dashboard, human_dashboard
 
 
 def render_project_diagnosis(
-    diagnosis: ProjectDiagnosis, *, verbose: bool = False
+    diagnosis: ProjectDiagnosis, *, verbose: bool = False, terminal: TerminalDashboard | None = None
 ) -> tuple[str, ...]:
     recoverability = {
         DiagnosisRecoverability.RECOVERABLE: "Yes",
@@ -88,7 +90,9 @@ def render_project_diagnosis(
         )
         if diagnosis.worker_input_question is not None:
             lines += (f"worker_input_question: {diagnosis.worker_input_question}",)
-    return lines
+    if terminal is not None and terminal.interactive:
+        return diagnosis_dashboard(diagnosis, terminal, lines, verbose=verbose)
+    return lines if terminal is None else terminal.legacy(lines)
 
 
 def render_project(
@@ -97,6 +101,7 @@ def render_project(
     verbose: bool = False,
     heading: str = "PROJECT",
     execution_stop_reason: str | None = None,
+    terminal: TerminalDashboard | None = None,
 ) -> tuple[str, ...]:
     view = project_view(state)
     lines = (
@@ -180,7 +185,9 @@ def render_project(
                 else verification.final_review_decision.value
             ),
         )
-    return lines
+    if terminal is not None and terminal.interactive:
+        return project_dashboard(state, terminal, lines, verbose=verbose)
+    return lines if terminal is None else terminal.legacy(lines)
 
 
 def render_change_requested(
@@ -215,6 +222,7 @@ def render_change_applied(
     *,
     verbose: bool = False,
     execution_stop_reason: str | None = None,
+    terminal: TerminalDashboard | None = None,
 ) -> tuple[str, ...]:
     old = project_view(before)
     new = project_view(after)
@@ -226,17 +234,21 @@ def render_change_applied(
         f"✓ Plan v{new.plan_version or '—'} activated",
         "",
         "Execution resumed.",
-    ) + render_project(
+    )
+    if terminal is not None:
+        lines = terminal.legacy(lines)
+    return lines + render_project(
         after,
         verbose=verbose,
         heading="PROJECT",
         execution_stop_reason=execution_stop_reason,
+        terminal=terminal,
     )
-    return lines
 
 
 def render_human_action(
-    action: HumanAction, *, verbose: bool = False, state: ProjectState | None = None
+    action: HumanAction, *, verbose: bool = False, state: ProjectState | None = None,
+    terminal: TerminalDashboard | None = None,
 ) -> tuple[str, ...]:
     view = human_action_view(action)
     lines = (
@@ -306,7 +318,9 @@ def render_human_action(
             )
         if state is not None:
             lines += _render_worker_failure(state, action)
-    return lines
+    if terminal is not None and terminal.interactive:
+        return human_dashboard(action, state, terminal, lines, verbose=verbose)
+    return lines if terminal is None else terminal.legacy(lines)
 
 
 def _render_verification_failure(state: ProjectState, action: HumanAction, *, verbose: bool) -> tuple[str, ...]:

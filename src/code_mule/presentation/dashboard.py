@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from code_mule.progress.contracts import ProgressEvent, ProgressSnapshot
 
 from .labels import decision_label, humanize_identifier, status_label
+from .terminal import TerminalDashboard, wrap_cells
 
 
 _COMPLETED_EVENTS = frozenset(
@@ -52,9 +53,9 @@ def render_dashboard(
     width: int,
     ascii_only: bool,
 ) -> list[str]:
-    width = max(24, width)
+    width = max(12, width)
     dash = "-" if ascii_only else "─"
-    separator = dash * min(width, 48)
+    separator = dash * max(2, width - 2)
     empty = "-" if ascii_only else "—"
     worker = humanize_identifier(snapshot.worker_status)
     supervisor = _supervisor_label(snapshot.supervisor_status)
@@ -107,19 +108,21 @@ def render_dashboard(
         if snapshot.project_status == "human_required"
         else ["", "No action required."]
     )
-    return [_fit(line, width=width, ascii_only=ascii_only) for line in lines]
+    terminal = TerminalDashboard(width, not ascii_only, not ascii_only)
+    if ascii_only:
+        return [part for line in lines for part in wrap_cells(line, width)]
+    return list(terminal.legacy(tuple(lines)))
 
 
 def _progress(snapshot: ProgressSnapshot, *, width: int, ascii_only: bool) -> str:
     if snapshot.project_status in {"planning", "replanning"} and snapshot.total_tasks == 0:
         return status_label(snapshot.project_status)
-    bar_width = 8 if width < 48 else 16
-    filled = int(snapshot.percentage / 100 * bar_width)
     if ascii_only:
+        bar_width = max(4, min(32, width - 30))
+        filled = max(0, min(bar_width, int(snapshot.percentage / 100 * bar_width)))
         bar = "#" * filled + "-" * (bar_width - filled)
-    else:
-        bar = "█" * filled + "░" * (bar_width - filled)
-    return f"{bar}  {snapshot.completed_tasks} / {snapshot.total_tasks}"
+        return f"{bar}  {snapshot.completed_tasks} / {snapshot.total_tasks}"
+    return TerminalDashboard(width, True).progress(snapshot.completed_tasks, snapshot.total_tasks)
 
 
 def _task_line(
@@ -159,13 +162,6 @@ def _recent_line(event: ProgressEvent, *, ascii_only: bool) -> str:
         symbol = "·" if not ascii_only else "-"
     message = event.message or humanize_identifier(event.type.value)
     return f"{symbol} {message}"
-
-
-def _fit(value: str, *, width: int, ascii_only: bool) -> str:
-    if len(value) <= width:
-        return value
-    placeholder = "..." if ascii_only else "…"
-    return value[: max(0, width - len(placeholder))] + placeholder
 
 
 __all__ = ["render_dashboard"]

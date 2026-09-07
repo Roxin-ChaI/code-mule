@@ -21,6 +21,7 @@ from .contracts import (
     InvalidCliProjectState,
 )
 from .parser import build_parser
+from code_mule.presentation.terminal import TerminalDashboard, DashboardSection
 
 
 class BossCliCommands(Protocol):
@@ -139,6 +140,17 @@ def _print_error(error: CliError, stream: TextIO) -> None:
     else:
         title = "COMMAND ERROR"
         next_command = "code-mule --help"
+    terminal = TerminalDashboard.for_stream(stream)
+    if terminal.interactive:
+        if isinstance(error, CliRecoveryRequired):
+            title = "RECOVERY BLOCKED"
+        for line in terminal.render((DashboardSection(title, (
+            "Why            " + error.public_message,
+            "Risk           Safety requirements have not been satisfied.",
+            "No unsafe operation was performed.",
+            "", "Next           " + next_command)),)):
+            print(line, file=stream)
+        return
     print(title, file=stream)
     print(file=stream)
     print(error.public_message, file=stream)
@@ -197,7 +209,11 @@ def main(
             )
         return int(CliExitCode.PROVIDER_OR_WORKER_FAILURE)
 
-    for line in result.output:
+    lines = result.output
+    terminal = TerminalDashboard.for_stream(output)
+    if not any(line.startswith("┌") for line in lines):
+        lines = terminal.legacy(lines)
+    for line in lines:
         print(line, file=output)
     return int(result.exit_code)
 

@@ -12,6 +12,8 @@ import time
 from typing import TextIO
 
 from code_mule.presentation.dashboard import render_dashboard
+from code_mule.presentation.terminal import TerminalDashboard, wrap_cells, safe_text
+from code_mule.presentation.labels import humanize_identifier
 
 from .contracts import ProgressEvent, ProgressEventType, ProgressSnapshot
 
@@ -43,7 +45,7 @@ class ConsoleProgressRenderer:
         self._ascii_only = (
             _needs_ascii(self._stream) if ascii_only is None else ascii_only
         )
-        self._tty = bool(self._stream.isatty())
+        self._tty = TerminalDashboard.for_stream(self._stream).interactive and not self._ascii_only
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -88,8 +90,6 @@ class ConsoleProgressRenderer:
             return self
         self._started = True
         if self._tty:
-            self._stream.write("\x1b[?25l")
-            self._stream.flush()
             self._thread = threading.Thread(
                 target=self._render_loop,
                 name="code-mule-progress-renderer",
@@ -101,12 +101,26 @@ class ConsoleProgressRenderer:
     def emit(self, event: ProgressEvent) -> None:
         with self._lock:
             self._apply(event)
-            if not self._tty:
+            if self._tty:
+                message = event.message or humanize_identifier(event.type.value)
+                marker = "→"
+                if event.type in {ProgressEventType.WORKER_COMPLETED, ProgressEventType.TASK_COMPLETED, ProgressEventType.GIT_COMMITTED}:
+                    marker = "✓"
+                elif event.type in {ProgressEventType.WORKER_FAILED, ProgressEventType.SUPERVISOR_FAILED, ProgressEventType.GIT_DELIVERY_FAILED}:
+                    marker = "!"
+                if event.type in {ProgressEventType.HUMAN_GATE, ProgressEventType.TASK_HUMAN_REQUIRED}:
+                    marker, message = "!", "ACTION REQUIRED · " + message
+                elapsed = _elapsed(self._monotonic(), self._project_started_mono)
+                for line in wrap_cells(f"{marker} {elapsed} · {message}", self._terminal_width()):
+                    self._stream.write(line + "\n")
+                self._stream.flush()
+            else:
                 task = f" {event.task_id}" if event.task_id else ""
                 message = f" — {event.message}" if event.message else ""
-                self._stream.write(
-                    f"[{event.timestamp:%H:%M:%S}] {event.type.value}{task}{message}\n"
-                )
+                line = safe_text(f"[{event.timestamp:%H:%M:%S}] {event.type.value}{task}{message}")
+                if self._ascii_only:
+                    line = line.encode("ascii", "backslashreplace").decode("ascii")
+                self._stream.write(line + "\n")
                 self._stream.flush()
 
     def close(self) -> None:
@@ -117,11 +131,6 @@ class ConsoleProgressRenderer:
         thread = self._thread
         if thread is not None:
             thread.join(timeout=max(1.0, self._refresh_interval * 4))
-        if self._tty:
-            with self._lock:
-                self._draw_locked(final=True)
-            self._stream.write("\x1b[?25h")
-            self._stream.flush()
         self._thread = None
 
     def __enter__(self) -> ConsoleProgressRenderer:
@@ -131,9 +140,12 @@ class ConsoleProgressRenderer:
         self.close()
 
     def _render_loop(self) -> None:
-        while not self._stop.wait(self._refresh_interval):
+        while not self._stop.wait(max(15.0, self._refresh_interval)):
             with self._lock:
-                self._draw_locked(final=False)
+                if self._stage_started_mono is not None:
+                    elapsed = _elapsed(self._monotonic(), self._stage_started_mono)
+                    self._stream.write(f"… Waiting for current activity · {elapsed}\n")
+                    self._stream.flush()
 
     def _apply(self, event: ProgressEvent) -> None:
         snapshot = self._snapshot
@@ -338,16 +350,6 @@ class ConsoleProgressRenderer:
         }:
             updates["project_status"] = "human_required"
         self._snapshot = replace(snapshot, **updates)
-
-    def _draw_locked(self, *, final: bool) -> None:
-        lines = self._dashboard_lines(final=final)
-        if self._last_line_count:
-            self._stream.write(f"\x1b[{self._last_line_count}F")
-        for line in lines:
-            self._stream.write(f"\x1b[2K{line}\n")
-        self._stream.flush()
-        self._last_line_count = len(lines)
-        self._frame += 1
 
     def _dashboard_lines(self, *, final: bool) -> list[str]:
         snapshot = self._snapshot

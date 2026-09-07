@@ -130,6 +130,8 @@ class TerminalDashboard:
 
     def legacy(self, lines: tuple[str, ...]) -> tuple[str, ...]:
         """Group existing presentation headings; never interpret runtime outcomes."""
+        if not lines:
+            return ()
         if not self.interactive:
             if self.unicode:
                 return lines

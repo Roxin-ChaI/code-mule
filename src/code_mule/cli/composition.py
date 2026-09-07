@@ -68,6 +68,8 @@ from code_mule.presentation import (
     render_project_cancellation_requested,
     status_label,
 )
+from code_mule.presentation.terminal import TerminalDashboard
+from code_mule.presentation.panels import recovery_dashboard
 from code_mule.replanning import (
     ChangeExecutionService,
     ChangeReplanningRequest,
@@ -208,7 +210,7 @@ class ProductionCliComposition:
         self._state_file.parent.mkdir(parents=True, exist_ok=True)
         state = _empty_state(project_id, name, resolved_workspace)
         self._store.save(state)
-        lines = render_project(state, verbose=verbose, heading="PROJECT INITIALIZED")
+        lines = render_project(state, verbose=verbose, heading="PROJECT INITIALIZED", terminal=TerminalDashboard.for_stream(self._stdout))
         lines += ("", f"Workspace   {resolved_workspace}",)
         if verbose:
             lines += (f"state_file: {self._state_file}",)
@@ -266,14 +268,14 @@ class ProductionCliComposition:
     def status(self, verbose: bool = False) -> CliCommandResult:
         state = self._load()
         return CliCommandResult(
-            CliExitCode.SUCCESS, render_project(state, verbose=verbose)
+            CliExitCode.SUCCESS, render_project(state, verbose=verbose, terminal=TerminalDashboard.for_stream(self._stdout))
         )
 
     def diagnose(self, verbose: bool = False) -> CliCommandResult:
         diagnosis = self._diagnosis_service.diagnose(self._load())
         return CliCommandResult(
             CliExitCode.SUCCESS,
-            render_project_diagnosis(diagnosis, verbose=verbose),
+            render_project_diagnosis(diagnosis, verbose=verbose, terminal=TerminalDashboard.for_stream(self._stdout)),
         )
 
     def ask(self, question: str, verbose: bool = False) -> CliCommandResult:
@@ -284,7 +286,7 @@ class ProductionCliComposition:
         return CliCommandResult(
             CliExitCode.SUCCESS,
             ("PROJECT QUERY", f"Question    {question}", "")
-            + render_project(state, verbose=verbose, heading="ANSWER"),
+            + render_project(state, verbose=verbose, heading="ANSWER", terminal=TerminalDashboard.for_stream(self._stdout)),
         )
 
     def change(self, request: str, verbose: bool = False) -> CliCommandResult:
@@ -339,6 +341,7 @@ class ProductionCliComposition:
         lines = render_change_applied(
             state,
             final,
+            terminal=TerminalDashboard.for_stream(self._stdout),
             verbose=verbose,
             execution_stop_reason=stop_value,
         )
@@ -363,7 +366,7 @@ class ProductionCliComposition:
         return CliCommandResult(
             CliExitCode.SUCCESS,
             ("PROJECT PAUSED", result.message, "")
-            + render_project(self._load(), verbose=verbose),
+            + render_project(self._load(), verbose=verbose, terminal=TerminalDashboard.for_stream(self._stdout)),
         )
 
     def resume(self, verbose: bool = False) -> CliCommandResult:
@@ -383,7 +386,7 @@ class ProductionCliComposition:
         return CliCommandResult(
             CliExitCode.SUCCESS,
             ("EXECUTION RESUMED", result.message, "")
-            + render_project(self._load(), verbose=verbose),
+            + render_project(self._load(), verbose=verbose, terminal=TerminalDashboard.for_stream(self._stdout)),
         )
 
     def recover(self, verbose: bool = False) -> CliCommandResult:
@@ -403,6 +406,11 @@ class ProductionCliComposition:
                     raise CliRecoveryRequired(str(error)) from error
                 if not plan.automatic_resume_allowed:
                     raise CliRecoveryRequired(plan.reason)
+                terminal = TerminalDashboard.for_stream(self._stdout)
+                if terminal.interactive:
+                    for line in recovery_dashboard(state, plan, terminal, verbose=verbose):
+                        print(line, file=self._stdout)
+                    self._stdout.flush()
                 runtime = self._runtime(state, ownership)
                 if plan.recovery_mode is RecoveryMode.FRESH_PLANNING:
                     objective = state.project.objective
@@ -460,6 +468,8 @@ class ProductionCliComposition:
             "",
         )
         result = self._execution_result(final, outcome, verbose=verbose)
+        if TerminalDashboard.for_stream(self._stdout).interactive:
+            lines = ()  # The readiness panel was printed before execution.
         return CliCommandResult(result.exit_code, lines + result.output)
 
     def stop(self, verbose: bool = False) -> CliCommandResult:
@@ -484,7 +494,7 @@ class ProductionCliComposition:
         if action is None:
             raise InvalidCliProjectState("no pending HumanAction")
         return CliCommandResult(
-            CliExitCode.SUCCESS, render_human_action(action, verbose=verbose, state=state)
+            CliExitCode.SUCCESS, render_human_action(action, verbose=verbose, state=state, terminal=TerminalDashboard.for_stream(self._stdout))
         )
 
     def approve(self, action_id: str, verbose: bool = False) -> CliCommandResult:
@@ -876,6 +886,7 @@ class ProductionCliComposition:
         stop_reason = None if outcome is None else outcome.stop_reason.value
         lines = render_project(
             state,
+            terminal=TerminalDashboard.for_stream(self._stdout),
             verbose=verbose,
             execution_stop_reason=stop_reason,
         )

@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 from io import StringIO
 from time import sleep
 import unittest
+from unittest.mock import patch
 
 from code_mule.progress import (
     ConsoleProgressRenderer,
@@ -31,6 +32,11 @@ class FakeTTY(StringIO):
 
 
 class ConsoleProgressRendererTests(unittest.TestCase):
+    def setUp(self):
+        environment = patch.dict("os.environ", {"TERM": "xterm"})
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def test_non_tty_is_line_oriented_ordered_and_has_no_ansi(self):
         stream = StringIO()
         with ConsoleProgressRenderer(stream) as renderer:
@@ -98,7 +104,7 @@ class ConsoleProgressRendererTests(unittest.TestCase):
             ("Rework 2", "Rework 3", "Rework 4", "Rework 5", "Rework 6"),
         )
 
-    def test_tty_redraws_and_context_restores_cursor_and_thread(self):
+    def test_tty_activity_preserves_scrollback_and_closes_thread(self):
         stream = FakeTTY()
         renderer = ConsoleProgressRenderer(
             stream,
@@ -126,10 +132,10 @@ class ConsoleProgressRendererTests(unittest.TestCase):
             )
             self.assertTrue(renderer.thread_alive)
         output = stream.getvalue()
-        self.assertIn("\x1b[?25l", output)
-        self.assertIn("\x1b[?25h", output)
-        self.assertIn("Code Mule", output)
-        self.assertIn("Progress", output)
+        self.assertNotIn("\x1b", output)
+        self.assertIn("Project started", output)
+        self.assertIn("Codex started", output)
+        self.assertNotIn("CURRENT TASK", output)
         self.assertTrue(renderer.closed)
         self.assertFalse(renderer.thread_alive)
 
@@ -148,7 +154,8 @@ class ConsoleProgressRendererTests(unittest.TestCase):
                 )
             )
         self.assertEqual(renderer.snapshot.project_status, "human_required")
-        self.assertIn("! ACTION REQUIRED", stream.getvalue())
+        self.assertIn("ACTION REQUIRED", stream.getvalue())
+        self.assertTrue(stream.getvalue().startswith("!"))
 
     def test_planning_has_no_fake_percentage_and_materialization_sets_task_total(self):
         stream = FakeTTY()
@@ -181,7 +188,8 @@ class ConsoleProgressRendererTests(unittest.TestCase):
                 )
             )
         output = stream.getvalue()
-        self.assertIn("Progress    Planning", output)
+        self.assertIn("Planning started", output)
+        self.assertNotIn("0 / 0", output)
         self.assertEqual(renderer.snapshot.project_status, "running")
         self.assertEqual(renderer.snapshot.total_tasks, 2)
         self.assertEqual(renderer.snapshot.percentage, 0.0)
