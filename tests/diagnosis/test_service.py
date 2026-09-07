@@ -128,7 +128,11 @@ class ProjectDiagnosisServiceTests(unittest.TestCase):
         cases = (
             (ProjectStatus.PAUSED_BY_BOSS, DiagnosisBlockerCategory.PAUSED, DiagnosisNextAction.RESUME),
             (ProjectStatus.CHANGE_REQUESTED, DiagnosisBlockerCategory.CHANGE_REQUESTED, DiagnosisNextAction.APPLY_CHANGE),
-            (ProjectStatus.DONE, DiagnosisBlockerCategory.NONE, DiagnosisNextAction.NONE),
+            (
+                ProjectStatus.DONE,
+                DiagnosisBlockerCategory.NONE,
+                DiagnosisNextAction.CHANGE,
+            ),
             (ProjectStatus.CANCELLED, DiagnosisBlockerCategory.NONE, DiagnosisNextAction.NONE),
         )
         for status, blocker, action in cases:

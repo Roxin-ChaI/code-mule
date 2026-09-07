@@ -15,8 +15,10 @@ def project_dashboard(state, terminal: TerminalDashboard, lines, *, verbose=Fals
     task = next((item for item in state.tasks if item.id == state.project.current_task_id), None)
     title = {"done": "PROJECT COMPLETED", "cancelled": "PROJECT CANCELLED"}.get(view.raw_status, "CODE MULE · " + view.name)
     content = (row("Project", view.name), row("Status", view.status),
+               row("Revision", "—" if view.revision_number is None else view.revision_number),
                row("Plan", "—" if view.plan_version is None else f"v{view.plan_version}"),
                row("Progress", terminal.progress(view.completed_tasks, view.total_tasks)),
+               *((row("Reused", f"{view.reused_task_count} task(s) from v{view.plan_version - 1 if view.plan_version else '-'}"),) if view.reused_task_count else ()),
                row("Current", "None" if task is None else task.title),
                row("Safe Point", humanize_identifier(state.latest_safe_point.kind.value if state.latest_safe_point else "unknown")))
     sections = [DashboardSection(title, content)]
@@ -42,6 +44,7 @@ def diagnosis_dashboard(diagnosis, terminal, lines, *, verbose=False):
     sections = (
         DashboardSection("PROJECT · " + diagnosis.project_name, (
             row("Status", status_label(diagnosis.project_status)),
+            row("Revision", "—" if diagnosis.revision_number is None else diagnosis.revision_number),
             row("Plan", "—" if diagnosis.active_plan_version is None else f"v{diagnosis.active_plan_version}"),
             row("Progress", terminal.progress(diagnosis.completed_tasks, diagnosis.total_tasks)),
             row("Current", diagnosis.current_task_title or "None"))),

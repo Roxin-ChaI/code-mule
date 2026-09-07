@@ -10,8 +10,8 @@
 工作流。
 
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB)
-![Tests 609](https://img.shields.io/badge/tests-609%20passed-2E7D32)
-![ProjectState v12](https://img.shields.io/badge/ProjectState-v12-6A5ACD)
+![Tests 623](https://img.shields.io/badge/tests-623%20passed-2E7D32)
+![ProjectState v13](https://img.shields.io/badge/ProjectState-v13-6A5ACD)
 
 ## Demo
 
@@ -94,6 +94,8 @@ Supervisor 只提供 typed plan 和 decision。确定性 runtime 负责状态迁
 - **Supervisor 审查** — 每个 Task 必须经过审查才能交付。
 - **Git 原生交付** — 每个被接受的 Task 形成一个精确的本地 commit。
 - **需求变更** — CHANGE 经过影响分析，生成 Plan vN+1。
+- **完成后继续变更** — 已完成的项目可接受新的 Boss CHANGE，并以新的线性
+  Revision + Plan vN+1 继续，而之前的 Revision、Task 与 commit 保持不可变。
 - **Human Gate** — Worker Input、批准和外部副作用会安全停下等待 Boss。
 - **确定性恢复** — 持久化最近的执行边界、Safe Point 与 Worker attempt
   生命周期；`code-mule recover` 只在 `ProjectState` 能证明 Git 与 Plan
@@ -203,6 +205,16 @@ code-mule status
 code-mule diagnose
 code-mule recover
 ```
+
+已完成的项目无需重新初始化即可继续演进：
+
+```bash
+code-mule change "排行榜刷新页面后仍然保留"
+# 查看持久化的 ChangeRequest，然后
+code-mule change --apply
+```
+
+随后 `status` 会显示新的 Revision 与 Plan 版本；历史 Revision 仍保留。
 
 默认 state 文件是当前目录下的 `.code-mule/project-state.json`，因此命令会自动
 发现项目。初始化会把 `.code-mule/` 登记到 repository-local Git exclude，不修改
@@ -314,7 +326,7 @@ Code Mule 适合需要以下能力的本地软件开发：
 
 当前 v0.1.1 发布准备基线：
 
-- **609 项自动化测试 PASS**，包括不激活仓库 `.venv` 的真实 shell 重启回归测试；
+- **623 项自动化测试 PASS**，包括不激活仓库 `.venv` 的真实 shell 重启回归测试；
 - `compileall`、`pip check` 和 `git diff --check` PASS；
 - 真实 DeepSeek + Codex E2E：Plan v1、6/6 Tasks、Worker Input → Boss answer
   → fresh-session continuation、每个 Task 一个 delivery commit、最终 review
@@ -332,13 +344,12 @@ v0.1.1 GitHub Release 尚未创建；v0.1.0 tag 与历史证据保持不变。
 - 没有 Web UI。
 - 被中断的 Codex turn 不会透明重连。
 - 远端和不可逆副作用仍需 Human Gate。
-- 已完成项目目前不能通过 CHANGE 重新打开；DONE 不会迁移到
-  CHANGE_REQUESTED。
 - 项目验证只运行已配置 hooks，不会自行猜测缺失检查。
 
 ## 文档
 
 - [Architecture](docs/architecture.md)
+- [Project Revisions](docs/project-revisions.md)
 - [Boss CLI](docs/cli.md)
 - [Human Resolution](docs/human-resolution.md)
 - [Execution Recovery](docs/execution-recovery.md)

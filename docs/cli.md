@@ -225,8 +225,9 @@ Requested preview width exceeds current terminal width. Output may wrap.
   occurred, whether recovery is safe, and the exact next Boss command. It is
   strictly read-only and does not acquire an execution lease or call a model.
 - `ask "question"`: executes the existing deterministic QUERY and is read-only.
-- `change "request"`: persists a ChangeRequest and moves RUNNING or paused work
-  to CHANGE_REQUESTED without calling DeepSeek.
+- `change "request"`: persists a ChangeRequest and moves RUNNING, paused, or a
+  completed project to CHANGE_REQUESTED without calling DeepSeek. After DONE it
+  records the base revision/Plan and the requested next Revision.
 - `change --apply`: at a Task Safe Point, performs Impact Analysis, materializes
   the replacement Plan, and resumes execution.
 - `pause`: applies the existing Boss PAUSE transition.
@@ -284,10 +285,15 @@ line-oriented, and contains no ANSI or spinner control characters.
 Normal errors identify the failing boundary and give a safe next command.
 Tracebacks remain exclusive to global `--debug` mode.
 
-The current v0.1.1 baseline uses ProjectState schema v12 and was real-E2E
+The current v0.1.1 baseline uses ProjectState schema v13 and was real-E2E
 validated with Codex CLI 0.153.4 (not a minimum-version claim). Historical state
 migrations remain supported, but old Code Mule versions may not read new state;
 back up state before upgrading. See [release notes](releases/v0.1.1.md).
+
+Completed projects can be reopened with `code-mule change ...` as a new linear
+Revision. See [Project Revisions](project-revisions.md) for the revision
+record, task lineage, per-revision verification reset, and Git continuity
+rules.
 
 ## Environment
 

@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from code_mule.domain import HumanActionCategory, HumanActionStatus, ProjectStatus, TaskStatus
+from code_mule.domain import (
+    ChangeRequestStatus,
+    HumanActionCategory,
+    HumanActionStatus,
+    ProjectStatus,
+    TaskStatus,
+)
 from code_mule.domain.worker_verification import (
     WorkerCheckStatus,
     WorkerCheckType,
@@ -12,6 +18,7 @@ from code_mule.domain.worker_verification import (
 )
 from code_mule.state.models import ProjectState
 from code_mule.recovery.service import RecoveryClassifier
+from code_mule.revision import latest_revision
 
 from .contracts import (
     DiagnosisBlockerCategory,
@@ -161,6 +168,23 @@ class ProjectDiagnosisService:
         completed = tuple(task for task in tasks if task.status is TaskStatus.COMPLETED)
         latest_completed = max(completed, key=lambda task: task.updated_at, default=None)
         action = pending[0] if len(pending) == 1 else None
+        revision = latest_revision(state)
+        open_change = (
+            next(
+                (
+                    item
+                    for item in state.change_requests
+                    if item.status
+                    in {
+                        ChangeRequestStatus.PENDING,
+                        ChangeRequestStatus.ANALYZING,
+                    }
+                ),
+                None,
+            )
+            if state.project.status is ProjectStatus.CHANGE_REQUESTED
+            else None
+        )
         return ProjectDiagnosis(
             project_name=self._safe(state.project.name, 200),
             project_status=state.project.status,
@@ -205,6 +229,26 @@ class ProjectDiagnosisService:
             ),
             recovery_mode=recovery.recovery_mode.value,
             recovery_command=recovery.next_command,
+            revision_number=(
+                None if revision is None else revision.revision_number
+            ),
+            requested_revision=(
+                None if open_change is None else open_change.requested_revision
+            ),
+            base_revision=(
+                None if open_change is None else open_change.base_revision
+            ),
+            base_plan_id=(
+                None if open_change is None else open_change.base_plan_id
+            ),
+            base_plan_version=(
+                None
+                if open_change is None
+                else open_change.base_plan_version
+            ),
+            change_summary=(
+                None if open_change is None else open_change.description
+            ),
         )
 
     def _classification(self, state, pending, inconsistent) -> _Classification:
@@ -287,7 +331,7 @@ class ProjectDiagnosisService:
                 True,
                 DiagnosisNextAction.INSPECT,
             )
-        return _Classification(
+        classification = _Classification(
             DiagnosisBlockerCategory.NONE,
             DiagnosisStage.NONE,
             summary,
@@ -295,6 +339,12 @@ class ProjectDiagnosisService:
             False,
             DiagnosisNextAction.NONE,
         )
+        if status is ProjectStatus.DONE:
+            classification = replace(
+                classification,
+                next_action=DiagnosisNextAction.CHANGE,
+            )
+        return classification
 
     @staticmethod
     def _active_graph(state: ProjectState):

@@ -50,6 +50,7 @@ class DiagnosisRecoverability(StrEnum):
 
 class DiagnosisNextAction(StrEnum):
     NONE = "none"
+    CHANGE = "code-mule change ..."
     INSPECT = "code-mule inspect"
     RESUME = "code-mule resume"
     APPLY_CHANGE = "code-mule change --apply"
@@ -95,6 +96,12 @@ class ProjectDiagnosis:
     stop_reason: str | None = None
     recovery_mode: str | None = None
     recovery_command: str | None = None
+    revision_number: int | None = None
+    requested_revision: int | None = None
+    base_revision: int | None = None
+    base_plan_id: str | None = None
+    base_plan_version: int | None = None
+    change_summary: str | None = None
 
     def __post_init__(self) -> None:
         bounded = {

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from code_mule.domain.enums import HumanActionStatus
 from code_mule.domain.models import HumanAction
 from code_mule.state.models import ProjectState
+from code_mule.revision import latest_revision
 
 from .labels import humanize_identifier, status_label
 
@@ -13,6 +14,7 @@ from .labels import humanize_identifier, status_label
 class ProjectView:
     name: str
     status: str
+    revision_number: int | None
     plan_version: int | None
     completed_tasks: int
     total_tasks: int
@@ -23,6 +25,7 @@ class ProjectView:
     active_plan_id: str | None
     current_task_id: str | None
     latest_task_commit: str | None
+    reused_task_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,7 @@ def project_view(state: ProjectState) -> ProjectView:
         (plan for plan in state.plans if plan.id == state.project.active_plan_id),
         None,
     )
+    latest = latest_revision(state)
     milestone_ids = set(active_plan.milestone_ids if active_plan else ())
     task_ids = {
         task_id
@@ -75,6 +79,10 @@ def project_view(state: ProjectState) -> ProjectView:
     return ProjectView(
         name=state.project.name,
         status=status_label(state.project.status),
+        revision_number=None if latest is None else latest.revision_number,
+        reused_task_count=(
+            0 if active_plan is None else len(active_plan.reused_task_ids)
+        ),
         plan_version=None if active_plan is None else active_plan.version,
         completed_tasks=completed,
         total_tasks=len(active_tasks),

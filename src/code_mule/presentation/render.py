@@ -45,6 +45,7 @@ def render_project_diagnosis(
         "",
         f"Project        {diagnosis.project_name}",
         f"Status         {status_label(diagnosis.project_status)}",
+        f"Revision       {'—' if diagnosis.revision_number is None else diagnosis.revision_number}",
         f"Plan           {'—' if diagnosis.active_plan_version is None else f'v{diagnosis.active_plan_version}'}",
         f"Progress       {diagnosis.completed_tasks} / {diagnosis.total_tasks}",
         f"Current Task   {current}",
@@ -73,6 +74,15 @@ def render_project_diagnosis(
         f"Required       {'Yes' if diagnosis.boss_action_required else 'No'}",
         f"Next           {diagnosis.recommended_next_action.value.title() if diagnosis.recommended_next_action.value == 'none' else diagnosis.recommended_next_action.value}",
     )
+    if diagnosis.change_summary is not None:
+        lines += (
+            "",
+            "PENDING CHANGE",
+            f"Requested      Revision {diagnosis.requested_revision or '-'}",
+            f"Base           Revision {diagnosis.base_revision or '-'} · "
+            f"Plan v{diagnosis.base_plan_version or '-'}",
+            f"Change         {diagnosis.change_summary}",
+        )
     if verbose:
         lines += (
             "",
@@ -109,8 +119,12 @@ def render_project(
         view.name,
         "",
         f"Status      {view.status}",
+        f"Revision    {'—' if view.revision_number is None else view.revision_number}",
         f"Plan        {'—' if view.plan_version is None else f'v{view.plan_version}'}",
         f"Progress    {view.completed_tasks} / {view.total_tasks}",
+        *((
+            f"Reused      {view.reused_task_count} task(s) from earlier revisions",
+        ) if view.reused_task_count else ()),
         f"Current     {view.current_task or 'None'}",
         f"Boss action {view.boss_action or 'None'}",
     )

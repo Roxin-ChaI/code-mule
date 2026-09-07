@@ -44,7 +44,19 @@ class PanelIntegrationTests(TestCase):
         state = replace(source, project=replace(source.project, name="My Project", status=ProjectStatus.IDLE, active_plan_id=None, current_task_id=None))
         lines = render_project(state, terminal=TerminalDashboard(40, True))
         content = tuple(line[2:-2].rstrip() for line in lines if line.startswith("│"))
-        self.assertEqual(content, ("CODE MULE · My Project", "Project        My Project", "Status         Ready", "Plan           —", "Progress       0 / 0", "Current        None", "Safe Point     Unknown"))
+        self.assertEqual(
+            content,
+            (
+                "CODE MULE · My Project",
+                "Project        My Project",
+                "Status         Ready",
+                "Revision       —",
+                "Plan           —",
+                "Progress       0 / 0",
+                "Current        None",
+                "Safe Point     Unknown",
+            ),
+        )
 
     def test_all_human_categories_keep_commands_and_hide_internal_ids(self):
         for category in (HumanActionCategory.WORKER_INPUT, HumanActionCategory.WORKER_APPROVAL, HumanActionCategory.EXTERNAL_SIDE_EFFECT, HumanActionCategory.WORKER_VERIFICATION, HumanActionCategory.WORKSPACE_BLOCK, HumanActionCategory.RECOVERY_UNCERTAIN):

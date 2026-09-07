@@ -1,5 +1,12 @@
 # Architecture
 
+Project state is versioned as linear Project Revisions. The first materialized
+Plan starts Revision 1; a Boss CHANGE after DONE requests Revision N+1. Old
+Revisions remain immutable records of their Plan, Tasks, Git HEADs,
+verification, and final review. See
+[Project Revisions and Post-Completion Change](project-revisions.md) for the
+reopen lifecycle.
+
 ## System context
 
 ```text

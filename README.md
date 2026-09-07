@@ -10,8 +10,8 @@ Turn one coding objective into a controlled **PLAN → CODE → REVIEW → VERIF
 COMMIT** workflow.
 
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB)
-![Tests 609](https://img.shields.io/badge/tests-609%20passed-2E7D32)
-![ProjectState v12](https://img.shields.io/badge/ProjectState-v12-6A5ACD)
+![Tests 623](https://img.shields.io/badge/tests-623%20passed-2E7D32)
+![ProjectState v13](https://img.shields.io/badge/ProjectState-v13-6A5ACD)
 
 ## Demo
 
@@ -96,6 +96,9 @@ owns state transitions, scheduling, verification, and Git delivery. See the
 - **Supervisor review** — review every Task before it can be delivered.
 - **Git-native delivery** — turn each accepted Task into one precise local commit.
 - **Requirement changes** — route CHANGE through impact analysis and Plan vN+1.
+- **Post-completion revisions** — a completed project may receive a new Boss
+  CHANGE, then continue as a new linear Revision with a versioned Plan vN+1
+  while every previous revision, Task, and commit stays immutable.
 - **Human Gates** — stop safely for Worker Input, approval, or external effects.
 - **Deterministic recovery** — persist the latest execution boundary, Safe Point,
   and Worker-attempt lifecycle; `code-mule recover` continues only when Git and
@@ -214,6 +217,17 @@ code-mule status
 code-mule diagnose
 code-mule recover
 ```
+
+Completed projects can evolve without re-initializing:
+
+```bash
+code-mule change "排行榜刷新页面后仍然保留"
+# review the persisted ChangeRequest, then
+code-mule change --apply
+```
+
+`status` then shows the new Revision and Plan version; previous revisions stay
+available in project history.
 
 The default state file is `.code-mule/project-state.json` under the current
 directory, so commands discover the project automatically. Initialization
@@ -336,7 +350,7 @@ Details: [Execution Recovery](docs/execution-recovery.md),
 
 Current v0.1.1 release-preparation baseline:
 
-- **609 automated tests PASS**, including real shell restart regressions that
+- **623 automated tests PASS**, including real shell restart regressions that
   runs the persistent launcher without the repository `.venv` on `PATH`;
 - `compileall`, `pip check`, and `git diff --check` PASS;
 - real DeepSeek + Codex E2E: Plan v1, 6/6 Tasks, Worker Input → Boss answer
@@ -358,13 +372,12 @@ Release has been created; the v0.1.0 tag and its historical evidence are unchang
   bootstrap script, with pipx/PyPI/Homebrew as future distribution options.
 - An interrupted Codex turn is not transparently reconnected.
 - Remote and irreversible side effects remain Human Gates.
-- Completed projects cannot currently be reopened with CHANGE; DONE does not
-  transition to CHANGE_REQUESTED.
 - Project verification runs configured hooks only; it does not invent missing checks.
 
 ## Documentation
 
 - [Architecture](docs/architecture.md)
+- [Project Revisions](docs/project-revisions.md)
 - [Boss CLI](docs/cli.md)
 - [Human Resolution](docs/human-resolution.md)
 - [Execution Recovery](docs/execution-recovery.md)
