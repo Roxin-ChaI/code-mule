@@ -27,6 +27,10 @@ from code_mule.recovery import (
     WorkerTerminalState,
 )
 from code_mule.recovery.state import with_stop_boundary
+from code_mule.revision import (
+    completed_revision,
+    latest_revision,
+)
 
 from .commands import ChangeCommand, PauseCommand, QueryCommand, ResumeCommand, StopCommand
 from .results import ChangeResult, CommandResult, ProjectStatusView, StopResult
@@ -361,6 +365,7 @@ class OrchestratorService:
         if state.project.status not in {
             ProjectStatus.RUNNING,
             ProjectStatus.PAUSED_BY_BOSS,
+            ProjectStatus.DONE,
         }:
             raise InvalidBossCommand(
                 f"change is not allowed from {state.project.status}"
@@ -371,6 +376,35 @@ class OrchestratorService:
         validate_transition(previous_status, target)
         operation_time = self._clock()
         event_id = self._event_id_factory()
+        active_plan = next(
+            (
+                item
+                for item in state.plans
+                if item.id == state.project.active_plan_id
+            ),
+            None,
+        )
+        if previous_status is ProjectStatus.DONE:
+            completed = completed_revision(state)
+            latest = latest_revision(state)
+            if completed is not None:
+                base_revision = completed.revision_number
+                requested_revision = completed.revision_number + 1
+            elif latest is not None:
+                base_revision = latest.revision_number
+                requested_revision = latest.revision_number + 1
+            else:
+                base_revision = 1
+                requested_revision = 2
+            base_plan = active_plan
+        else:
+            base_revision = (
+                1
+                if latest_revision(state) is None
+                else latest_revision(state).revision_number
+            )
+            requested_revision = base_revision
+            base_plan = active_plan
         change_request = ChangeRequest(
             id=command.change_request_id,
             project_id=state.project.id,
@@ -379,6 +413,10 @@ class OrchestratorService:
             affected_requirement_ids=(),
             created_by=command.created_by,
             created_at=operation_time,
+            requested_revision=requested_revision,
+            base_revision=base_revision,
+            base_plan_id=None if base_plan is None else base_plan.id,
+            base_plan_version=None if base_plan is None else base_plan.version,
         )
         project = replace(
             state.project,

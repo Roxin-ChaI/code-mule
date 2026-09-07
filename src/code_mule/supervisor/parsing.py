@@ -97,16 +97,19 @@ def _string_tuple(value: object, context: str) -> tuple[str, ...]:
 
 def _task_proposal(value: object, context: str) -> TaskProposal:
     payload = _object(value, context)
+    allowed = {
+        "id",
+        "title",
+        "description",
+        "dependencies",
+        "acceptance_criteria",
+        "requirement_ids",
+        "supersedes_task_id",
+        "derived_from_task_ids",
+    }
     _exact_fields(
         payload,
-        {
-            "id",
-            "title",
-            "description",
-            "dependencies",
-            "acceptance_criteria",
-            "requirement_ids",
-        },
+        allowed,
         context,
     )
     return TaskProposal(
@@ -121,6 +124,14 @@ def _task_proposal(value: object, context: str) -> TaskProposal:
         ),
         requirement_ids=_string_tuple(
             payload["requirement_ids"], f"{context}.requirement_ids"
+        ),
+        supersedes_task_id=_optional_string(
+            payload["supersedes_task_id"],
+            f"{context}.supersedes_task_id",
+        ),
+        derived_from_task_ids=_string_tuple(
+            payload["derived_from_task_ids"],
+            f"{context}.derived_from_task_ids",
         ),
     )
 

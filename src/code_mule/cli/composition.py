@@ -432,9 +432,12 @@ class ProductionCliComposition:
 
     def apply_change(self, verbose: bool = False) -> CliCommandResult:
         state = self._load()
-        if state.project.status is not ProjectStatus.CHANGE_REQUESTED:
+        if state.project.status not in {
+            ProjectStatus.CHANGE_REQUESTED,
+            ProjectStatus.REPLANNING,
+        }:
             raise InvalidCliProjectState(
-                "change --apply requires CHANGE_REQUESTED"
+                "change --apply requires CHANGE_REQUESTED or a restartable REPLANNING"
             )
         if state.project.current_task_id is not None:
             raise InvalidCliProjectState(
@@ -443,11 +446,18 @@ class ProductionCliComposition:
         pending = tuple(
             item
             for item in state.change_requests
-            if item.status is ChangeRequestStatus.PENDING
+            if (
+                state.project.status is ProjectStatus.CHANGE_REQUESTED
+                and item.status is ChangeRequestStatus.PENDING
+            )
+            or (
+                state.project.status is ProjectStatus.REPLANNING
+                and item.status is ChangeRequestStatus.ANALYZING
+            )
         )
         if len(pending) != 1:
             raise InvalidCliProjectState(
-                "change --apply requires exactly one pending ChangeRequest"
+                "change --apply requires exactly one restartable ChangeRequest"
             )
         try:
             with self._acquire_execution(verbose) as ownership:

@@ -61,7 +61,7 @@ class GitDeliveryContractTests(unittest.TestCase):
         payload.pop("git_change_sets")
         payload.pop("git_commit_results")
         state = deserialize_project_state(payload)
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 12)
+        self.assertEqual(CURRENT_SCHEMA_VERSION, 13)
         self.assertEqual(state.git_baselines, ())
         self.assertEqual(state.git_change_sets, ())
         self.assertEqual(state.git_commit_results, ())

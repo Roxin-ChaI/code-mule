@@ -8,7 +8,14 @@ from pathlib import Path
 import subprocess
 from typing import Protocol
 
-from code_mule.domain import HumanActionCategory, PlanStatus, ProjectEvent, ProjectStatus, TaskStatus
+from code_mule.domain import (
+    HumanActionCategory,
+    PlanStatus,
+    ProjectEvent,
+    ProjectStatus,
+    RevisionStatus,
+    TaskStatus,
+)
 from code_mule.domain.state_machine import validate_transition
 from code_mule.human import request_human_action
 from code_mule.progress import (
@@ -26,6 +33,11 @@ from code_mule.recovery import (
     WorkerTerminalState,
 )
 from code_mule.recovery.state import with_safe_point, with_stop_boundary
+from code_mule.revision import (
+    begin_revision,
+    complete_revision,
+    latest_revision,
+)
 from code_mule.supervisor import (
     FinalReviewRequest,
     FinalReviewResult,
@@ -392,6 +404,32 @@ class ProjectFinalizationService:
             plans=tuple(replace(item, status=PlanStatus.COMPLETED) if item.id == plan.id else item for item in state.plans),
             milestones=tuple(replace(item, status="completed") if item.id in milestone_ids else item for item in state.milestones),
         )
+        active = latest_revision(completed)
+        revision_number = (
+            1 if active is None else active.revision_number
+        )
+        if active is None:
+            completed = begin_revision(
+                completed,
+                revision_number=1,
+                plan_id=plan.id,
+                plan_version=plan.version,
+                change_request_id=None,
+                base_revision=None,
+                started_at=operation_time,
+                baseline_head=None,
+            )
+            active = latest_revision(completed)
+        if active is not None and active.lifecycle_status is not RevisionStatus.COMPLETED:
+            completed = complete_revision(
+                completed,
+                revision_number=revision_number,
+                plan_id=plan.id,
+                plan_version=plan.version,
+                completion_head=result.verified_head,
+                verification_result_id=result.id,
+                completed_at=operation_time,
+            )
         events = (
             self._event(completed, "plan.completed", plan.id, operation_time, {}),
             self._event(completed, "project.completed", state.project.id, operation_time, {"verification_result_id": result.id}),

@@ -28,6 +28,8 @@ def task_payload():
         "dependencies": ["task-0"],
         "acceptance_criteria": ["tests pass"],
         "requirement_ids": ["req-2"],
+        "supersedes_task_id": None,
+        "derived_from_task_ids": [],
     }
 
 

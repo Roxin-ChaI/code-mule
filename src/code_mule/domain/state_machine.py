@@ -66,7 +66,7 @@ _ALLOWED_TRANSITIONS: dict[ProjectStatus, frozenset[ProjectStatus]] = {
     ProjectStatus.CANCEL_REQUESTED: frozenset(
         {ProjectStatus.CANCELLED, ProjectStatus.HUMAN_REQUIRED}
     ),
-    ProjectStatus.DONE: frozenset(),
+    ProjectStatus.DONE: frozenset({ProjectStatus.CHANGE_REQUESTED}),
     ProjectStatus.FAILED: frozenset(),
     ProjectStatus.CANCELLED: frozenset(),
 }

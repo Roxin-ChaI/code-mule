@@ -41,6 +41,7 @@ from .errors import (
 )
 from .materialization import ChangeReplanMaterializer
 from .validation import ChangeReplanValidator
+from .reopen import PostCompletionReplanner
 
 
 class ProjectStateStore(Protocol):
@@ -89,8 +90,20 @@ class ChangeReplanningService:
         self, request: ChangeReplanningRequest
     ) -> ChangeReplanningOutcome:
         initial = self._store.load()
+        if self._post_completion_change(initial, request):
+            return PostCompletionReplanner(
+                store=self._store,
+                supervisor=self._supervisor,
+                clock=self._clock,
+                plan_id_factory=self._plan_id_factory,
+                event_id_factory=self._event_id_factory,
+                progress_sink=self._progress,
+            ).replan(request)
         change_request, active_plan = self._validate_start(initial, request)
-        replanning = self._start_replanning(initial, change_request)
+        if initial.project.status is ProjectStatus.CHANGE_REQUESTED:
+            replanning = self._start_replanning(initial, change_request)
+        else:
+            replanning = initial
         analyzing_change = self._change_request(
             replanning, change_request.id
         )
@@ -251,11 +264,12 @@ class ChangeReplanningService:
         if state.project.id != request.project_id:
             raise InvalidReplanningState("project identity mismatch")
         if (
-            state.project.status is not ProjectStatus.CHANGE_REQUESTED
+            state.project.status
+            not in {ProjectStatus.CHANGE_REQUESTED, ProjectStatus.REPLANNING}
             or state.project.current_task_id is not None
         ):
             raise InvalidReplanningState(
-                "replanning requires CHANGE_REQUESTED at a Task Safe Point"
+                "replanning requires CHANGE_REQUESTED/REPLANNING at a safe boundary"
             )
         changes = tuple(
             item
@@ -267,12 +281,17 @@ class ChangeReplanningService:
                 "ChangeRequest must exist exactly once"
             )
         change_request = changes[0]
+        expected_status = (
+            ChangeRequestStatus.ANALYZING
+            if state.project.status is ProjectStatus.REPLANNING
+            else ChangeRequestStatus.PENDING
+        )
         if (
             change_request.project_id != state.project.id
-            or change_request.status is not ChangeRequestStatus.PENDING
+            or change_request.status is not expected_status
         ):
             raise InvalidReplanningState(
-                "ChangeRequest is not pending for this Project"
+                "ChangeRequest status does not match the project boundary"
             )
         open_changes = tuple(
             item
@@ -287,7 +306,14 @@ class ChangeReplanningService:
         active_plans = tuple(
             item
             for item in state.plans
-            if item.status is PlanStatus.ACTIVE
+            if item.id == state.project.active_plan_id
+            and (
+                item.status is PlanStatus.ACTIVE
+                or (
+                    state.project.status is ProjectStatus.REPLANNING
+                    and item.status is PlanStatus.COMPLETED
+                )
+            )
         )
         if (
             len(active_plans) != 1
@@ -297,6 +323,25 @@ class ChangeReplanningService:
                 "one active Plan is required for replanning"
             )
         return change_request, active_plans[0]
+
+    @staticmethod
+    def _post_completion_change(
+        state: ProjectState, request: ChangeReplanningRequest
+    ) -> bool:
+        changes = tuple(
+            item
+            for item in state.change_requests
+            if item.id == request.change_request_id
+        )
+        if len(changes) != 1:
+            return False
+        requested = changes[0].requested_revision
+        base = changes[0].base_revision
+        return (
+            requested is not None
+            and base is not None
+            and requested > base
+        )
 
     def _start_replanning(
         self, state: ProjectState, change_request: ChangeRequest

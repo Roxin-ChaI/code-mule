@@ -45,6 +45,7 @@ EXPECTED_TRANSITIONS = {
     (ProjectStatus.HUMAN_REQUIRED, ProjectStatus.CANCELLED),
     (ProjectStatus.CANCEL_REQUESTED, ProjectStatus.CANCELLED),
     (ProjectStatus.CANCEL_REQUESTED, ProjectStatus.HUMAN_REQUIRED),
+    (ProjectStatus.DONE, ProjectStatus.CHANGE_REQUESTED),
 }
 
 
@@ -69,10 +70,17 @@ class ProjectStateMachineTests(unittest.TestCase):
                     self.assertIn(target.value, str(context.exception))
 
     def test_terminal_statuses_have_no_outgoing_transitions(self):
-        for current in (ProjectStatus.DONE, ProjectStatus.FAILED, ProjectStatus.CANCELLED):
+        for current in (ProjectStatus.FAILED, ProjectStatus.CANCELLED):
             for target in ProjectStatus:
                 with self.subTest(current=current, target=target):
                     self.assertFalse(can_transition(current, target))
+
+        self.assertTrue(
+            can_transition(
+                ProjectStatus.DONE,
+                ProjectStatus.CHANGE_REQUESTED,
+            )
+        )
 
     def test_running_to_running_is_legal(self):
         self.assertTrue(can_transition(ProjectStatus.RUNNING, ProjectStatus.RUNNING))

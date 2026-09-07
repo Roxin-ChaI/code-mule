@@ -80,7 +80,7 @@ class ExecutionOwnershipContractTests(unittest.TestCase):
             report["human_action_required"] = report.pop("human_action") is not None
         legacy.pop("execution_leases")
         migrated = deserialize_project_state(legacy)
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 12)
+        self.assertEqual(CURRENT_SCHEMA_VERSION, 13)
         self.assertEqual(migrated.execution_leases, ())
 
 

@@ -98,6 +98,8 @@ def _plan_payload(*, requirement_id: str = "REQ-LOCAL") -> dict[str, object]:
                 "dependencies": [],
                 "acceptance_criteria": ["fake Worker reports completion"],
                 "requirement_ids": [requirement_id],
+                "supersedes_task_id": None,
+                "derived_from_task_ids": [],
             }
         ],
         "risks": [],

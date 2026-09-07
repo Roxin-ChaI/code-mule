@@ -13,6 +13,7 @@ from code_mule.domain.models import Milestone, Plan, Requirement, Task
 from code_mule.domain.state_machine import validate_transition
 from code_mule.state.models import ProjectState
 from code_mule.supervisor.contracts import PlanProposal
+from code_mule.revision import begin_revision
 
 from .errors import PlanMaterializationError
 from .validation import PlanProposalValidator
@@ -121,7 +122,7 @@ class PlanMaterializer:
             created_at=operation_time,
         )
         validate_transition(state.project.status, ProjectStatus.RUNNING)
-        return replace(
+        materialized = replace(
             state,
             project=replace(
                 state.project,
@@ -135,6 +136,18 @@ class PlanMaterializer:
             milestones=state.milestones + milestones,
             tasks=state.tasks + tasks,
         )
+        if not state.revisions:
+            materialized = begin_revision(
+                materialized,
+                revision_number=1,
+                plan_id=plan.id,
+                plan_version=plan.version,
+                change_request_id=None,
+                base_revision=None,
+                started_at=operation_time,
+                baseline_head=None,
+            )
+        return materialized
 
 
 __all__ = ["PlanMaterializer"]

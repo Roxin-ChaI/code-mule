@@ -189,24 +189,23 @@ class ChangeResponseConsistencyE2E(unittest.TestCase):
         self.assertIn("Apply impact analysis", rendered)
         self.assertEqual(reply.referenced_change_id, final.change_requests[0].id)
 
-    def test_done_change_reports_only_failure_and_keeps_state_unchanged(self):
+    def test_done_change_records_post_completion_change_request(self):
         state = self.store.load()
         self.store.save(
             replace(state, project=replace(state.project, status=ProjectStatus.DONE))
         )
-        before = self.store.load()
 
         reply = self.conversation(FixedChangeRouter()).handle(
             "再加一个导出 JSON 的功能"
         )
 
         rendered = "\n".join(reply.lines)
-        self.assertEqual(self.store.load(), before)
-        self.assertIn("not valid in the current project state", rendered)
-        self.assertIn("No project state was changed", rendered)
-        self.assertNotIn("Change recorded", rendered)
-        self.assertNotIn("impact analysis", rendered)
-        self.assertIsNone(reply.referenced_change_id)
+        final = self.store.load()
+        self.assertIs(final.project.status, ProjectStatus.CHANGE_REQUESTED)
+        self.assertEqual(len(final.change_requests), 1)
+        self.assertIn("Change recorded", rendered)
+        self.assertIn("Apply impact analysis", rendered)
+        self.assertEqual(reply.referenced_change_id, final.change_requests[0].id)
 
     def test_human_required_change_has_no_success_text(self):
         state = self.store.load()

@@ -220,6 +220,8 @@ class TaskProposal:
     dependencies: tuple[str, ...]
     acceptance_criteria: tuple[str, ...]
     requirement_ids: tuple[str, ...]
+    supersedes_task_id: str | None = None
+    derived_from_task_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _require_non_empty(self.id, "id")
@@ -229,6 +231,12 @@ class TaskProposal:
             raise ValueError("acceptance_criteria must contain at least one item")
         if not self.requirement_ids:
             raise ValueError("requirement_ids must contain at least one item")
+        if self.supersedes_task_id == "":
+            raise ValueError("supersedes_task_id must not be empty")
+        if self.supersedes_task_id == self.id:
+            raise ValueError("task proposal cannot supersede itself")
+        if self.id in self.derived_from_task_ids:
+            raise ValueError("task proposal cannot derive from itself")
 
 
 @dataclass(frozen=True)

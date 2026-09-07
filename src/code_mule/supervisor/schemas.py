@@ -30,6 +30,8 @@ def _task_proposal_schema() -> dict[str, object]:
             "dependencies": _string_array(),
             "acceptance_criteria": _non_empty_string_array(),
             "requirement_ids": _non_empty_string_array(),
+            "supersedes_task_id": {"type": ["string", "null"]},
+            "derived_from_task_ids": _string_array(),
         },
         [
             "id",
@@ -38,6 +40,8 @@ def _task_proposal_schema() -> dict[str, object]:
             "dependencies",
             "acceptance_criteria",
             "requirement_ids",
+            "supersedes_task_id",
+            "derived_from_task_ids",
         ],
     )
 
