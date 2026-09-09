@@ -18,6 +18,8 @@ from code_mule.domain.models import (
     ProjectEvent,
 )
 from code_mule.domain.state_machine import validate_transition
+from code_mule.execution.contracts import ExecutionLeaseStatus
+from code_mule.recovery.contracts import ExecutionPhase, ExecutionStopReason
 from code_mule.state.models import ProjectState
 
 
@@ -51,6 +53,86 @@ _RETRYABLE = frozenset(
         HumanActionCategory.WORKSPACE_BLOCK,
     }
 )
+
+
+def planning_failure_is_persisted(
+    state: ProjectState, action: HumanAction
+) -> bool:
+    """Identify one exact persisted initial-planning Human Gate."""
+
+    boundary = state.latest_execution_stop
+    matching_events = tuple(
+        event
+        for event in state.events
+        if event.event_type in {"planning.failed", "planning.proposal_rejected"}
+        and event.entity_id == state.project.id
+        and event.timestamp == action.created_at
+    )
+    return (
+        action.category is HumanActionCategory.SUPERVISOR_FAILURE
+        and action.status is HumanActionStatus.PENDING
+        and action.task_id is None
+        and state.project.status is ProjectStatus.HUMAN_REQUIRED
+        and boundary is not None
+        and boundary.reason is ExecutionStopReason.SUPERVISOR_FAILED
+        # PROJECT was emitted by schema-v12 clients before planning gained its
+        # own typed phase. The exact planning event keeps this compatibility
+        # path deterministic and scoped to the same failure boundary.
+        and boundary.phase in {ExecutionPhase.PLANNING, ExecutionPhase.PROJECT}
+        and boundary.recorded_at == action.created_at
+        and not boundary.worker_started
+        and len(matching_events) == 1
+    )
+
+
+def planning_retry_is_safe(state: ProjectState, action: HumanAction) -> bool:
+    """Return whether an explicit fresh PLAN can start without duplicating work."""
+
+    return (
+        planning_failure_is_persisted(state, action)
+        and state.project.objective not in (None, "")
+        and state.project.active_plan_id is None
+        and state.project.current_task_id is None
+        and not state.plans
+        and not state.milestones
+        and not state.tasks
+        and not state.revisions
+        and not state.execution_attempts
+        and not state.execution_reports
+        and not state.decisions
+        and not state.git_baselines
+        and not state.git_change_sets
+        and not state.git_commit_results
+        and not state.project_verification_results
+        and not any(
+            lease.status is ExecutionLeaseStatus.ACTIVE
+            for lease in state.execution_leases
+        )
+    )
+
+
+def allowed_resolution_strategies(
+    state: ProjectState, action: HumanAction
+) -> tuple[HumanResolutionStrategy, ...]:
+    """List strategies accepted by ``resolve`` for this exact persisted gate."""
+
+    if (
+        action.status is not HumanActionStatus.PENDING
+        or action.category in _APPROVABLE
+    ):
+        return ()
+    strategies: list[HumanResolutionStrategy] = []
+    if action.category in _RETRYABLE and action.task_id is not None:
+        strategies.append(HumanResolutionStrategy.RETRY_TASK)
+    if planning_retry_is_safe(state, action):
+        strategies.append(HumanResolutionStrategy.RETRY_PLANNING)
+    strategies.extend(
+        (
+            HumanResolutionStrategy.FAIL_PROJECT,
+            HumanResolutionStrategy.ACKNOWLEDGE,
+        )
+    )
+    return tuple(strategies)
 
 
 class HumanResolutionService:
@@ -175,6 +257,11 @@ class HumanResolutionService:
             raise InvalidHumanResolution(
                 f"{action.category.value} must be approved or rejected"
             )
+        if strategy not in allowed_resolution_strategies(state, action):
+            raise InvalidHumanResolution(
+                f"{strategy.value} is not safe; strategy is not allowed "
+                "for this HumanAction"
+            )
         operation_time = self._clock()
         project = state.project
         tasks = state.tasks
@@ -201,6 +288,16 @@ class HumanResolutionService:
                 updated_at=operation_time,
             )
             summary = "Boss explicitly reopened the stopped Task"
+        elif strategy is HumanResolutionStrategy.RETRY_PLANNING:
+            validate_transition(project.status, ProjectStatus.PLANNING)
+            project = replace(
+                project,
+                status=ProjectStatus.PLANNING,
+                active_plan_id=None,
+                current_task_id=None,
+                updated_at=operation_time,
+            )
+            summary = "Boss explicitly authorized a fresh initial planning call"
         elif strategy is HumanResolutionStrategy.FAIL_PROJECT:
             validate_transition(project.status, ProjectStatus.FAILED)
             project = replace(
@@ -336,4 +433,7 @@ __all__ = [
     "HumanResolutionService",
     "InvalidHumanResolution",
     "ProjectStateStore",
+    "allowed_resolution_strategies",
+    "planning_failure_is_persisted",
+    "planning_retry_is_safe",
 ]

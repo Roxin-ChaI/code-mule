@@ -106,9 +106,11 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         choices=(
             HumanResolutionStrategy.RETRY_TASK.value,
+            HumanResolutionStrategy.RETRY_PLANNING.value,
             HumanResolutionStrategy.FAIL_PROJECT.value,
             HumanResolutionStrategy.ACKNOWLEDGE.value,
         ),
+        help="use one strategy listed by code-mule inspect",
     )
     _state_file(resolve)
 

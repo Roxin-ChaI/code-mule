@@ -27,6 +27,7 @@ class DiagnosisBlockerCategory(StrEnum):
 
 class DiagnosisStage(StrEnum):
     NONE = "none"
+    PLANNING = "planning"
     WORKER_INPUT = "worker_input"
     WORKER_APPROVAL = "worker_approval"
     EXTERNAL_SIDE_EFFECT = "external_side_effect"

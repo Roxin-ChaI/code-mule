@@ -16,6 +16,7 @@ from code_mule.domain.worker_verification import (
     WorkerCheckType,
     safe_check_name,
 )
+from code_mule.human import planning_failure_is_persisted
 from code_mule.state.models import ProjectState
 from code_mule.recovery.service import RecoveryClassifier
 from code_mule.revision import latest_revision
@@ -262,7 +263,7 @@ class ProjectDiagnosisService:
                 DiagnosisNextAction.INSPECT,
             )
         if pending:
-            return _HUMAN_ACTIONS.get(
+            classification = _HUMAN_ACTIONS.get(
                 pending[0].category,
                 _Classification(
                     DiagnosisBlockerCategory.INCONSISTENT_STATE,
@@ -273,6 +274,9 @@ class ProjectDiagnosisService:
                     DiagnosisNextAction.INSPECT,
                 ),
             )
+            if planning_failure_is_persisted(state, pending[0]):
+                return replace(classification, stage=DiagnosisStage.PLANNING)
+            return classification
         status = state.project.status
         if status is ProjectStatus.PAUSED_BY_BOSS:
             return _Classification(

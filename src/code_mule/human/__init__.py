@@ -6,6 +6,9 @@ from .service import (
     HumanResolutionError,
     HumanResolutionService,
     InvalidHumanResolution,
+    allowed_resolution_strategies,
+    planning_failure_is_persisted,
+    planning_retry_is_safe,
 )
 
 __all__ = [
@@ -13,6 +16,9 @@ __all__ = [
     "HumanResolutionError",
     "HumanResolutionService",
     "InvalidHumanResolution",
+    "allowed_resolution_strategies",
     "pending_action",
+    "planning_failure_is_persisted",
+    "planning_retry_is_safe",
     "request_human_action",
 ]

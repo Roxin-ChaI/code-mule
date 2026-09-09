@@ -15,7 +15,7 @@ from code_mule.progress import (
     ProgressSink,
     resilient_progress_sink,
 )
-from code_mule.recovery import SafePointKind
+from code_mule.recovery import ExecutionPhase, SafePointKind
 from code_mule.recovery.state import with_safe_point
 from code_mule.state.models import ProjectState
 from code_mule.supervisor.contracts import PlanProposal, PlanRequest
@@ -269,6 +269,7 @@ class ProjectPlanningService:
             event_id_factory=self._event_id_factory,
             source_event_types=(event_type,),
             source_metadata=failure_metadata,
+            phase=ExecutionPhase.PLANNING,
         )
         self._store.save(failed)
         self._emit(

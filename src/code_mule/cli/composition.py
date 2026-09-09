@@ -27,6 +27,7 @@ from code_mule.human import (
     HumanResolutionError,
     HumanResolutionService,
     pending_action,
+    planning_failure_is_persisted,
 )
 from code_mule.git_delivery import (
     GitDeliveryService,
@@ -57,7 +58,13 @@ from code_mule.orchestrator import (
     ResumeCommand,
     StopCommand,
 )
-from code_mule.planning import ProjectPlanningRequest, ProjectPlanningService
+from code_mule.planning import (
+    InvalidPlanProposal,
+    PlanMaterializationError,
+    ProjectPlanningRequest,
+    ProjectPlanningService,
+    SupervisorPlanningError,
+)
 from code_mule.progress import ConsoleProgressRenderer
 from code_mule.project_verification.service import (
     ProjectFinalizationService,
@@ -365,6 +372,15 @@ class ProductionCliComposition:
                         )
             except KeyboardInterrupt:
                 self._raise_interrupted()
+            except (
+                SupervisorPlanningError,
+                InvalidPlanProposal,
+                PlanMaterializationError,
+            ):
+                expected = self._planning_human_action_result(verbose=verbose)
+                if expected is None:
+                    raise
+                return expected
             final = self._load()
             return self._execution_result(final, outcome, verbose=verbose)
         if status is ProjectStatus.RUNNING:
@@ -708,6 +724,13 @@ class ProductionCliComposition:
             f"Strategy    {strategy.value.replace('_', ' ').title()}",
             f"Project     {status_label(state.project.status)}",
         )
+        if strategy is HumanResolutionStrategy.RETRY_PLANNING:
+            lines += (
+                "",
+                "No Plan or Worker was created by this resolution.",
+                "Next",
+                "  code-mule recover",
+            )
         if verbose:
             lines += (
                 f"action_id: {action.id}",
@@ -1056,6 +1079,33 @@ class ProductionCliComposition:
             else CliExitCode.SUCCESS
         )
         return CliCommandResult(code, lines)
+
+    def _planning_human_action_result(
+        self, *, verbose: bool
+    ) -> CliCommandResult | None:
+        """Project an already-persisted PLAN gate without masking other failures."""
+
+        state = self._load()
+        if state.project.status is not ProjectStatus.HUMAN_REQUIRED:
+            return None
+        try:
+            action = pending_action(state)
+        except ValueError:
+            return None
+        if (
+            action is None
+            or not planning_failure_is_persisted(state, action)
+        ):
+            return None
+        return CliCommandResult(
+            CliExitCode.HUMAN_ACTION_REQUIRED,
+            render_human_action(
+                action,
+                verbose=verbose,
+                state=state,
+                terminal=TerminalDashboard.for_stream(self._stdout),
+            ),
+        )
 
 
 __all__ = ["ProductionCliComposition", "RuntimeComposition", "RuntimeFactory"]

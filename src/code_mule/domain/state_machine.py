@@ -57,6 +57,7 @@ _ALLOWED_TRANSITIONS: dict[ProjectStatus, frozenset[ProjectStatus]] = {
     ),
     ProjectStatus.HUMAN_REQUIRED: frozenset(
         {
+            ProjectStatus.PLANNING,
             ProjectStatus.RUNNING,
             ProjectStatus.PAUSED_BY_BOSS,
             ProjectStatus.FAILED,

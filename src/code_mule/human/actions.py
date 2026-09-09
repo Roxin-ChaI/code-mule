@@ -49,6 +49,7 @@ def request_human_action(
     source_event_types: tuple[str, ...],
     source_metadata: dict[str, str] | None = None,
     worker_input: WorkerInputDetails | None = None,
+    phase: ExecutionPhase | None = None,
 ) -> ProjectState:
     """Persist a single typed action and enter HUMAN_REQUIRED atomically."""
 
@@ -145,7 +146,7 @@ def request_human_action(
     return with_stop_boundary(
         updated,
         reason=reason,
-        phase=ExecutionPhase.WORKER if task_id else ExecutionPhase.PROJECT,
+        phase=(phase or (ExecutionPhase.WORKER if task_id else ExecutionPhase.PROJECT)),
         safe_point=SafePointKind.HUMAN_GATE,
         recoverability=(
             BoundaryRecoverability.UNCERTAIN

@@ -282,6 +282,8 @@ def render_human_action(
         lines += (f"Request     {view.request}",)
     if action.category is HumanActionCategory.WORKER_VERIFICATION and state is not None:
         lines += _render_verification_failure(state, action, verbose=verbose)
+    if action.category is HumanActionCategory.SUPERVISOR_FAILURE and state is not None:
+        lines += _render_planning_failure(state, action)
     lines += (f"Risk        {view.risk}", "", (
         "No delivery commit was created. Worker changes were preserved."
         if action.category is HumanActionCategory.WORKER_VERIFICATION
@@ -308,6 +310,24 @@ def render_human_action(
             "Acknowledging the action does not resume execution:",
             f"  code-mule resolve {view.action_id} --strategy acknowledge",
         )
+    elif state is not None:
+        from code_mule.human import allowed_resolution_strategies
+
+        strategies = allowed_resolution_strategies(state, action)
+        if strategies:
+            lines += (
+                "",
+                "Allowed strategies:",
+                *(f"  {strategy.value}" for strategy in strategies),
+                "",
+                "Resolve:",
+                *(
+                    f"  code-mule resolve {view.action_id} --strategy {strategy.value}"
+                    for strategy in strategies
+                ),
+            )
+        else:
+            lines += ("", "No resolve strategy is available for this action.")
     else:
         lines += (
             "",
@@ -335,6 +355,73 @@ def render_human_action(
     if terminal is not None and terminal.interactive:
         return human_dashboard(action, state, terminal, lines, verbose=verbose)
     return lines if terminal is None else terminal.legacy(lines)
+
+
+def _render_planning_failure(
+    state: ProjectState, action: HumanAction
+) -> tuple[str, ...]:
+    """Render only allowlisted typed PLAN failure evidence."""
+
+    from code_mule.human import (
+        planning_failure_is_persisted,
+        planning_retry_is_safe,
+    )
+    from code_mule.supervisor import (
+        SupervisorFailureCategory,
+        supervisor_failure_is_retryable,
+    )
+
+    boundary = state.latest_execution_stop
+    events = tuple(
+        event
+        for event in state.events
+        if event.event_type in {"planning.failed", "planning.proposal_rejected"}
+        and event.entity_id == state.project.id
+        and event.timestamp == action.created_at
+    )
+    if len(events) != 1 or not planning_failure_is_persisted(state, action):
+        return ()
+    metadata = events[0].metadata
+    try:
+        category = SupervisorFailureCategory(metadata["failure_category"])
+    except (KeyError, ValueError):
+        category = None
+    attempts_text = "Unknown"
+    attempt_count = metadata.get("attempt_count")
+    if (
+        attempt_count is not None
+        and attempt_count.isascii()
+        and attempt_count.isdigit()
+    ):
+        parsed_attempts = int(attempt_count)
+        if 1 <= parsed_attempts <= 100:
+            attempts_text = str(parsed_attempts)
+    retryable = (
+        "Unknown"
+        if category is None
+        else "Yes" if supervisor_failure_is_retryable(category) else "No"
+    )
+    failure = (
+        "Unavailable"
+        if category is None
+        else humanize_identifier(category.value)
+    )
+    return (
+        "",
+        "SUPERVISOR PLANNING FAILURE",
+        "Stage        Planning",
+        f"Failure      {failure}",
+        f"Attempts     {attempts_text}",
+        f"Retryable    {retryable}",
+        f"Plan created {'Yes' if state.plans else 'No'}",
+        f"Worker started {'Yes' if boundary.worker_started else 'No'}",
+        "Fresh planning "
+        + (
+            "Safe after explicit resolution"
+            if planning_retry_is_safe(state, action)
+            else "Not proven safe"
+        ),
+    )
 
 
 def _render_verification_failure(state: ProjectState, action: HumanAction, *, verbose: bool) -> tuple[str, ...]:
