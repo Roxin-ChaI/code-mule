@@ -7,6 +7,7 @@ from code_mule.domain import (
     HumanActionStatus,
     HumanResolutionStrategy,
     ProjectStatus,
+    ProjectRevision,
     TaskStatus,
     WorkerInputDetails,
 )
@@ -16,7 +17,11 @@ from code_mule.human import (
     HumanResolutionService,
     InvalidHumanResolution,
     request_human_action,
+    allowed_resolution_strategies,
 )
+from code_mule.recovery import ExecutionPhase, RecoveryMode
+from code_mule.recovery.service import RecoveryClassifier
+from planning.test_validation import empty_state
 from state import make_project_state
 
 
@@ -63,6 +68,33 @@ def worker_input_state():
         source,
         human_actions=(action,),
         git_baselines=(GitBaseline("task-1", "/repo", "a" * 40, ()),),
+    )
+
+
+def planning_failure_state():
+    base = empty_state(status=ProjectStatus.PLANNING)
+    base = replace(
+        base,
+        project=replace(base.project, objective="Build a calculator"),
+    )
+    identifiers = iter(("planning-source", "planning-requested"))
+    return request_human_action(
+        base,
+        category=HumanActionCategory.SUPERVISOR_FAILURE,
+        summary="Planning failed",
+        requested_action="Inspect and resolve",
+        risk="No Plan is trusted",
+        task_id=None,
+        operation_time=NOW,
+        action_id="planning-action",
+        event_id_factory=lambda: next(identifiers),
+        source_event_types=("planning.failed",),
+        source_metadata={
+            "operation": "plan",
+            "failure_category": "provider_authentication",
+            "attempt_count": "1",
+        },
+        phase=ExecutionPhase.PLANNING,
     )
 
 
@@ -168,6 +200,66 @@ class HumanResolutionServiceTests(unittest.TestCase):
         )
         self.assertIs(updated.project.status, ProjectStatus.FAILED)
         self.assertIs(updated.human_actions[0].status, HumanActionStatus.RESOLVED)
+
+    def test_planning_failure_exposes_and_applies_only_safe_fresh_retry(self):
+        state = planning_failure_state()
+        action = state.human_actions[0]
+        self.assertEqual(
+            allowed_resolution_strategies(state, action),
+            (
+                HumanResolutionStrategy.RETRY_PLANNING,
+                HumanResolutionStrategy.FAIL_PROJECT,
+                HumanResolutionStrategy.ACKNOWLEDGE,
+            ),
+        )
+        store = MemoryStore(state)
+
+        updated = service(store).resolve(
+            action.id, HumanResolutionStrategy.RETRY_PLANNING
+        )
+
+        self.assertIs(updated.project.status, ProjectStatus.PLANNING)
+        self.assertEqual(updated.plans, ())
+        self.assertEqual(updated.revisions, ())
+        self.assertEqual(updated.tasks, ())
+        self.assertIs(
+            RecoveryClassifier().classify(updated).recovery_mode,
+            RecoveryMode.FRESH_PLANNING,
+        )
+        with self.assertRaisesRegex(InvalidHumanResolution, "not HUMAN_REQUIRED"):
+            service(store).resolve(
+                action.id, HumanResolutionStrategy.RETRY_PLANNING
+            )
+
+    def test_planning_failure_rejects_task_retry_deterministically(self):
+        store = MemoryStore(planning_failure_state())
+        with self.assertRaisesRegex(InvalidHumanResolution, "not allowed"):
+            service(store).resolve(
+                "planning-action", HumanResolutionStrategy.RETRY_TASK
+            )
+        self.assertIs(store.state.project.status, ProjectStatus.HUMAN_REQUIRED)
+
+    def test_legacy_placeholder_revision_keeps_planning_retry_fail_closed(self):
+        state = planning_failure_state()
+        state = replace(
+            state,
+            revisions=(ProjectRevision(1, NOW),),
+        )
+        action = state.human_actions[0]
+
+        self.assertEqual(
+            allowed_resolution_strategies(state, action),
+            (
+                HumanResolutionStrategy.FAIL_PROJECT,
+                HumanResolutionStrategy.ACKNOWLEDGE,
+            ),
+        )
+        store = MemoryStore(state)
+        with self.assertRaisesRegex(InvalidHumanResolution, "not safe"):
+            service(store).resolve(
+                action.id, HumanResolutionStrategy.RETRY_PLANNING
+            )
+        self.assertIs(store.state.project.status, ProjectStatus.HUMAN_REQUIRED)
 
 
 if __name__ == "__main__":

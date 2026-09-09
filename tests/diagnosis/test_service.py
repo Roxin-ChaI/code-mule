@@ -8,6 +8,7 @@ from code_mule.diagnosis import (
     DiagnosisNextAction,
     DiagnosisRecoverability,
     ProjectDiagnosisService,
+    DiagnosisStage,
 )
 from code_mule.domain import (
     HumanActionCategory,
@@ -17,6 +18,8 @@ from code_mule.domain import (
     TaskStatus,
 )
 from code_mule.domain.models import HumanAction, WorkerInputDetails
+from code_mule.human import request_human_action
+from code_mule.recovery import ExecutionPhase
 from code_mule.state.serialization import serialize_project_state
 from tests.state import UPDATED, make_project_state
 
@@ -99,6 +102,51 @@ class ProjectDiagnosisServiceTests(unittest.TestCase):
                 self.assertIs(diagnosis.blocker_category, expected)
                 self.assertTrue(diagnosis.boss_action_required)
                 self.assertIs(diagnosis.recommended_next_action, DiagnosisNextAction.INSPECT)
+
+    def test_planning_supervisor_failure_has_planning_stage_and_next_action(self):
+        base = make_project_state()
+        planning = replace(
+            base,
+            project=replace(
+                base.project,
+                status=ProjectStatus.PLANNING,
+                active_plan_id=None,
+                current_task_id=None,
+                objective="Build it",
+            ),
+            plans=(),
+            milestones=(),
+            tasks=(),
+        )
+        identifiers = iter(("planning-failed", "action-requested"))
+        state = request_human_action(
+            planning,
+            category=HumanActionCategory.SUPERVISOR_FAILURE,
+            summary="Planning failed",
+            requested_action="Inspect and resolve",
+            risk="No Plan is trusted",
+            task_id=None,
+            operation_time=UPDATED,
+            action_id="planning-action",
+            event_id_factory=lambda: next(identifiers),
+            source_event_types=("planning.failed",),
+            source_metadata={"failure_category": "provider_authentication"},
+            phase=ExecutionPhase.PLANNING,
+        )
+
+        diagnosis = self.service.diagnose(state)
+
+        self.assertIs(diagnosis.blocker_stage, DiagnosisStage.PLANNING)
+        self.assertIs(
+            diagnosis.recommended_next_action, DiagnosisNextAction.INSPECT
+        )
+        self.assertNotEqual(diagnosis.recommended_next_action.value, "")
+
+    def test_task_supervisor_failure_remains_task_review(self):
+        diagnosis = self.service.diagnose(
+            self.human_state(HumanActionCategory.SUPERVISOR_FAILURE)
+        )
+        self.assertIs(diagnosis.blocker_stage, DiagnosisStage.TASK_REVIEW)
 
     def test_worker_verification_uses_safe_typed_event_fields(self):
         state = self.human_state(HumanActionCategory.WORKER_VERIFICATION)

@@ -12,6 +12,7 @@ from code_mule.planning import (
     SupervisorPlanningError,
 )
 from code_mule.progress import ProgressEventType, RecordingProgressSink
+from code_mule.recovery import ExecutionPhase, ExecutionStopReason
 from code_mule.supervisor import (
     SupervisorCallFailure,
     SupervisorFailureCategory,
@@ -173,6 +174,16 @@ class ProjectPlanningServiceTests(unittest.TestCase):
         self.assertEqual(store.save_calls, 2)
         self.assertIs(store.state.project.status, ProjectStatus.HUMAN_REQUIRED)
         self.assertEqual(store.state.events[-1].event_type, "planning.failed")
+        self.assertEqual(store.state.plans, ())
+        self.assertEqual(store.state.execution_attempts, ())
+        self.assertIs(
+            store.state.latest_execution_stop.phase, ExecutionPhase.PLANNING
+        )
+        self.assertIs(
+            store.state.latest_execution_stop.reason,
+            ExecutionStopReason.SUPERVISOR_FAILED,
+        )
+        self.assertFalse(store.state.latest_execution_stop.worker_started)
         self.assertNotIn("provider failed", str(store.state.events[-1].metadata))
         self.assertIs(progress.events[-1].type, ProgressEventType.PLANNING_FAILED)
 
