@@ -15,9 +15,11 @@ from code_mule.domain import (
     HumanResolutionStrategy,
     PlanStatus,
     ProjectStatus,
+    TaskStatus,
 )
 from code_mule.domain.models import Plan
 from code_mule.diagnosis import DiagnosisStage, ProjectDiagnosisService
+from code_mule.git_delivery import GitCommitResult
 from code_mule.human import (
     HumanResolutionService,
     allowed_resolution_strategies,
@@ -29,6 +31,11 @@ from code_mule.presentation import (
     render_project_diagnosis,
 )
 from code_mule.progress import ConsoleProgressRenderer
+from code_mule.project_verification.service import (
+    ProjectFinalizationService,
+    ProjectVerificationService,
+)
+from code_mule.project_verification import FinalReviewDecision
 from code_mule.recovery import (
     ExecutionAttempt,
     ExecutionAttemptStatus,
@@ -58,7 +65,11 @@ from code_mule.state.serialization import (
     serialize_project_state,
 )
 from code_mule.state.store import JsonProjectStateStore
+from code_mule.supervisor import FinalReviewResult
+from code_mule.supervisor.parsing import parse_impact_analysis_response
 from code_mule.supervisor.prompts import build_impact_analysis_prompt
+from code_mule.supervisor.schemas import impact_analysis_response_schema
+from code_mule.supervisor.service import SupervisorService
 from code_mule.supervisor import ImpactAnalysisRequest
 
 from revision.test_phase24 import (
@@ -92,6 +103,25 @@ class SequenceSupervisor:
     def analyze_change(self, request):
         self.requests.append(request)
         return self.proposals.pop(0)
+
+
+class CapturingModelClient:
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = []
+
+    def create_structured_response(self, **request):
+        self.calls.append(request)
+        return self.payload
+
+
+class ApprovingFinalSupervisor:
+    def final_review(self, request):
+        return FinalReviewResult(
+            FinalReviewDecision.APPROVE,
+            "Revision evidence is complete.",
+            (),
+        )
 
 
 class NoWorkerExecution:
@@ -179,6 +209,66 @@ class PostCompletionFailureFixture(unittest.TestCase):
             milestone_ids_reused=("M1",),
         )
 
+    @staticmethod
+    def lineage_conflict_proposal():
+        proposal = proposal_v2()
+        replacement = proposal.tasks_to_add[0]
+        return replace(
+            proposal,
+            tasks_to_add=(
+                replace(
+                    replacement,
+                    derived_from_task_ids=(replacement.supersedes_task_id,),
+                ),
+            ),
+        )
+
+    @staticmethod
+    def proposal_payload(proposal=None):
+        selected = proposal or proposal_v2()
+        return {
+            "change_request_id": selected.change_request_id,
+            "summary": selected.summary,
+            "architecture_impact": selected.architecture_impact,
+            "affected_components": list(selected.affected_components),
+            "affected_requirement_ids": list(selected.affected_requirement_ids),
+            "affected_task_ids": list(selected.affected_task_ids),
+            "affected_completed_tasks": list(selected.affected_completed_tasks),
+            "affected_in_progress_tasks": [],
+            "affected_pending_tasks": [],
+            "requirements_to_add": [],
+            "requirements_to_update": [],
+            "tasks_to_add": [
+                {
+                    "id": task.id,
+                    "title": task.title,
+                    "description": task.description,
+                    "dependencies": list(task.dependencies),
+                    "acceptance_criteria": list(task.acceptance_criteria),
+                    "requirement_ids": list(task.requirement_ids),
+                    "supersedes_task_id": task.supersedes_task_id,
+                    "derived_from_task_ids": list(task.derived_from_task_ids),
+                }
+                for task in selected.tasks_to_add
+            ],
+            "tasks_to_reopen": [],
+            "tasks_to_cancel": [],
+            "milestone_ids_reused": list(selected.milestone_ids_reused),
+            "milestones": [
+                {
+                    "id": milestone.id,
+                    "title": milestone.title,
+                    "task_ids": list(milestone.task_ids),
+                }
+                for milestone in selected.milestones
+            ],
+            "dependency_changes": [],
+            "task_requirement_updates": [],
+            "risks": list(selected.risks),
+            "recommendation": selected.recommendation,
+            "rationale": selected.rationale,
+        }
+
     def fail(self, *, state=None, supervisor=None):
         store = MemoryStore(state or self.requested)
         selected = supervisor or SequenceSupervisor((self.invalid_proposal(),))
@@ -195,6 +285,117 @@ class PostCompletionFailureFixture(unittest.TestCase):
 
 
 class ReplanningFailureEvidenceTests(PostCompletionFailureFixture):
+    def test_untyped_internal_materialization_error_is_not_masked_as_gate(self):
+        class BrokenReplanner(PostCompletionReplanner):
+            def _materialize(self, *args, **kwargs):
+                raise ValueError("internal invariant")
+
+        store = MemoryStore(self.requested)
+        service = BrokenReplanner(
+            store=store,
+            supervisor=SequenceSupervisor((proposal_v2(),)),
+            clock=Clock(NOW + timedelta(hours=3)),
+            plan_id_factory=lambda: "PLAN-2",
+            event_id_factory=EventIds(),
+        )
+
+        with self.assertRaisesRegex(ValueError, "internal invariant"):
+            service.replan(ChangeReplanningRequest("project-1", "CR-2"))
+
+        self.assertIs(store.state.project.status, ProjectStatus.REPLANNING)
+        self.assertEqual(store.state.human_actions, ())
+        self.assertEqual(len(store.state.plans), 1)
+        self.assertEqual(len(store.state.revisions), 1)
+
+    def test_conflicting_lineage_is_typed_before_materialization(self):
+        store, _ = self.fail(
+            supervisor=SequenceSupervisor((self.lineage_conflict_proposal(),))
+        )
+        action = store.state.human_actions[-1]
+        evidence = post_completion_replanning_failure_evidence(
+            store.state, action
+        )
+
+        self.assertIsNotNone(evidence)
+        self.assertEqual(
+            evidence.failure_code,
+            ReplanFailureCode.CONFLICTING_TASK_LINEAGE.value,
+        )
+        self.assertEqual(
+            evidence.field_path,
+            "tasks_to_add[*].derived_from_task_ids",
+        )
+        self.assertEqual(
+            evidence.failure_stage,
+            PostCompletionReplanningStage.PROPOSAL_VALIDATION.value,
+        )
+        self.assertEqual(len(store.state.plans), 1)
+        self.assertEqual(len(store.state.revisions), 1)
+        self.assertEqual(len(store.state.tasks), 3)
+        rendered = "\n".join(
+            render_human_action(action, state=store.state, verbose=True)
+        )
+        self.assertIn("Conflicting task lineage", rendered)
+        self.assertIn("tasks_to_add[*].derived_from_task_ids", rendered)
+
+    def test_post_completion_schema_and_prompt_advertise_only_fresh_graph(self):
+        schema = impact_analysis_response_schema(post_completion=True)
+        properties = schema["properties"]
+        for field_name in (
+            "affected_in_progress_tasks",
+            "affected_pending_tasks",
+            "tasks_to_reopen",
+            "tasks_to_cancel",
+            "milestone_ids_reused",
+            "dependency_changes",
+            "task_requirement_updates",
+        ):
+            self.assertEqual(properties[field_name]["maxItems"], 0)
+        self.assertEqual(properties["tasks_to_add"]["minItems"], 1)
+        self.assertEqual(properties["milestones"]["minItems"], 1)
+
+        replanning = replace(
+            self.requested,
+            project=replace(
+                self.requested.project, status=ProjectStatus.REPLANNING
+            ),
+            change_requests=(
+                replace(
+                    self.requested.change_requests[0],
+                    status=ChangeRequestStatus.ANALYZING,
+                ),
+            ),
+        )
+        request = ImpactAnalysisRequest(
+            replanning, replanning.change_requests[0]
+        )
+        payload = self.proposal_payload()
+        client = CapturingModelClient(payload)
+
+        result = SupervisorService(client).analyze_change(request)
+        _, prompt = build_impact_analysis_prompt(request)
+
+        self.assertEqual(result.tasks_to_add[0].id, "T4")
+        self.assertEqual(
+            client.calls[0]["schema"],
+            impact_analysis_response_schema(post_completion=True),
+        )
+        self.assertIn("never repeat supersedes_task_id", prompt)
+        self.assertIn("Historical reuse is semantic lineage", prompt)
+        self.assertIn("Code Mule owns the persistent Plan identity", prompt)
+
+    def test_parser_preserves_lineage_fields_without_reclassifying_history(self):
+        payload = self.proposal_payload(self.lineage_conflict_proposal())
+
+        parsed = parse_impact_analysis_response(payload)
+
+        task = parsed.tasks_to_add[0]
+        self.assertEqual(task.id, "T4")
+        self.assertEqual(task.supersedes_task_id, "T3")
+        self.assertEqual(task.derived_from_task_ids, ("T3",))
+        self.assertEqual(parsed.milestone_ids_reused, ())
+        self.assertEqual(parsed.milestones[0].task_ids, ("T4",))
+
     def test_sanitized_failure_is_typed_before_any_v2_materialization(self):
         original_plan = serialize_project_state(self.requested)["plans"][0]
         original_revision = serialize_project_state(self.requested)["revisions"][0]
@@ -475,7 +676,9 @@ class ReplanningFailureCliTests(PostCompletionFailureFixture):
     def test_expected_gate_is_action_required_and_recover_uses_same_change(self):
         state_file = Path(self.temporary.name) / "project-state.json"
         JsonProjectStateStore(state_file).save(self.requested)
-        supervisor = SequenceSupervisor((self.invalid_proposal(), proposal_v2()))
+        supervisor = SequenceSupervisor(
+            (self.lineage_conflict_proposal(), proposal_v2())
+        )
         execution = NoWorkerExecution()
         stdout = StringIO()
         stderr = StringIO()
@@ -550,6 +753,105 @@ class ReplanningFailureCliTests(PostCompletionFailureFixture):
         self.assertEqual(len(final.revisions), 2)
         self.assertEqual(final.plans[-1].change_request_id, "CR-2")
         self.assertEqual(final.revisions[-1].change_request_id, "CR-2")
+
+
+class RevisionMaterializationRecoveryE2E(PostCompletionFailureFixture):
+    def test_failed_contract_then_fresh_revision_completes_append_only(self):
+        store, _ = self.fail(
+            supervisor=SequenceSupervisor((self.lineage_conflict_proposal(),))
+        )
+        action = store.state.human_actions[-1]
+        revision_one_before = serialize_project_state(store.state)["revisions"][0]
+        plan_one_before = serialize_project_state(store.state)["plans"][0]
+        tasks_before = serialize_project_state(store.state)["tasks"]
+
+        HumanResolutionService(
+            store,
+            clock=Clock(NOW + timedelta(hours=4)),
+            event_id_factory=EventIds(),
+            resolution_id_factory=lambda: "resolution-retry",
+        ).resolve(action.id, HumanResolutionStrategy.RETRY_REPLANNING)
+        restarted = MemoryStore(
+            deserialize_project_state(serialize_project_state(store.state))
+        )
+        supervisor = SequenceSupervisor((proposal_v2(),))
+        outcome = PostCompletionReplanner(
+            store=restarted,
+            supervisor=supervisor,
+            clock=Clock(NOW + timedelta(hours=5)),
+            plan_id_factory=lambda: "PLAN-2",
+            event_id_factory=EventIds(),
+        ).replan(ChangeReplanningRequest("project-1", "CR-2"))
+        materialized = restarted.state
+
+        self.assertEqual(outcome.plan_version, 2)
+        self.assertEqual(len(supervisor.requests), 1)
+        self.assertEqual(len(materialized.plans), 2)
+        self.assertEqual(len(materialized.revisions), 2)
+        self.assertEqual(len(materialized.milestones), 2)
+        self.assertEqual(len(materialized.tasks), 4)
+        self.assertEqual(
+            serialize_project_state(materialized)["revisions"][0],
+            revision_one_before,
+        )
+        self.assertEqual(
+            serialize_project_state(materialized)["plans"][0],
+            plan_one_before,
+        )
+        self.assertEqual(
+            serialize_project_state(materialized)["tasks"][:3], tasks_before
+        )
+        new_task = materialized.tasks[-1]
+        self.assertEqual(new_task.milestone_id, "M2")
+        self.assertEqual(new_task.supersedes_task_id, "T3")
+        self.assertEqual(new_task.derived_from_task_ids, ())
+
+        (self.root / "counter.js").write_text(
+            "localStorage.setItem('counter', '1');\n"
+        )
+        subprocess.run(("git", "add", "counter.js"), cwd=self.root, check=True)
+        subprocess.run(
+            ("git", "commit", "-qm", "feat: persist counter"),
+            cwd=self.root,
+            check=True,
+        )
+        head_two = self.git("rev-parse", "HEAD")
+        commit = GitCommitResult(
+            new_task.id,
+            str(self.root),
+            self.head,
+            head_two,
+            "feat: persist counter",
+            ("counter.js",),
+            ("counter.js",),
+            NOW + timedelta(hours=6),
+        )
+        ready = replace(
+            materialized,
+            tasks=materialized.tasks[:-1]
+            + (replace(new_task, status=TaskStatus.COMPLETED),),
+            git_commit_results=materialized.git_commit_results + (commit,),
+        )
+        final_store = MemoryStore(ready)
+        final = ProjectFinalizationService(
+            store=final_store,
+            verification=ProjectVerificationService(
+                clock=Clock(NOW + timedelta(hours=7)),
+                result_id_factory=lambda: "verify-v2",
+                environment={"PATH": "/usr/bin:/bin"},
+            ),
+            supervisor=ApprovingFinalSupervisor(),
+            clock=Clock(NOW + timedelta(hours=8)),
+            event_id_factory=EventIds(),
+        ).finalize(ready)
+
+        self.assertIs(final.project.status, ProjectStatus.DONE)
+        self.assertEqual(len(final.plans), 2)
+        self.assertEqual(len(final.revisions), 2)
+        self.assertEqual(final.revisions[0].completion_head, self.head)
+        self.assertEqual(final.revisions[1].completion_head, head_two)
+        self.assertEqual(self.git("rev-list", "--count", "HEAD"), "2")
+        self.assertEqual(self.git("status", "--short"), "")
 
 
 if __name__ == "__main__":
