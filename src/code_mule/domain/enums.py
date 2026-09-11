@@ -115,6 +115,7 @@ class HumanResolutionStrategy(StrEnum):
     RETRY_TASK = "retry_task"
     RETRY_PLANNING = "retry_planning"
     RETRY_REPLANNING = "retry_replanning"
+    CONTINUE_AFTER_REPORT = "continue_after_report"
     FAIL_PROJECT = "fail_project"
     ACKNOWLEDGE = "acknowledge"
     REQUEST_CHANGE = "request_change"

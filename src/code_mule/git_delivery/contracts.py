@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from code_mule.domain.worker_verification import WorkerVerificationCheck
 
 
@@ -17,6 +18,11 @@ def _paths(values: tuple[str, ...], field_name: str) -> None:
         _non_empty(value, field_name)
         if value.startswith("/") or value == ".." or value.startswith("../"):
             raise ValueError(f"{field_name} must contain repository-relative paths")
+
+
+class GitDeliveryMode(StrEnum):
+    COMMIT_REQUIRED = "commit_required"
+    NO_COMMIT_REQUIRED = "no_commit_required"
 
 
 @dataclass(frozen=True)
@@ -53,6 +59,64 @@ class GitChangeSet:
             raise ValueError("untracked_paths must be included in changed_paths")
         if not set(self.staged_paths).issubset(changed):
             raise ValueError("staged_paths must be included in changed_paths")
+
+    @property
+    def delivery_mode(self) -> GitDeliveryMode:
+        return (
+            GitDeliveryMode.COMMIT_REQUIRED
+            if self.changed_paths
+            else GitDeliveryMode.NO_COMMIT_REQUIRED
+        )
+
+
+@dataclass(frozen=True)
+class GitNoCommitResult:
+    task_id: str
+    repository_root: str
+    baseline_head: str
+    verified_head: str
+    verified_at: datetime
+    delivery_mode: GitDeliveryMode = GitDeliveryMode.NO_COMMIT_REQUIRED
+
+    def __post_init__(self) -> None:
+        _non_empty(self.task_id, "task_id")
+        _non_empty(self.repository_root, "repository_root")
+        _non_empty(self.baseline_head, "baseline_head")
+        _non_empty(self.verified_head, "verified_head")
+        if self.delivery_mode is not GitDeliveryMode.NO_COMMIT_REQUIRED:
+            raise ValueError("GitNoCommitResult must not require a commit")
+        if self.verified_head != self.baseline_head:
+            raise ValueError("no-commit delivery must preserve HEAD")
+
+
+@dataclass(frozen=True)
+class NoChangeDeliveryRecoveryEvidence:
+    task_id: str
+    attempt: int
+    baseline_head: str
+    current_head: str | None
+    reported_paths: tuple[str, ...]
+    actual_unstaged_paths: tuple[str, ...]
+    actual_staged_paths: tuple[str, ...]
+    report_persisted: bool
+    supervisor_reviewed: bool
+    commit_created: bool
+    delivery_mode: GitDeliveryMode
+    continuation_safe: bool
+
+    def __post_init__(self) -> None:
+        _non_empty(self.task_id, "task_id")
+        if self.attempt < 1:
+            raise ValueError("attempt must be positive")
+        _non_empty(self.baseline_head, "baseline_head")
+        for paths, name in (
+            (self.reported_paths, "reported_paths"),
+            (self.actual_unstaged_paths, "actual_unstaged_paths"),
+            (self.actual_staged_paths, "actual_staged_paths"),
+        ):
+            _paths(paths, name)
+        if self.current_head == "":
+            raise ValueError("current_head must not be empty")
 
 
 @dataclass(frozen=True)
@@ -123,9 +187,12 @@ __all__ = [
     "GitChangeSet",
     "GitCommitError",
     "GitCommitResult",
+    "GitDeliveryMode",
     "GitDeliveryError",
     "GitOwnershipError",
     "GitStagingError",
+    "GitNoCommitResult",
+    "NoChangeDeliveryRecoveryEvidence",
     "UnexpectedGitHead",
     "WorkerVerificationError",
 ]

@@ -13,11 +13,12 @@ from code_mule.domain.worker_verification import evidence_matches_text, legacy_c
 
 from .contracts import (
     DirtyGitBaseline,
-    EmptyGitChangeSet,
     GitBaseline,
     GitChangeSet,
     GitCommitError,
     GitCommitResult,
+    GitDeliveryMode,
+    GitNoCommitResult,
     GitOwnershipError,
     GitStagingError,
     UnexpectedGitHead,
@@ -90,10 +91,6 @@ class GitDeliveryService:
         self._assert_head(root, baseline.baseline_head)
         self._required(("git", "diff", "--check"), cwd=root)
         changed, untracked, staged = self._status_paths(root)
-        if not changed:
-            raise EmptyGitChangeSet(
-                "accepted implementation Task produced no repository changes"
-            )
         expected = self._normalize_owned_paths(owned_paths)
         if set(changed) != set(expected):
             raise GitOwnershipError(
@@ -113,6 +110,32 @@ class GitDeliveryService:
             changed_paths=changed,
             untracked_paths=untracked,
             staged_paths=(),
+        )
+
+    def verify_no_commit(
+        self, change_set: GitChangeSet, task: Task
+    ) -> GitNoCommitResult:
+        """Revalidate one approved zero-diff delivery without creating a commit."""
+
+        if change_set.task_id != task.id:
+            raise GitOwnershipError("no-commit delivery targets a different Task")
+        if change_set.delivery_mode is not GitDeliveryMode.NO_COMMIT_REQUIRED:
+            raise GitOwnershipError("changed Task still requires a commit")
+        root = Path(change_set.repository_root)
+        self._assert_root(root)
+        self._assert_head(root, change_set.baseline_head)
+        changed, _, staged = self._status_paths(root)
+        if changed or staged:
+            raise GitOwnershipError(
+                "repository changed after zero-diff ownership validation"
+            )
+        self._required(("git", "diff", "--check"), cwd=root)
+        return GitNoCommitResult(
+            task.id,
+            str(root),
+            change_set.baseline_head,
+            change_set.baseline_head,
+            self._clock(),
         )
 
     def capture_partial_paths(self, baseline: GitBaseline) -> tuple[str, ...]:

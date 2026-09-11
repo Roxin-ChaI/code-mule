@@ -163,6 +163,13 @@ def allowed_resolution_strategies(
         strategies.append(HumanResolutionStrategy.RETRY_PLANNING)
     if post_completion_replanning_retry_is_safe(state, action):
         strategies.append(HumanResolutionStrategy.RETRY_REPLANNING)
+    from code_mule.git_delivery.recovery import (
+        no_change_delivery_recovery_evidence,
+    )
+
+    no_change = no_change_delivery_recovery_evidence(state, action)
+    if no_change is not None and no_change.continuation_safe:
+        strategies.append(HumanResolutionStrategy.CONTINUE_AFTER_REPORT)
     acknowledged = any(
         resolution.action_id == action.id
         and resolution.strategy is HumanResolutionStrategy.ACKNOWLEDGE
@@ -373,6 +380,26 @@ class HumanResolutionService:
             )
             summary = (
                 "Boss explicitly authorized fresh post-completion replanning"
+            )
+        elif strategy is HumanResolutionStrategy.CONTINUE_AFTER_REPORT:
+            from code_mule.git_delivery.recovery import (
+                no_change_delivery_recovery_evidence,
+            )
+
+            evidence = no_change_delivery_recovery_evidence(state, action)
+            if evidence is None or not evidence.continuation_safe:
+                raise InvalidHumanResolution(
+                    "continue_after_report safety proof no longer holds"
+                )
+            validate_transition(project.status, ProjectStatus.RUNNING)
+            project = replace(
+                project,
+                status=ProjectStatus.RUNNING,
+                current_task_id=evidence.task_id,
+                updated_at=operation_time,
+            )
+            summary = (
+                "Boss authorized review of the trusted zero-change Worker report"
             )
         elif strategy is HumanResolutionStrategy.FAIL_PROJECT:
             validate_transition(project.status, ProjectStatus.FAILED)

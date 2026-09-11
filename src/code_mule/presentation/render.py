@@ -95,6 +95,8 @@ def render_project_diagnosis(
     if diagnosis.worker_uncertainty is not None:
         evidence = diagnosis.worker_uncertainty
         lines += _worker_uncertainty_lines(evidence, include_context=False)
+    if diagnosis.no_change_delivery is not None:
+        lines += _no_change_delivery_lines(diagnosis.no_change_delivery)
     lines += (
         "",
         "BOSS ACTION",
@@ -308,6 +310,7 @@ def render_human_action(
         if state is None
         else final_review_human_judgment_evidence(state, action)
     )
+    no_change = None
     category = "Final review decision" if final_review is not None else view.category
     lines = (
         "ACTION REQUIRED",
@@ -388,6 +391,15 @@ def render_human_action(
             lines += ("", "RECOVERY UNCERTAIN") + _worker_uncertainty_lines(
                 uncertainty, include_context=True
             )
+    if state is not None:
+        from code_mule.git_delivery.recovery import (
+            no_change_delivery_recovery_evidence,
+        )
+
+        no_change = no_change_delivery_recovery_evidence(state, action)
+        if no_change is not None:
+            lines += ("", "NO-CHANGE DELIVERY REVIEW")
+            lines += _no_change_delivery_lines(no_change)
     lines += (f"Risk        {view.risk}", "", (
         "No delivery commit was created. Worker changes were preserved."
         if action.category is HumanActionCategory.WORKER_VERIFICATION
@@ -438,11 +450,14 @@ def render_human_action(
                     "Acknowledging only records awareness and pauses safely; it does not approve completion.",
                 )
             elif action.category is HumanActionCategory.RECOVERY_UNCERTAIN:
+                lines += ("", "Acknowledge records awareness only. The Human Gate stays pending,",
+                          "the Task remains incomplete, and no retry or commit is performed.")
                 lines += (
-                    "",
-                    "Acknowledge records awareness only. The Human Gate stays pending,",
-                    "the Task remains incomplete, and no retry or commit is performed.",
-                    "After acknowledgement, inspect manually or fail the project explicitly.",
+                    (
+                        "The verified continue_after_report option remains available after acknowledgement."
+                    )
+                    if no_change is not None and no_change.continuation_safe
+                    else "After acknowledgement, inspect manually or fail the project explicitly.",
                 )
         else:
             lines += ("", "No resolve strategy is available for this action.")
@@ -521,6 +536,29 @@ def _worker_uncertainty_lines(evidence, *, include_context: bool) -> tuple[str, 
         f"Retry safe        {'Yes' if evidence.retry_safe else 'No'}",
     )
     return lines
+
+
+def _no_change_delivery_lines(evidence) -> tuple[str, ...]:
+    reported = ", ".join(evidence.reported_paths) or "None"
+    unstaged = ", ".join(evidence.actual_unstaged_paths) or "None"
+    staged = ", ".join(evidence.actual_staged_paths) or "None"
+    return (
+        f"Task              {evidence.task_id}",
+        f"Attempt           {evidence.attempt}",
+        f"Expected baseline {evidence.baseline_head}",
+        f"Reported changes  {reported}",
+        f"Actual unstaged   {unstaged}",
+        f"Actual staged     {staged}",
+        f"Current HEAD      {evidence.current_head or 'Unavailable'}",
+        f"Commit created    {'Yes' if evidence.commit_created else 'No'}",
+        "Delivery          No repository changes",
+        "Commit            Not required after Supervisor approval",
+        "Supervisor review "
+        + ("Completed" if evidence.supervisor_reviewed else "Not started"),
+        "Continuation safe "
+        + ("Yes" if evidence.continuation_safe else "No"),
+        "Failure reason    Empty change set was rejected before review",
+    )
 
 
 def _render_planning_failure(

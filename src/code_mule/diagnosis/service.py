@@ -23,6 +23,7 @@ from code_mule.human import (
 from code_mule.state.models import ProjectState
 from code_mule.recovery.service import RecoveryClassifier
 from code_mule.recovery.uncertainty import worker_uncertainty_evidence
+from code_mule.git_delivery.recovery import no_change_delivery_recovery_evidence
 from code_mule.revision import latest_revision
 from code_mule.project_verification import final_review_human_judgment_evidence
 
@@ -197,6 +198,11 @@ class ProjectDiagnosisService:
             if action is None
             else worker_uncertainty_evidence(state, action)
         )
+        no_change_delivery = (
+            None
+            if action is None
+            else no_change_delivery_recovery_evidence(state, action)
+        )
         if worker_uncertainty is not None:
             classification = _Classification(
                 DiagnosisBlockerCategory.RECOVERY_UNCERTAIN,
@@ -206,6 +212,20 @@ class ProjectDiagnosisService:
                     "side-effect outcome is not proven."
                 ),
                 DiagnosisRecoverability.UNCERTAIN,
+                True,
+                DiagnosisNextAction.INSPECT,
+            )
+        elif no_change_delivery is not None:
+            classification = _Classification(
+                DiagnosisBlockerCategory.RECOVERY_UNCERTAIN,
+                DiagnosisStage.GIT_DELIVERY,
+                (
+                    "A trusted zero-change report was rejected before "
+                    "Supervisor review."
+                ),
+                DiagnosisRecoverability.RECOVERABLE
+                if no_change_delivery.continuation_safe
+                else DiagnosisRecoverability.UNCERTAIN,
                 True,
                 DiagnosisNextAction.INSPECT,
             )
@@ -350,6 +370,7 @@ class ProjectDiagnosisService:
                 else final_review.completion_head_candidate
             ),
             worker_uncertainty=worker_uncertainty,
+            no_change_delivery=no_change_delivery,
         )
 
     def _classification(self, state, pending, inconsistent) -> _Classification:

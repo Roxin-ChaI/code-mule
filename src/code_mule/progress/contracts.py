@@ -36,6 +36,7 @@ class ProgressEventType(StrEnum):
     GIT_BASELINE_CAPTURED = "git.baseline_captured"
     GIT_CHANGE_SET_VERIFIED = "git.change_set_verified"
     GIT_COMMITTED = "git.committed"
+    GIT_NO_COMMIT_REQUIRED = "git.no_commit_required"
     GIT_DELIVERY_FAILED = "git.delivery_failed"
     WORKER_STARTING = "worker.starting"
     WORKER_STARTED = "worker.started"

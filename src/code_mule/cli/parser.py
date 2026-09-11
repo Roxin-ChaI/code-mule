@@ -108,6 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
             HumanResolutionStrategy.RETRY_TASK.value,
             HumanResolutionStrategy.RETRY_PLANNING.value,
             HumanResolutionStrategy.RETRY_REPLANNING.value,
+            HumanResolutionStrategy.CONTINUE_AFTER_REPORT.value,
             HumanResolutionStrategy.FAIL_PROJECT.value,
             HumanResolutionStrategy.ACKNOWLEDGE.value,
         ),

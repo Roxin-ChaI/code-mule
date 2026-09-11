@@ -28,6 +28,8 @@ from code_mule.git_delivery import (
     GitBaseline,
     GitChangeSet,
     GitCommitResult,
+    GitDeliveryMode,
+    GitNoCommitResult,
     GitDeliveryError,
     WorkerVerificationError,
     GitOwnershipError,
@@ -113,6 +115,10 @@ class GitDelivery(Protocol):
     ) -> GitChangeSet: ...
 
     def commit(self, change_set: GitChangeSet, task: Task) -> GitCommitResult: ...
+
+    def verify_no_commit(
+        self, change_set: GitChangeSet, task: Task
+    ) -> GitNoCommitResult: ...
 
 
 class TaskCycleService:
@@ -908,6 +914,53 @@ class TaskCycleService:
                 events=latest.events + (change_event,),
             )
             self._store.save(with_change_set)
+            if change_set.delivery_mode is GitDeliveryMode.NO_COMMIT_REQUIRED:
+                result = self._git_delivery.verify_no_commit(
+                    change_set, latest_task
+                )
+                latest = self._store.load()
+                event = self._event(
+                    latest,
+                    self._task(latest, task.id),
+                    "git.no_commit_required",
+                    result.verified_at,
+                    {
+                        "delivery_mode": result.delivery_mode.value,
+                        "verified_head": result.verified_head,
+                    },
+                )
+                delivered = replace(
+                    latest,
+                    project=replace(
+                        latest.project, updated_at=result.verified_at
+                    ),
+                    events=latest.events + (event,),
+                )
+                delivered = update_attempt(
+                    delivered,
+                    task.id,
+                    attempt,
+                    ExecutionAttemptStatus.DELIVERED,
+                    terminal_at=result.verified_at,
+                )
+                delivered = with_safe_point(
+                    delivered,
+                    SafePointKind.TASK_DELIVERED,
+                    result.verified_at,
+                    task_id=task.id,
+                    attempt=attempt,
+                    head_sha=result.verified_head,
+                )
+                self._store.save(delivered)
+                self._emit_progress(
+                    delivered,
+                    self._task(delivered, task.id),
+                    ProgressEventType.GIT_NO_COMMIT_REQUIRED,
+                    "Task required no repository commit",
+                    attempt=attempt,
+                    metadata={"delivery_mode": result.delivery_mode.value},
+                )
+                return True
             result = self._git_delivery.commit(change_set, latest_task)
             latest = self._store.load()
             commit_event = self._event(

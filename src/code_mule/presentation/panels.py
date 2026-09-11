@@ -73,6 +73,14 @@ def diagnosis_dashboard(diagnosis, terminal, lines, *, verbose=False):
             row("Ownership", humanize_identifier(evidence.ownership_status.value)),
             row("Retry safe", "Yes" if evidence.retry_safe else "No"),
         )
+    if diagnosis.no_change_delivery is not None:
+        evidence = diagnosis.no_change_delivery
+        diagnosis_rows += (
+            row("Delivery", "No repository changes"),
+            row("Supervisor", "Reviewed" if evidence.supervisor_reviewed else "Not reviewed"),
+            row("Continuation", "Safe" if evidence.continuation_safe else "Blocked"),
+            row("Commit", "Not required after approval"),
+        )
     sections = (
         DashboardSection("PROJECT · " + diagnosis.project_name, (
             row("Status", status_label(diagnosis.project_status)),

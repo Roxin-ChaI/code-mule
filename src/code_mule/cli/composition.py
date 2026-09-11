@@ -778,6 +778,7 @@ class ProductionCliComposition:
         if strategy in {
             HumanResolutionStrategy.RETRY_PLANNING,
             HumanResolutionStrategy.RETRY_REPLANNING,
+            HumanResolutionStrategy.CONTINUE_AFTER_REPORT,
         }:
             lines += (
                 "",
