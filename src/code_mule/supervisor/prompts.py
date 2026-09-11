@@ -14,6 +14,7 @@ from code_mule.domain.models import (
     Task,
 )
 from code_mule.state.models import ProjectState
+from code_mule.revision import latest_revision
 
 from .contracts import (
     ImpactAnalysisRequest,
@@ -62,7 +63,9 @@ def _render_plan(item: Plan) -> str:
     return (
         f"- id={_text(item.id)} version={item.version} status={item.status.value} "
         f"requirement_ids={_string_list(item.requirement_ids)} "
-        f"milestone_ids={_string_list(item.milestone_ids)}"
+        f"milestone_ids={_string_list(item.milestone_ids)} "
+        f"change_request_id={_optional_text(item.change_request_id)} "
+        f"revision_number={item.revision_number or 'none'}"
     )
 
 
@@ -413,6 +416,19 @@ def build_progress_report_prompt(
 
 def build_final_review_prompt(request: FinalReviewRequest) -> tuple[str, str]:
     result = request.verification_result
+    revision = latest_revision(request.project_state)
+    revision_change = (
+        None
+        if revision is None or revision.change_request_id is None
+        else next(
+            (
+                item
+                for item in request.project_state.change_requests
+                if item.id == revision.change_request_id
+            ),
+            None,
+        )
+    )
     checks = "\n".join(
         f"- {item.category.value}: {item.name} = {item.status.value}; "
         f"{_text(item.safe_summary)}"
@@ -422,19 +438,32 @@ def build_final_review_prompt(request: FinalReviewRequest) -> tuple[str, str]:
         f"- {item.task_id}: {item.commit_sha}"
         for item in request.project_state.git_commit_results
     ) or "- None recorded"
+    change_context = (
+        "- none"
+        if revision_change is None
+        else _render_change_request(revision_change)
+    )
     user_prompt = (
         f"{_render_project_state(request.project_state)}\n\n"
         "Current operation context:\n"
         "Operation: FINAL_REVIEW\n"
         f"Objective: {_text(request.project_state.project.objective or request.project_state.project.name)}\n"
         f"Active Plan ID: {_text(result.plan_id)}\n"
+        f"Revision: {revision.revision_number if revision is not None else 'none'}\n"
+        f"Boss-authorized revision change:\n{change_context}\n"
         f"Verified HEAD: {_text(result.verified_head)}\n"
         f"Project verification checks:\n{checks}\n"
         f"Task delivery commits:\n{commits}\n"
         "Return APPROVE only when the recorded Requirements, active Plan, completed "
         "Tasks, delivery commits, and deterministic verification evidence support "
         "project completion. Otherwise return HUMAN_REQUIRED. Do not return REWORK, "
-        "generate commands, or modify project state."
+        "generate commands, or modify project state. The active Plan remains active "
+        "during this review and is marked completed only after APPROVE, so active status "
+        "alone is not a completion defect. Put each bounded Boss-relevant finding in "
+        "issues; do not include hidden reasoning or raw evidence. When a persisted "
+        "applied ChangeRequest is bound to the current Revision and created_by=boss, "
+        "treat it as explicit Boss authorization to revise the baseline objective; "
+        "review the active Requirements and Plan against that revision change."
     )
     return _system_prompt(SupervisorOperation.FINAL_REVIEW), user_prompt
 

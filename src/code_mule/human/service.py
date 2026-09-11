@@ -163,12 +163,18 @@ def allowed_resolution_strategies(
         strategies.append(HumanResolutionStrategy.RETRY_PLANNING)
     if post_completion_replanning_retry_is_safe(state, action):
         strategies.append(HumanResolutionStrategy.RETRY_REPLANNING)
+    acknowledged = any(
+        resolution.action_id == action.id
+        and resolution.strategy is HumanResolutionStrategy.ACKNOWLEDGE
+        for resolution in state.human_resolutions
+    )
     strategies.extend(
         (
             HumanResolutionStrategy.FAIL_PROJECT,
-            HumanResolutionStrategy.ACKNOWLEDGE,
         )
     )
+    if not acknowledged:
+        strategies.append(HumanResolutionStrategy.ACKNOWLEDGE)
     return tuple(strategies)
 
 
@@ -379,6 +385,14 @@ class HumanResolutionService:
             summary = "Boss explicitly stopped the project"
         elif strategy is HumanResolutionStrategy.ACKNOWLEDGE:
             summary = "Boss acknowledged the action; project remains safely stopped"
+            if action.category is HumanActionCategory.FINAL_REVIEW_DECISION:
+                validate_transition(project.status, ProjectStatus.PAUSED_BY_BOSS)
+                project = replace(
+                    project,
+                    status=ProjectStatus.PAUSED_BY_BOSS,
+                    current_task_id=None,
+                    updated_at=operation_time,
+                )
         else:
             raise InvalidHumanResolution("unsupported resolution strategy")
 

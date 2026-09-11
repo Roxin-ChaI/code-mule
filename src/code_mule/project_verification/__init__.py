@@ -11,9 +11,15 @@ from .contracts import (
     ProjectVerificationSpec,
     ProjectVerificationStatus,
 )
+from .evidence import (
+    FinalReviewHumanJudgmentEvidence,
+    final_review_human_judgment_evidence,
+)
 
 __all__ = [
     "FinalReviewDecision",
+    "FinalReviewHumanJudgmentEvidence",
+    "final_review_human_judgment_evidence",
     "InvalidProjectVerificationState",
     "ProjectVerificationCategory",
     "ProjectVerificationCheck",

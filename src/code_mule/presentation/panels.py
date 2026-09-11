@@ -58,6 +58,12 @@ def diagnosis_dashboard(diagnosis, terminal, lines, *, verbose=False):
             row("Plan materialized", "Yes" if diagnosis.plan_materialized else "No"),
             row("Failure", humanize_identifier(diagnosis.failure_category or "unknown_failure")),
         )
+    if diagnosis.final_review_outcome is not None:
+        diagnosis_rows += (
+            row("Verification", humanize_identifier(diagnosis.project_verification_status or "unknown")),
+            row("Final Review", humanize_identifier(diagnosis.final_review_outcome)),
+            row("Candidate HEAD", diagnosis.completion_head_candidate or "—"),
+        )
     sections = (
         DashboardSection("PROJECT · " + diagnosis.project_name, (
             row("Status", status_label(diagnosis.project_status)),

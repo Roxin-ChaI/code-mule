@@ -7,10 +7,12 @@ from typing import Protocol
 
 from code_mule.domain.enums import (
     ChangeRequestStatus,
+    HumanActionStatus,
+    HumanResolutionStrategy,
     ProjectStatus,
     TaskStatus,
 )
-from code_mule.domain.models import ChangeRequest, ProjectEvent
+from code_mule.domain.models import ChangeRequest, HumanResolution, ProjectEvent
 from code_mule.domain.state_machine import validate_transition
 from code_mule.progress import (
     ProgressEvent,
@@ -31,6 +33,7 @@ from code_mule.revision import (
     completed_revision,
     latest_revision,
 )
+from code_mule.project_verification import final_review_human_judgment_evidence
 
 from .commands import ChangeCommand, PauseCommand, QueryCommand, ResumeCommand, StopCommand
 from .results import ChangeResult, CommandResult, ProjectStatusView, StopResult
@@ -362,11 +365,26 @@ class OrchestratorService:
             raise DuplicateChangeRequest(
                 f"change request already exists: {command.change_request_id}"
             )
+        pending_final_review = tuple(
+            action
+            for action in state.human_actions
+            if action.status is HumanActionStatus.PENDING
+            and final_review_human_judgment_evidence(state, action) is not None
+        )
+        final_review_change = (
+            state.project.status is ProjectStatus.HUMAN_REQUIRED
+            and len(pending_final_review) == 1
+            and tuple(
+                action
+                for action in state.human_actions
+                if action.status is HumanActionStatus.PENDING
+            ) == pending_final_review
+        )
         if state.project.status not in {
             ProjectStatus.RUNNING,
             ProjectStatus.PAUSED_BY_BOSS,
             ProjectStatus.DONE,
-        }:
+        } and not final_review_change:
             raise InvalidBossCommand(
                 f"change is not allowed from {state.project.status}"
             )
@@ -431,11 +449,49 @@ class OrchestratorService:
             timestamp=operation_time,
             metadata={"command": "change"},
         )
+        human_resolution = ()
+        human_events = ()
+        human_actions = state.human_actions
+        if final_review_change:
+            action = pending_final_review[0]
+            closed = replace(
+                action,
+                status=HumanActionStatus.RESOLVED,
+                resolved_at=operation_time,
+            )
+            resolution = HumanResolution(
+                id=f"resolution-{command.change_request_id}",
+                action_id=action.id,
+                project_id=state.project.id,
+                strategy=HumanResolutionStrategy.REQUEST_CHANGE,
+                summary="Boss requested a correction from the final-review gate",
+                created_at=operation_time,
+            )
+            human_resolution = (resolution,)
+            human_actions = tuple(
+                closed if item.id == action.id else item
+                for item in state.human_actions
+            )
+            human_events = (
+                ProjectEvent(
+                    id=self._event_id_factory(),
+                    project_id=state.project.id,
+                    event_type="human_action.resolved",
+                    entity_id=action.id,
+                    timestamp=operation_time,
+                    metadata={
+                        "strategy": HumanResolutionStrategy.REQUEST_CHANGE.value,
+                        "change_request_id": change_request.id,
+                    },
+                ),
+            )
         new_state = replace(
             state,
             project=project,
             change_requests=state.change_requests + (change_request,),
-            events=state.events + (event,),
+            human_actions=human_actions,
+            human_resolutions=state.human_resolutions + human_resolution,
+            events=state.events + human_events + (event,),
         )
         new_state = self._control_boundary(
             new_state, ExecutionStopReason.CHANGE_REQUESTED, operation_time

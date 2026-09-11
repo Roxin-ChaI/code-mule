@@ -8,6 +8,8 @@ from code_mule.domain.enums import (
     PlanStatus,
     ProjectStatus,
     RequirementStatus,
+    RevisionCheckStatus,
+    RevisionStatus,
     TaskStatus,
 )
 from code_mule.domain.models import (
@@ -247,6 +249,10 @@ class ChangeReplanMaterializer:
                 + tuple(item.id for item in new_milestones)
             ),
             created_at=operation_time,
+            base_plan_id=graph.plan.id,
+            base_plan_version=graph.plan.version,
+            change_request_id=change_request.id,
+            revision_number=change_request.requested_revision,
         )
         plans = tuple(
             replace(item, status=PlanStatus.SUPERSEDED)
@@ -293,6 +299,21 @@ class ChangeReplanMaterializer:
                 for item in state.change_requests
             ),
             impact_analyses=state.impact_analyses + (impact,),
+            revisions=tuple(
+                replace(
+                    revision,
+                    plan_id=plan.id,
+                    plan_version=plan.version,
+                    final_review_status=RevisionCheckStatus.NOT_RUN,
+                    verification_status=RevisionCheckStatus.NOT_RUN,
+                    verification_result_id=None,
+                )
+                if change_request.requested_revision is not None
+                and revision.revision_number == change_request.requested_revision
+                and revision.lifecycle_status is RevisionStatus.IN_PROGRESS
+                else revision
+                for revision in state.revisions
+            ),
         )
         try:
             self._scheduler.validate(materialized)

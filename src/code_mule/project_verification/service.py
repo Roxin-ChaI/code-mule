@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import datetime
 import os
 from pathlib import Path
+import re
 import subprocess
 from typing import Protocol
 
@@ -13,6 +14,7 @@ from code_mule.domain import (
     PlanStatus,
     ProjectEvent,
     ProjectStatus,
+    RevisionCheckStatus,
     RevisionStatus,
     TaskStatus,
 )
@@ -54,6 +56,17 @@ from .contracts import (
     ProjectVerificationSpec,
     ProjectVerificationStatus,
 )
+
+
+_SENSITIVE_REVIEW_VALUE = re.compile(
+    r"(?i)(?:(?:api[_ -]?key|token|password|authorization)\s*[:=]\s*|bearer\s+|sk-)[^\s,;]+"
+)
+
+
+def _safe_review_text(value: str, limit: int) -> str:
+    normalized = " ".join(value.split())
+    redacted = _SENSITIVE_REVIEW_VALUE.sub("[REDACTED]", normalized)
+    return redacted if len(redacted) <= limit else redacted[: limit - 1] + "…"
 
 
 class ProjectStateStore(Protocol):
@@ -364,7 +377,7 @@ class ProjectFinalizationService:
         result = replace(
             result,
             final_review_decision=review.decision,
-            final_review_summary=review.rationale,
+            final_review_summary=_safe_review_text(review.rationale, 600),
         )
         latest = self._store.load()
         if latest.project.status is ProjectStatus.CANCELLED:
@@ -374,21 +387,60 @@ class ProjectFinalizationService:
             for item in latest.project_verification_results
         )
         latest = replace(latest, project_verification_results=results)
+        latest = self._record_revision_review(latest, result, review.decision)
+        issue_metadata = {
+            f"issue_{index}": _safe_review_text(issue, 300)
+            for index, issue in enumerate(review.issues[:5], start=1)
+            if " ".join(issue.split())
+        }
         state = self._event_save(
             latest,
             "project.final_review_completed",
-            {"result_id": result.id, "decision": review.decision.value},
+            {
+                "result_id": result.id,
+                "decision": review.decision.value,
+                "issue_count": str(len(issue_metadata)),
+                **issue_metadata,
+            },
         )
         if review.decision is FinalReviewDecision.HUMAN_REQUIRED:
             return self._human(
                 state,
-                HumanActionCategory.SUPERVISOR_FAILURE,
+                HumanActionCategory.FINAL_REVIEW_DECISION,
                 "Final Supervisor review requires human judgment",
-                "Inspect final delivery evidence and choose a Boss-directed change",
-                {"result_id": result.id},
-                source_event_type="project.final_review_failed",
+                "Inspect the bounded finding, then request a change or fail the project",
+                {"result_id": result.id, **issue_metadata},
+                source_event_type="project.final_review_human_judgment",
+                phase=ExecutionPhase.FINALIZATION,
             )
         return self._complete(self._store.load(), result)
+
+    @staticmethod
+    def _record_revision_review(
+        state: ProjectState,
+        result: ProjectVerificationResult,
+        decision: FinalReviewDecision,
+    ) -> ProjectState:
+        status = (
+            RevisionCheckStatus.PASS
+            if decision is FinalReviewDecision.APPROVE
+            else RevisionCheckStatus.UNKNOWN
+        )
+        return replace(
+            state,
+            revisions=tuple(
+                replace(
+                    revision,
+                    verification_status=RevisionCheckStatus.PASS,
+                    final_review_status=status,
+                    verification_result_id=result.id,
+                )
+                if revision.plan_id == result.plan_id
+                and revision.lifecycle_status is RevisionStatus.IN_PROGRESS
+                else revision
+                for revision in state.revisions
+            ),
+        )
 
     def _complete(self, state: ProjectState, result: ProjectVerificationResult) -> ProjectState:
         state = self._store.load()
@@ -463,6 +515,7 @@ class ProjectFinalizationService:
         metadata: dict[str, str],
         *,
         source_event_type: str = "project.verification_failed",
+        phase: ExecutionPhase | None = None,
     ) -> ProjectState:
         state = self._store.load()
         if state.project.status is ProjectStatus.CANCELLED:
@@ -481,6 +534,7 @@ class ProjectFinalizationService:
             event_id_factory=self._event_id_factory,
             source_event_types=(source_event_type,),
             source_metadata=metadata,
+            phase=phase,
         )
         self._store.save(updated)
         return updated

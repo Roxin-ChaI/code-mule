@@ -17,6 +17,7 @@ class DiagnosisBlockerCategory(StrEnum):
     RECOVERY_UNCERTAIN = "recovery_uncertain"
     ATTEMPT_LIMIT = "attempt_limit"
     SUPERVISOR_FAILURE = "supervisor_failure"
+    FINAL_REVIEW_DECISION = "final_review_decision"
     DEPENDENCY_BLOCK = "dependency_block"
     PAUSED = "paused"
     CHANGE_REQUESTED = "change_requested"
@@ -38,6 +39,7 @@ class DiagnosisStage(StrEnum):
     DEPENDENCY_RESOLUTION = "dependency_resolution"
     BOSS_CONTROL = "boss_control"
     REPLANNING = "replanning"
+    FINAL_REVIEW = "final_review"
     CANCELLATION = "cancellation"
     PROJECT_STATE = "project_state"
 
@@ -108,6 +110,9 @@ class ProjectDiagnosis:
     failure_category: str | None = None
     failure_code: str | None = None
     change_summary: str | None = None
+    final_review_outcome: str | None = None
+    project_verification_status: str | None = None
+    completion_head_candidate: str | None = None
 
     def __post_init__(self) -> None:
         bounded = {
@@ -124,6 +129,9 @@ class ProjectDiagnosis:
             "worker_input_question": (self.worker_input_question, 2_000),
             "failure_category": (self.failure_category, 64),
             "failure_code": (self.failure_code, 64),
+            "final_review_outcome": (self.final_review_outcome, 64),
+            "project_verification_status": (self.project_verification_status, 64),
+            "completion_head_candidate": (self.completion_head_candidate, 128),
         }
         for name, (value, limit) in bounded.items():
             if not isinstance(value, str) or not value or len(value) > limit:

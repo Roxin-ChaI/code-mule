@@ -23,6 +23,7 @@ from code_mule.human import (
 from code_mule.state.models import ProjectState
 from code_mule.recovery.service import RecoveryClassifier
 from code_mule.revision import latest_revision
+from code_mule.project_verification import final_review_human_judgment_evidence
 
 from .contracts import (
     DiagnosisBlockerCategory,
@@ -109,6 +110,14 @@ _HUMAN_ACTIONS = {
         True,
         DiagnosisNextAction.INSPECT,
     ),
+    HumanActionCategory.FINAL_REVIEW_DECISION: _Classification(
+        DiagnosisBlockerCategory.FINAL_REVIEW_DECISION,
+        DiagnosisStage.FINAL_REVIEW,
+        "Final review requires a bounded Boss judgment.",
+        DiagnosisRecoverability.RECOVERABLE,
+        True,
+        DiagnosisNextAction.INSPECT,
+    ),
     HumanActionCategory.DEPENDENCY_BLOCK: _Classification(
         DiagnosisBlockerCategory.DEPENDENCY_BLOCK,
         DiagnosisStage.DEPENDENCY_RESOLUTION,
@@ -177,11 +186,25 @@ class ProjectDiagnosisService:
             if action is None
             else post_completion_replanning_failure_evidence(state, action)
         )
+        final_review = (
+            None
+            if action is None
+            else final_review_human_judgment_evidence(state, action)
+        )
         if replanning_failure is not None:
             classification = _Classification(
                 DiagnosisBlockerCategory.SUPERVISOR_FAILURE,
                 DiagnosisStage.REPLANNING,
                 "Post-completion impact analysis or replanning failed closed.",
+                DiagnosisRecoverability.RECOVERABLE,
+                True,
+                DiagnosisNextAction.INSPECT,
+            )
+        elif final_review is not None:
+            classification = _Classification(
+                DiagnosisBlockerCategory.FINAL_REVIEW_DECISION,
+                DiagnosisStage.FINAL_REVIEW,
+                self._safe(final_review.summary, 300),
                 DiagnosisRecoverability.RECOVERABLE,
                 True,
                 DiagnosisNextAction.INSPECT,
@@ -244,7 +267,9 @@ class ProjectDiagnosisService:
                 else state.latest_safe_point.kind.value
             ),
             stop_reason=(
-                None
+                "human_judgment_required"
+                if final_review is not None
+                else None
                 if state.latest_execution_stop is None
                 else state.latest_execution_stop.reason.value
             ),
@@ -294,6 +319,17 @@ class ProjectDiagnosisService:
             ),
             change_summary=(
                 None if open_change is None else open_change.description
+            ),
+            final_review_outcome=(
+                None if final_review is None else "human_judgment_required"
+            ),
+            project_verification_status=(
+                None if final_review is None else "completed"
+            ),
+            completion_head_candidate=(
+                None
+                if final_review is None
+                else final_review.completion_head_candidate
             ),
         )
 

@@ -9,6 +9,7 @@ from code_mule.diagnosis import (
 from code_mule.project_verification import (
     FinalReviewDecision,
     ProjectVerificationStatus,
+    final_review_human_judgment_evidence,
 )
 from code_mule.state.models import ProjectState
 
@@ -299,13 +300,51 @@ def render_human_action(
     terminal: TerminalDashboard | None = None,
 ) -> tuple[str, ...]:
     view = human_action_view(action)
+    final_review = (
+        None
+        if state is None
+        else final_review_human_judgment_evidence(state, action)
+    )
+    category = "Final review decision" if final_review is not None else view.category
     lines = (
         "ACTION REQUIRED",
         "────────────────────────",
         "",
-        f"Category    {view.category}",
+        f"Category    {category}",
         f"Task        {view.task or 'None'}",
     )
+    if final_review is not None:
+        revision = final_review.revision
+        passed = all(
+            not check.required or check.status is ProjectVerificationStatus.PASS
+            for check in final_review.checks
+        )
+        lines += (
+            "",
+            "FINAL REVIEW",
+            "Outcome     Needs human judgment",
+            f"Revision    {revision.revision_number if revision is not None else 'Unknown'}",
+            f"Plan        v{revision.plan_version if revision is not None else '—'}",
+            f"Verification {'Completed' if passed else 'Not passed'}",
+            f"Candidate   {final_review.completion_head_candidate}",
+            f"Finding     {(final_review.issues[0] if final_review.issues else final_review.summary)}",
+        )
+        if len(final_review.issues) > 1:
+            lines += ("", "Other findings") + tuple(
+                f"- {issue}" for issue in final_review.issues[1:]
+            )
+        lines += (
+            "",
+            "Evidence",
+            *(
+                f"- {check.name}: {check.status.value} — {check.safe_summary}"
+                for check in final_review.checks
+            ),
+            "",
+            "Code changes Not determined; the Boss must decide from the finding",
+            "Accept as-is No; final review has not approved completion",
+            "Suggested    Submit a precise Boss-directed change if correction is required",
+        )
     if view.capability is not None:
         lines += (
             f"Capability  {view.capability}",
@@ -328,7 +367,11 @@ def render_human_action(
         lines += (f"Request     {view.request}",)
     if action.category is HumanActionCategory.WORKER_VERIFICATION and state is not None:
         lines += _render_verification_failure(state, action, verbose=verbose)
-    if action.category is HumanActionCategory.SUPERVISOR_FAILURE and state is not None:
+    if (
+        action.category is HumanActionCategory.SUPERVISOR_FAILURE
+        and state is not None
+        and final_review is None
+    ):
         replanning = _render_post_completion_replanning_failure(state, action)
         lines += replanning or _render_planning_failure(state, action)
     lines += (f"Risk        {view.risk}", "", (
@@ -373,6 +416,13 @@ def render_human_action(
                     for strategy in strategies
                 ),
             )
+            if final_review is not None:
+                lines += (
+                    "",
+                    "Request a correction:",
+                    '  code-mule change "<Boss correction>"',
+                    "Acknowledging only records awareness and pauses safely; it does not approve completion.",
+                )
         else:
             lines += ("", "No resolve strategy is available for this action.")
     else:

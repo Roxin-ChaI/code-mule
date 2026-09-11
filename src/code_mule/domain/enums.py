@@ -79,6 +79,7 @@ class HumanActionCategory(StrEnum):
     WORKER_INPUT = "worker_input"
     ATTEMPT_LIMIT = "attempt_limit"
     SUPERVISOR_FAILURE = "supervisor_failure"
+    FINAL_REVIEW_DECISION = "final_review_decision"
     DEPENDENCY_BLOCK = "dependency_block"
     WORKSPACE_BLOCK = "workspace_block"
     WORKER_VERIFICATION = "worker_verification"
@@ -116,6 +117,7 @@ class HumanResolutionStrategy(StrEnum):
     RETRY_REPLANNING = "retry_replanning"
     FAIL_PROJECT = "fail_project"
     ACKNOWLEDGE = "acknowledge"
+    REQUEST_CHANGE = "request_change"
     ANSWER = "answer"
 
 

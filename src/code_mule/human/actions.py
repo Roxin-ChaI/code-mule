@@ -140,6 +140,7 @@ def request_human_action(
         HumanActionCategory.WORKSPACE_BLOCK: ExecutionStopReason.WORKSPACE_BLOCK,
         HumanActionCategory.ATTEMPT_LIMIT: ExecutionStopReason.ATTEMPT_LIMIT,
         HumanActionCategory.SUPERVISOR_FAILURE: ExecutionStopReason.SUPERVISOR_FAILED,
+        HumanActionCategory.FINAL_REVIEW_DECISION: ExecutionStopReason.HUMAN_REQUIRED,
         HumanActionCategory.RECOVERY_UNCERTAIN: ExecutionStopReason.RECOVERY_UNCERTAIN,
     }.get(category, ExecutionStopReason.HUMAN_REQUIRED)
     updated = with_safe_point(

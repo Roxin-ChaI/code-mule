@@ -184,6 +184,12 @@ class FinalReviewResult:
 
     def __post_init__(self) -> None:
         _require_non_empty(self.rationale, "rationale")
+        if len(self.rationale) > 4_000:
+            raise ValueError("final review rationale exceeds safe bounds")
+        if len(self.issues) > 20 or any(
+            not issue or len(issue) > 500 for issue in self.issues
+        ):
+            raise ValueError("final review issues exceed safe bounds")
 
 
 @dataclass(frozen=True)
