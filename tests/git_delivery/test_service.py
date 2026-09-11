@@ -9,7 +9,7 @@ from code_mule.domain.enums import TaskStatus
 from code_mule.domain.models import ExecutionReport, Task
 from code_mule.git_delivery import (
     DirtyGitBaseline,
-    EmptyGitChangeSet,
+    GitDeliveryMode,
     GitCommitError,
     GitDeliveryService,
     GitOwnershipError,
@@ -130,10 +130,48 @@ class GitDeliveryServiceTests(RepositoryCase):
                 ("owned.py", "external.py"),
             )
 
-    def test_empty_change_and_failed_verification_are_rejected(self):
+    def test_verified_empty_change_is_explicit_no_commit_delivery(self):
         baseline = self.service.capture_baseline("TASK-1")
-        with self.assertRaises(EmptyGitChangeSet):
+        before = git(self.root, "rev-parse", "HEAD")
+
+        changes = self.service.prepare_change_set(baseline, report(), ())
+        result = self.service.verify_no_commit(changes, task())
+
+        self.assertIs(changes.delivery_mode, GitDeliveryMode.NO_COMMIT_REQUIRED)
+        self.assertEqual(result.verified_head, before)
+        self.assertEqual(git(self.root, "rev-parse", "HEAD"), before)
+        self.assertEqual(git(self.root, "status", "--short"), "")
+        self.assertFalse(any(command[:2] == ("git", "commit") for command in self.commands))
+
+    def test_empty_change_still_requires_passing_verification(self):
+        baseline = self.service.capture_baseline("TASK-1")
+        failed_empty = replace(report(), tests=("unittest: fail",))
+        with self.assertRaises(WorkerVerificationError):
+            self.service.prepare_change_set(baseline, failed_empty, ())
+
+    def test_report_and_repository_path_mismatches_never_become_noop(self):
+        baseline = self.service.capture_baseline("TASK-1")
+        with self.assertRaises(GitOwnershipError):
+            self.service.prepare_change_set(baseline, report("claimed.py"), ("claimed.py",))
+        (self.root / "actual.py").write_text("changed\n")
+        with self.assertRaises(GitOwnershipError):
             self.service.prepare_change_set(baseline, report(), ())
+        git(self.root, "add", "--", "actual.py")
+        with self.assertRaises(GitOwnershipError):
+            self.service.prepare_change_set(baseline, report(), ())
+
+    def test_changed_delivery_cannot_use_no_commit_boundary(self):
+        baseline = self.service.capture_baseline("TASK-1")
+        (self.root / "changed.py").write_text("changed\n")
+        changes = self.service.prepare_change_set(
+            baseline, report("changed.py"), ("changed.py",)
+        )
+        self.assertIs(changes.delivery_mode, GitDeliveryMode.COMMIT_REQUIRED)
+        with self.assertRaises(GitOwnershipError):
+            self.service.verify_no_commit(changes, task())
+
+    def test_changed_and_failed_verification_is_rejected(self):
+        baseline = self.service.capture_baseline("TASK-1")
         (self.root / "bad.py").write_text("bad\n")
         failed = replace(report("bad.py"), tests=("unittest: fail",))
         with self.assertRaises(WorkerVerificationError):

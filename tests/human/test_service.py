@@ -1,5 +1,8 @@
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 
 from code_mule.domain import (
@@ -14,6 +17,7 @@ from code_mule.domain import (
     WorkerCapabilityApprovalDetails,
 )
 from code_mule.git_delivery import GitBaseline
+from code_mule.git_delivery.recovery import no_change_delivery_recovery_evidence
 from code_mule.human import (
     HumanActionNotFound,
     HumanResolutionService,
@@ -21,7 +25,12 @@ from code_mule.human import (
     request_human_action,
     allowed_resolution_strategies,
 )
-from code_mule.recovery import ExecutionPhase, RecoveryMode
+from code_mule.recovery import (
+    ExecutionAttempt,
+    ExecutionAttemptStatus,
+    ExecutionPhase,
+    RecoveryMode,
+)
 from code_mule.recovery.service import RecoveryClassifier
 from planning.test_validation import empty_state
 from state import make_project_state
@@ -133,7 +142,198 @@ def service(store):
     )
 
 
+def no_change_gate(root: Path):
+    subprocess.run(("git", "init", "-q"), cwd=root, check=True)
+    subprocess.run(
+        ("git", "config", "user.name", "Code Mule Test"), cwd=root, check=True
+    )
+    subprocess.run(
+        ("git", "config", "user.email", "code-mule@example.invalid"),
+        cwd=root,
+        check=True,
+    )
+    (root / "README.md").write_text("baseline\n", encoding="utf-8")
+    subprocess.run(("git", "add", "--", "README.md"), cwd=root, check=True)
+    subprocess.run(
+        ("git", "commit", "-q", "-m", "initial"), cwd=root, check=True
+    )
+    head = subprocess.run(
+        ("git", "rev-parse", "HEAD"),
+        cwd=root,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    base = make_project_state()
+    task = replace(base.tasks[0], execution_attempts=1)
+    report = replace(
+        base.execution_reports[0],
+        attempt=1,
+        status="completed",
+        files_changed=(),
+        tests=("Local tests: pass",),
+        static_checks=("Git clean: pass",),
+        git_state="clean",
+        issues=(),
+        human_action=None,
+    )
+    state = replace(
+        base,
+        project=replace(
+            base.project,
+            status=ProjectStatus.RUNNING,
+            current_task_id=task.id,
+            workspace=str(root),
+        ),
+        tasks=(task,),
+        decisions=(),
+        execution_reports=(report,),
+        human_actions=(),
+        human_resolutions=(),
+        events=(),
+        execution_leases=(),
+        git_baselines=(GitBaseline(task.id, str(root), head, ()),),
+        git_change_sets=(),
+        git_commit_results=(),
+        execution_attempts=(
+            ExecutionAttempt(
+                task.id,
+                1,
+                ExecutionAttemptStatus.REPORT_PERSISTED,
+                NOW,
+                thread_id="thread-1",
+                turn_id="turn-1",
+                baseline_head=head,
+                terminal_at=NOW,
+            ),
+        ),
+        latest_execution_stop=None,
+        latest_safe_point=None,
+    )
+    identifiers = iter(("action-requested", "delivery-failed"))
+    return request_human_action(
+        state,
+        category=HumanActionCategory.RECOVERY_UNCERTAIN,
+        summary="Task Git delivery could not be completed safely",
+        requested_action="Inspect and choose an explicit recovery action",
+        risk="The Task delivery boundary must remain untrusted",
+        task_id=task.id,
+        operation_time=NOW,
+        action_id="no-change-action",
+        event_id_factory=lambda: next(identifiers),
+        source_event_types=("git.delivery_failed",),
+        source_metadata={
+            "error_type": "EmptyGitChangeSet",
+            "stage": "ownership",
+        },
+    )
+
+
 class HumanResolutionServiceTests(unittest.TestCase):
+    def test_legacy_empty_change_gate_can_continue_only_from_exact_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = no_change_gate(Path(directory))
+            action = state.human_actions[-1]
+            evidence = no_change_delivery_recovery_evidence(state, action)
+            self.assertTrue(evidence.continuation_safe)
+            self.assertFalse(evidence.supervisor_reviewed)
+            self.assertFalse(evidence.commit_created)
+            self.assertEqual(
+                allowed_resolution_strategies(state, action),
+                (
+                    HumanResolutionStrategy.CONTINUE_AFTER_REPORT,
+                    HumanResolutionStrategy.FAIL_PROJECT,
+                    HumanResolutionStrategy.ACKNOWLEDGE,
+                ),
+            )
+
+            store = MemoryStore(state)
+            updated = service(store).resolve(
+                action.id, HumanResolutionStrategy.CONTINUE_AFTER_REPORT
+            )
+
+            self.assertIs(updated.project.status, ProjectStatus.RUNNING)
+            self.assertEqual(updated.project.current_task_id, action.task_id)
+            self.assertIs(updated.human_actions[-1].status, HumanActionStatus.RESOLVED)
+            self.assertIs(
+                updated.execution_attempts[-1].status,
+                ExecutionAttemptStatus.REPORT_PERSISTED,
+            )
+            self.assertEqual(updated.git_commit_results, ())
+            self.assertFalse(
+                any(
+                    event.event_type == "task.execution_started"
+                    for event in updated.events
+                )
+            )
+            self.assertIs(
+                RecoveryClassifier().classify(updated).recovery_mode,
+                RecoveryMode.CONTINUE_AFTER_REPORT,
+            )
+
+    def test_legacy_empty_change_continuation_fails_closed_on_git_drift(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = no_change_gate(root)
+            (root / "unexpected.txt").write_text("drift\n", encoding="utf-8")
+            action = state.human_actions[-1]
+
+            evidence = no_change_delivery_recovery_evidence(state, action)
+
+            self.assertFalse(evidence.continuation_safe)
+            self.assertNotIn(
+                HumanResolutionStrategy.CONTINUE_AFTER_REPORT,
+                allowed_resolution_strategies(state, action),
+            )
+            store = MemoryStore(state)
+            with self.assertRaisesRegex(InvalidHumanResolution, "not allowed"):
+                service(store).resolve(
+                    action.id, HumanResolutionStrategy.CONTINUE_AFTER_REPORT
+                )
+            self.assertIs(store.state.project.status, ProjectStatus.HUMAN_REQUIRED)
+
+    def test_legacy_empty_change_proof_rejects_staging_head_and_report_drift(self):
+        mutations = ("staged", "head", "report")
+        for mutation in mutations:
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                state = no_change_gate(root)
+                if mutation == "staged":
+                    (root / "staged.txt").write_text("drift\n", encoding="utf-8")
+                    subprocess.run(
+                        ("git", "add", "--", "staged.txt"), cwd=root, check=True
+                    )
+                elif mutation == "head":
+                    (root / "README.md").write_text("new head\n", encoding="utf-8")
+                    subprocess.run(
+                        ("git", "add", "--", "README.md"), cwd=root, check=True
+                    )
+                    subprocess.run(
+                        ("git", "commit", "-q", "-m", "external"),
+                        cwd=root,
+                        check=True,
+                    )
+                else:
+                    state = replace(
+                        state,
+                        execution_reports=(
+                            replace(
+                                state.execution_reports[0],
+                                files_changed=("claimed.py",),
+                                git_state="dirty",
+                            ),
+                        ),
+                    )
+
+                evidence = no_change_delivery_recovery_evidence(
+                    state, state.human_actions[-1]
+                )
+
+                self.assertFalse(evidence.continuation_safe)
+                self.assertNotIn(
+                    HumanResolutionStrategy.CONTINUE_AFTER_REPORT,
+                    allowed_resolution_strategies(state, state.human_actions[-1]),
+                )
     def test_answer_reopens_task_without_starting_work_or_leaking_answer(self):
         store = MemoryStore(worker_input_state())
         updated = service(store).answer("action-1", "SQLite")

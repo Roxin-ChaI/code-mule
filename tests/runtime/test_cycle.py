@@ -20,6 +20,7 @@ from code_mule.git_delivery import (
     GitChangeSet,
     GitCommitError,
     GitCommitResult,
+    GitNoCommitResult,
 )
 from code_mule.human import HumanResolutionService
 from code_mule.orchestrator import (
@@ -225,6 +226,7 @@ class FakeGitDelivery:
         self.baseline_calls = []
         self.prepare_calls = []
         self.commit_calls = []
+        self.no_commit_calls = []
         self.partial_paths = ("calculator.py",)
 
     def capture_baseline(self, task_id):
@@ -253,6 +255,16 @@ class FakeGitDelivery:
             task.id, change_set.repository_root, change_set.baseline_head,
             "b" * 40, "feat(task): delivery", change_set.changed_paths,
             change_set.changed_paths, NOW,
+        )
+
+    def verify_no_commit(self, change_set, task):
+        self.no_commit_calls.append((change_set, task))
+        return GitNoCommitResult(
+            task.id,
+            change_set.repository_root,
+            change_set.baseline_head,
+            change_set.baseline_head,
+            NOW,
         )
 
 
@@ -509,6 +521,105 @@ class TaskCycleGitDeliveryTests(unittest.TestCase):
         event_types = tuple(event.event_type for event in store.current.events)
         self.assertLess(event_types.index("git.committed"), event_types.index("task.completed"))
         self.assertEqual(len(delivery.commit_calls), 1)
+
+    def test_verified_no_change_task_completes_only_after_supervisor_review(self):
+        class VerificationOnlyWorker(FakeWorkerSession):
+            def execute(self, request, *, report_id, created_at):
+                report = super().execute(
+                    request, report_id=report_id, created_at=created_at
+                )
+                return replace(
+                    report,
+                    files_changed=(),
+                    git_state="clean",
+                    summary="verification completed without repository changes",
+                )
+
+        delivery = FakeGitDelivery()
+        delivery.partial_paths = ()
+        supervisor = FakeSupervisor(
+            [review(SupervisorDecisionType.CONTINUE)]
+        )
+        service, request, store, _, _, _ = build_cycle(
+            session=VerificationOnlyWorker(),
+            supervisor=supervisor,
+            git_delivery=delivery,
+        )
+
+        outcome = service.execute(request)
+
+        self.assertFalse(outcome.human_action_required)
+        self.assertEqual(len(supervisor.requests), 1)
+        self.assertEqual(
+            supervisor.requests[0].execution_report.files_changed, ()
+        )
+        self.assertEqual(delivery.commit_calls, [])
+        self.assertEqual(len(delivery.no_commit_calls), 1)
+        self.assertEqual(store.current.git_commit_results, ())
+        self.assertIs(store.current.tasks[0].status, TaskStatus.COMPLETED)
+        self.assertIsNone(store.current.project.current_task_id)
+        event_types = tuple(event.event_type for event in store.current.events)
+        self.assertLess(
+            event_types.index("supervisor.review_completed"),
+            event_types.index("git.no_commit_required"),
+        )
+        self.assertLess(
+            event_types.index("git.no_commit_required"),
+            event_types.index("task.completed"),
+        )
+        self.assertEqual(
+            store.current.latest_safe_point.head_sha,
+            "a" * 40,
+        )
+
+    def test_no_change_worker_human_action_never_reaches_review_or_delivery(self):
+        delivery = FakeGitDelivery()
+        delivery.partial_paths = ()
+        session = FakeWorkerSession(human_action_required=True)
+        supervisor = FakeSupervisor([])
+        service, request, store, _, _, _ = build_cycle(
+            session=session,
+            supervisor=supervisor,
+            git_delivery=delivery,
+        )
+
+        outcome = service.execute(request)
+
+        self.assertTrue(outcome.human_action_required)
+        self.assertEqual(supervisor.requests, [])
+        self.assertEqual(delivery.prepare_calls, [])
+        self.assertEqual(delivery.no_commit_calls, [])
+        self.assertEqual(delivery.commit_calls, [])
+        self.assertIs(store.current.tasks[0].status, TaskStatus.IN_PROGRESS)
+
+    def test_no_change_supervisor_human_decision_never_completes_delivery(self):
+        class VerificationOnlyWorker(FakeWorkerSession):
+            def execute(self, request, *, report_id, created_at):
+                return replace(
+                    super().execute(
+                        request, report_id=report_id, created_at=created_at
+                    ),
+                    files_changed=(),
+                    git_state="clean",
+                )
+
+        delivery = FakeGitDelivery()
+        delivery.partial_paths = ()
+        service, request, store, _, _, _ = build_cycle(
+            session=VerificationOnlyWorker(),
+            supervisor=FakeSupervisor(
+                [review(SupervisorDecisionType.HUMAN_REQUIRED)]
+            ),
+            git_delivery=delivery,
+        )
+
+        outcome = service.execute(request)
+
+        self.assertTrue(outcome.human_action_required)
+        self.assertEqual(delivery.no_commit_calls, [])
+        self.assertEqual(delivery.commit_calls, [])
+        self.assertIs(store.current.tasks[0].status, TaskStatus.IN_PROGRESS)
+        self.assertIs(store.current.project.status, ProjectStatus.HUMAN_REQUIRED)
 
     def test_rework_does_not_commit_until_final_accepted_attempt(self):
         delivery = FakeGitDelivery()
