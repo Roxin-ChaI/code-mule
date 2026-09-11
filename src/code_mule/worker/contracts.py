@@ -6,6 +6,7 @@ from enum import StrEnum
 import math
 import re
 
+from code_mule.domain.enums import CapabilityApprovalScope
 from code_mule.domain.models import Task
 
 
@@ -184,6 +185,102 @@ class CodexApprovalRequired(CodexWorkerError):
     """Raised when app-server requests an approval Code Mule cannot grant."""
 
 
+class CapabilityApprovalAction(StrEnum):
+    ACCEPT = "accept"
+    DECLINE = "decline"
+    CANCEL = "cancel"
+
+
+@dataclass(frozen=True)
+class CapabilityApprovalDecision:
+    """One protocol-native decision for a still-live server request."""
+
+    action: CapabilityApprovalAction
+    scope: CapabilityApprovalScope | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.action, CapabilityApprovalAction):
+            raise ValueError("capability approval action must be typed")
+        if self.scope is not None and not isinstance(
+            self.scope, CapabilityApprovalScope
+        ):
+            raise ValueError("capability approval scope must be typed")
+        if self.action is not CapabilityApprovalAction.ACCEPT and self.scope is not None:
+            raise ValueError("only an accepted approval can select a scope")
+
+
+@dataclass(frozen=True)
+class WorkerCapabilityApprovalRequest:
+    """Bounded projection of a native MCP capability approval request."""
+
+    method: str
+    protocol_request_id: int | str
+    thread_id: str
+    turn_id: str
+    server_name: str
+    request: str
+    capability: str
+    application: str | None
+    capability_id: str | None
+    tool_name: str | None
+    available_scopes: tuple[CapabilityApprovalScope, ...]
+
+    def __post_init__(self) -> None:
+        required = {
+            "method": (self.method, 128),
+            "thread_id": (self.thread_id, 128),
+            "turn_id": (self.turn_id, 128),
+            "server_name": (self.server_name, 200),
+            "request": (self.request, 2_000),
+            "capability": (self.capability, 200),
+        }
+        optional = {
+            "application": (self.application, 200),
+            "capability_id": (self.capability_id, 200),
+            "tool_name": (self.tool_name, 200),
+        }
+        if isinstance(self.protocol_request_id, bool) or not isinstance(
+            self.protocol_request_id, (int, str)
+        ):
+            raise ValueError("protocol_request_id must be a string or integer")
+        if isinstance(self.protocol_request_id, int) and self.protocol_request_id < 0:
+            raise ValueError("protocol_request_id must not be negative")
+        if len(str(self.protocol_request_id)) > 128 or str(self.protocol_request_id) == "":
+            raise ValueError("protocol_request_id exceeds safe bounds")
+        for name, (value, limit) in required.items():
+            _require_non_empty(value, name)
+            if len(value) > limit:
+                raise ValueError(f"{name} exceeds safe bounds")
+        for name, (value, limit) in optional.items():
+            if value is not None:
+                _require_non_empty(value, name)
+                if len(value) > limit:
+                    raise ValueError(f"{name} exceeds safe bounds")
+        if len(self.available_scopes) > 3 or len(set(self.available_scopes)) != len(
+            self.available_scopes
+        ):
+            raise ValueError("available_scopes must be unique and bounded")
+        if any(
+            not isinstance(scope, CapabilityApprovalScope)
+            for scope in self.available_scopes
+        ):
+            raise ValueError("available_scopes must be typed")
+
+    @property
+    def request_id(self) -> str:
+        return str(self.protocol_request_id)
+
+
+class CodexCapabilityApprovalRequired(CodexApprovalRequired):
+    """Raised when a native capability request cannot remain live for approval."""
+
+    def __init__(self, request: WorkerCapabilityApprovalRequest) -> None:
+        self.request = request
+        super().__init__(
+            f"Codex app-server requested native capability approval via {request.method}"
+        )
+
+
 @dataclass(frozen=True)
 class WorkerInputRequest:
     """Bounded safe projection of one app-server human-input request."""
@@ -274,8 +371,11 @@ class WorkerTurnResult:
 
 
 __all__ = [
+    "CapabilityApprovalAction",
+    "CapabilityApprovalDecision",
     "CodexAppServerStartError",
     "CodexApprovalRequired",
+    "CodexCapabilityApprovalRequired",
     "CodexProtocolError",
     "CodexTurnFailed",
     "CodexTurnFailureKind",
@@ -287,6 +387,7 @@ __all__ = [
     "CodexWorkerConfig",
     "CodexWorkerError",
     "WorkerInputRequest",
+    "WorkerCapabilityApprovalRequest",
     "WorkerTaskRequest",
     "WorkerTurnResult",
     "worker_failure_metadata",

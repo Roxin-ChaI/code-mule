@@ -14,7 +14,10 @@ from code_mule import __version__
 from code_mule.progress import ProgressEventType, RecordingProgressSink
 from code_mule.worker.client import CodexAppServerClient
 from code_mule.worker.contracts import (
+    CapabilityApprovalAction,
+    CapabilityApprovalDecision,
     CodexApprovalRequired,
+    CodexCapabilityApprovalRequired,
     CodexProtocolError,
     CodexTurnFailed,
     CodexTurnHardTimeout,
@@ -28,10 +31,13 @@ from code_mule.worker.protocol import (
     MessageKind,
     classify_message,
     notification_message,
+    parse_capability_approval_request,
     parse_worker_input_request,
     request_message,
     response_result,
+    server_response_message,
 )
+from code_mule.domain import CapabilityApprovalScope
 
 
 _CLOSE = object()
@@ -260,6 +266,65 @@ class ProtocolHelperTests(unittest.TestCase):
         self.assertEqual(elicitation.question, "Choose a deployment region")
         self.assertEqual(elicitation.choices, ("eu", "us"))
         self.assertNotIn("must-not-be-projected", repr(elicitation))
+
+    def test_structured_mcp_permission_is_not_product_input(self):
+        message = {
+            "id": 88,
+            "method": "mcpServer/elicitation/request",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "serverName": "cua_repl",
+                "message": "Allow the browser capability?",
+                "_meta": {
+                    "codex_approval_kind": "mcp_tool_call",
+                    "connector_id": "browser-use",
+                    "connector_name": "Google Chrome",
+                    "tool_name": "control_browser",
+                    "persist": ["session", "always"],
+                    "credential": "must-not-be-projected",
+                },
+            },
+        }
+        with self.assertRaisesRegex(CodexProtocolError, "not Worker input"):
+            parse_worker_input_request(message)
+        request = parse_capability_approval_request(message)
+        self.assertEqual(request.protocol_request_id, 88)
+        self.assertEqual(request.thread_id, "thread-1")
+        self.assertEqual(request.turn_id, "turn-1")
+        self.assertEqual(request.capability, "Computer Use")
+        self.assertEqual(request.application, "Google Chrome")
+        self.assertEqual(
+            request.available_scopes,
+            (
+                CapabilityApprovalScope.ONCE,
+                CapabilityApprovalScope.SESSION,
+                CapabilityApprovalScope.ALWAYS,
+            ),
+        )
+        self.assertNotIn("credential", repr(request))
+        self.assertNotIn("must-not-be-projected", repr(request))
+
+    def test_native_capability_response_preserves_request_id_and_scope(self):
+        self.assertEqual(
+            server_response_message(
+                "approval-1",
+                CapabilityApprovalDecision(
+                    CapabilityApprovalAction.ACCEPT,
+                    CapabilityApprovalScope.SESSION,
+                ),
+            ),
+            {
+                "id": "approval-1",
+                "result": {"action": "accept", "content": {"persist": "session"}},
+            },
+        )
+        self.assertEqual(
+            server_response_message(
+                7, CapabilityApprovalDecision(CapabilityApprovalAction.DECLINE)
+            ),
+            {"id": 7, "result": {"action": "decline", "content": None}},
+        )
 
     def test_user_input_request_rejects_malformed_or_unbounded_params(self):
         invalid = (
@@ -828,6 +893,123 @@ class CodexAppServerClientTests(unittest.TestCase):
                 if isinstance(raised.exception, CodexUserInputRequired):
                     self.assertEqual(raised.exception.request.method, method)
                     self.assertEqual(raised.exception.request.request_id, "88")
+                client.close()
+
+    def test_capability_request_without_live_handler_is_typed_approval(self):
+        client, holder = make_client()
+        client.initialize()
+        thread_id = client.start_thread()
+        turn_id = client.start_turn(thread_id, "prompt")
+        holder["process"].stdout.emit(
+            {
+                "id": "approval-1",
+                "method": "mcpServer/elicitation/request",
+                "params": {
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "serverName": "cua_repl",
+                    "message": "Allow browser control?",
+                    "_meta": {
+                        "codex_approval_kind": "mcp_tool_call",
+                        "connector_id": "browser-use",
+                        "connector_name": "Google Chrome",
+                    },
+                },
+            }
+        )
+        with self.assertRaises(CodexCapabilityApprovalRequired) as raised:
+            client.wait_for_turn(thread_id, turn_id)
+        self.assertEqual(raised.exception.request.request_id, "approval-1")
+        client.close()
+
+    def test_live_capability_accept_and_reject_use_same_native_request(self):
+        for action in (
+            CapabilityApprovalAction.ACCEPT,
+            CapabilityApprovalAction.DECLINE,
+        ):
+            with self.subTest(action=action):
+                responses = []
+
+                def handler(process, message):
+                    if "method" in message:
+                        standard_handler(process, message)
+                        return
+                    responses.append(message)
+                    process.stdout.emit(self._completed("thread-1", "turn-1"))
+
+                holder = {}
+
+                def factory(*args, **kwargs):
+                    holder["process"] = FakeProcess(handler)
+                    return holder["process"]
+
+                client = CodexAppServerClient(
+                    config(),
+                    popen_factory=factory,
+                    capability_approval_handler=lambda request: CapabilityApprovalDecision(
+                        action
+                    ),
+                )
+                client.initialize()
+                thread_id = client.start_thread()
+                turn_id = client.start_turn(thread_id, "prompt")
+                holder["process"].stdout.emit(
+                    {
+                        "id": 91,
+                        "method": "mcpServer/elicitation/request",
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                            "serverName": "cua_repl",
+                            "message": "Allow browser control?",
+                            "_meta": {
+                                "codex_approval_kind": "mcp_tool_call",
+                                "connector_id": "browser-use",
+                                "connector_name": "Google Chrome",
+                            },
+                        },
+                    }
+                )
+                result = client.wait_for_turn(thread_id, turn_id)
+                self.assertTrue(result.completed)
+                self.assertEqual(len(responses), 1)
+                self.assertEqual(responses[0]["id"], 91)
+                self.assertEqual(responses[0]["result"]["action"], action.value)
+                client.close()
+
+    def test_capability_request_identity_and_handler_result_fail_closed(self):
+        handlers = (
+            lambda request: "accept",
+            lambda request: CapabilityApprovalDecision(
+                CapabilityApprovalAction.ACCEPT,
+                CapabilityApprovalScope.ALWAYS,
+            ),
+        )
+        for handler in handlers:
+            with self.subTest(handler=handler):
+                client, holder = make_client()
+                client._capability_approval_handler = handler
+                client.initialize()
+                thread_id = client.start_thread()
+                turn_id = client.start_turn(thread_id, "prompt")
+                holder["process"].stdout.emit(
+                    {
+                        "id": 92,
+                        "method": "mcpServer/elicitation/request",
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                            "serverName": "cua_repl",
+                            "message": "Allow browser control?",
+                            "_meta": {
+                                "codex_approval_kind": "mcp_tool_call",
+                                "connector_id": "browser-use",
+                            },
+                        },
+                    }
+                )
+                with self.assertRaises(CodexProtocolError):
+                    client.wait_for_turn(thread_id, turn_id)
                 client.close()
 
     def test_explicit_failed_and_interrupted_turns_raise(self):

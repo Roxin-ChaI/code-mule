@@ -23,8 +23,10 @@ from code_mule.progress import (
 )
 
 from .contracts import (
+    CapabilityApprovalDecision,
     CodexAppServerStartError,
     CodexApprovalRequired,
+    CodexCapabilityApprovalRequired,
     CodexProtocolError,
     CodexTurnFailed,
     CodexTurnFailureDetails,
@@ -35,6 +37,7 @@ from .contracts import (
     CodexTurnTimeout,
     CodexUserInputRequired,
     CodexWorkerConfig,
+    WorkerCapabilityApprovalRequest,
     WorkerTurnResult,
 )
 from .protocol import (
@@ -48,10 +51,13 @@ from .protocol import (
     TURN_START_METHOD,
     USER_INPUT_REQUEST_METHODS,
     classify_message,
+    is_capability_approval_request,
     notification_message,
+    parse_capability_approval_request,
     parse_worker_input_request,
     request_message,
     response_result,
+    server_response_message,
 )
 
 
@@ -70,6 +76,9 @@ class _Process(Protocol):
 
 
 _PopenFactory = Callable[..., _Process]
+_CapabilityApprovalHandler = Callable[
+    [WorkerCapabilityApprovalRequest], CapabilityApprovalDecision
+]
 _EOF = object()
 
 
@@ -102,6 +111,7 @@ class CodexAppServerClient:
         progress_sink: ProgressSink | None = None,
         clock: Callable[[], datetime] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
+        capability_approval_handler: _CapabilityApprovalHandler | None = None,
     ) -> None:
         self._config = config
         self._popen_factory = popen_factory
@@ -115,6 +125,7 @@ class CodexAppServerClient:
         self._progress = resilient_progress_sink(progress_sink)
         self._clock = clock
         self._monotonic = monotonic
+        self._capability_approval_handler = capability_approval_handler
 
     @property
     def stderr_tail(self) -> tuple[str, ...]:
@@ -253,7 +264,12 @@ class CodexAppServerClient:
                 raise CodexProtocolError("unexpected response while waiting for turn")
             if kind is MessageKind.SERVER_REQUEST:
                 event_count += 1
-                self._raise_server_request(message)
+                if self._raise_server_request(
+                    message,
+                    expected_thread_id=thread_id,
+                    expected_turn_id=turn_id,
+                ):
+                    continue
 
             method = cast(str, message["method"])
             params = self._params(message, method)
@@ -507,7 +523,8 @@ class CodexAppServerClient:
             if kind is MessageKind.RESPONSE:
                 return response_result(message, request_id)
             if kind is MessageKind.SERVER_REQUEST:
-                self._raise_server_request(message)
+                if self._raise_server_request(message):
+                    continue
             self._pending_messages.append(message)
 
     def _write_message(self, message: dict[str, object]) -> None:
@@ -624,12 +641,48 @@ class CodexAppServerClient:
         except (OSError, ValueError):
             return
 
-    def _raise_server_request(self, message: dict[str, object]) -> None:
+    def _raise_server_request(
+        self,
+        message: dict[str, object],
+        *,
+        expected_thread_id: str | None = None,
+        expected_turn_id: str | None = None,
+    ) -> bool:
+        """Handle a live native approval or raise one typed stop boundary."""
+
         method = cast(str, message["method"])
         if method in APPROVAL_REQUEST_METHODS:
             raise CodexApprovalRequired(
                 f"Codex app-server requested approval via {method}"
             )
+        if is_capability_approval_request(message):
+            request = parse_capability_approval_request(message)
+            if expected_thread_id is not None and request.thread_id != expected_thread_id:
+                raise CodexProtocolError(
+                    "capability approval does not belong to the current thread"
+                )
+            if expected_turn_id is not None and request.turn_id != expected_turn_id:
+                raise CodexProtocolError(
+                    "capability approval does not belong to the current turn"
+                )
+            if self._capability_approval_handler is None:
+                raise CodexCapabilityApprovalRequired(request)
+            decision = self._capability_approval_handler(request)
+            if not isinstance(decision, CapabilityApprovalDecision):
+                raise CodexProtocolError(
+                    "capability approval handler returned an invalid decision"
+                )
+            if (
+                decision.scope is not None
+                and decision.scope not in request.available_scopes
+            ):
+                raise CodexProtocolError(
+                    "capability approval selected a scope that was not offered"
+                )
+            self._write_message(
+                server_response_message(request.protocol_request_id, decision)
+            )
+            return True
         if method in USER_INPUT_REQUEST_METHODS:
             raise CodexUserInputRequired(parse_worker_input_request(message))
         raise CodexProtocolError(f"unsupported app-server request method {method!r}")

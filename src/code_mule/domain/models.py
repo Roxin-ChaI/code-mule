@@ -5,6 +5,7 @@ from datetime import datetime
 from .worker_verification import WorkerVerificationCheck
 
 from .enums import (
+    CapabilityApprovalScope,
     ChangeRequestStatus,
     HumanActionCategory,
     HumanActionStatus,
@@ -358,6 +359,78 @@ class WorkerInputDetails:
 
 
 @dataclass
+class WorkerCapabilityApprovalDetails:
+    """Safe persisted projection of one native Codex capability request."""
+
+    request_method: str
+    request_id: str
+    thread_id: str
+    turn_id: str
+    server_name: str
+    capability: str
+    application: str | None
+    capability_id: str | None
+    tool_name: str | None
+    approval_scopes: tuple[CapabilityApprovalScope, ...]
+    worker_attempt: int
+    baseline_head: str | None = None
+    partial_paths: tuple[str, ...] = ()
+    native_request_active: bool = False
+
+    def __post_init__(self) -> None:
+        required = {
+            "request_method": (self.request_method, 128),
+            "request_id": (self.request_id, 128),
+            "thread_id": (self.thread_id, 128),
+            "turn_id": (self.turn_id, 128),
+            "server_name": (self.server_name, 200),
+            "capability": (self.capability, 200),
+        }
+        optional = {
+            "application": (self.application, 200),
+            "capability_id": (self.capability_id, 200),
+            "tool_name": (self.tool_name, 200),
+            "baseline_head": (self.baseline_head, 128),
+        }
+        for name, (value, limit) in required.items():
+            _require_non_empty(value, name)
+            if len(value) > limit:
+                raise ValueError(f"{name} exceeds safe bounds")
+        for name, (value, limit) in optional.items():
+            if value is not None:
+                _require_non_empty(value, name)
+                if len(value) > limit:
+                    raise ValueError(f"{name} exceeds safe bounds")
+        if self.worker_attempt < 1:
+            raise ValueError("worker_attempt must be positive")
+        if len(self.approval_scopes) > 3 or len(set(self.approval_scopes)) != len(
+            self.approval_scopes
+        ):
+            raise ValueError("approval_scopes must be unique and bounded")
+        if any(not isinstance(scope, CapabilityApprovalScope) for scope in self.approval_scopes):
+            raise ValueError("approval_scopes must be typed")
+        if len(self.partial_paths) > 1_000 or any(
+            path == "" or len(path) > 1_024 for path in self.partial_paths
+        ):
+            raise ValueError("partial_paths exceed safe bounds")
+        if type(self.native_request_active) is not bool:
+            raise ValueError("native_request_active must be boolean")
+
+    @property
+    def identity(self) -> tuple[str, str, str, str, str, str]:
+        """Structured identity used for deterministic duplicate-loop detection."""
+
+        return (
+            self.request_method,
+            self.server_name,
+            self.capability_id or "",
+            self.tool_name or "",
+            self.capability,
+            self.application or "",
+        )
+
+
+@dataclass
 class HumanAction:
     id: str
     project_id: str
@@ -370,6 +443,7 @@ class HumanAction:
     created_at: datetime
     resolved_at: datetime | None = None
     worker_input: WorkerInputDetails | None = None
+    capability_approval: WorkerCapabilityApprovalDetails | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty(self.id, "id")
@@ -386,6 +460,15 @@ class HumanAction:
             and self.category is not HumanActionCategory.WORKER_INPUT
         ):
             raise ValueError("worker_input is only valid for WORKER_INPUT actions")
+        if self.worker_input is not None and self.capability_approval is not None:
+            raise ValueError("HumanAction cannot contain two Worker request types")
+        if self.capability_approval is not None and self.category not in {
+            HumanActionCategory.WORKER_APPROVAL,
+            HumanActionCategory.RECOVERY_UNCERTAIN,
+        }:
+            raise ValueError(
+                "capability_approval is only valid for approval or recovery actions"
+            )
 
 
 @dataclass
@@ -420,5 +503,6 @@ __all__ = [
     "Requirement",
     "Task",
     "WorkerInputDetails",
+    "WorkerCapabilityApprovalDetails",
     "WorkerHumanAction",
 ]

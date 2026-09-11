@@ -2,8 +2,11 @@
 
 from .client import CodexAppServerClient
 from .contracts import (
+    CapabilityApprovalAction,
+    CapabilityApprovalDecision,
     CodexAppServerStartError,
     CodexApprovalRequired,
+    CodexCapabilityApprovalRequired,
     CodexProtocolError,
     CodexTurnFailed,
     CodexTurnFailureKind,
@@ -15,6 +18,7 @@ from .contracts import (
     CodexWorkerConfig,
     CodexWorkerError,
     WorkerInputRequest,
+    WorkerCapabilityApprovalRequest,
     WorkerTaskRequest,
     WorkerTurnResult,
     worker_failure_metadata,
@@ -32,9 +36,12 @@ from .structured_report import (
 )
 
 __all__ = [
+    "CapabilityApprovalAction",
+    "CapabilityApprovalDecision",
     "CodexAppServerClient",
     "CodexAppServerStartError",
     "CodexApprovalRequired",
+    "CodexCapabilityApprovalRequired",
     "CodexProtocolError",
     "CodexTurnFailed",
     "CodexTurnFailureKind",
@@ -47,6 +54,7 @@ __all__ = [
     "CodexWorkerError",
     "CodexWorkerService",
     "WorkerInputRequest",
+    "WorkerCapabilityApprovalRequest",
     "CodexWorkerSession",
     "InvalidWorkerReport",
     "StructuredWorkerReport",

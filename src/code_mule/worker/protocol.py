@@ -3,7 +3,15 @@
 from enum import StrEnum
 from typing import cast
 
-from .contracts import CodexProtocolError, WorkerInputRequest
+from code_mule.domain.enums import CapabilityApprovalScope
+
+from .contracts import (
+    CapabilityApprovalAction,
+    CapabilityApprovalDecision,
+    CodexProtocolError,
+    WorkerCapabilityApprovalRequest,
+    WorkerInputRequest,
+)
 
 
 INITIALIZE_METHOD = "initialize"
@@ -52,6 +60,26 @@ def notification_message(
     if params is not None:
         message["params"] = params
     return message
+
+
+def server_response_message(
+    request_id: int | str, decision: CapabilityApprovalDecision
+) -> dict[str, object]:
+    """Build the native response for one still-live MCP elicitation request."""
+
+    if isinstance(request_id, bool) or not isinstance(request_id, (int, str)):
+        raise ValueError("request_id must be a string or integer")
+    content: dict[str, object] | None
+    if decision.action is CapabilityApprovalAction.ACCEPT:
+        content = {}
+        if decision.scope not in (None, CapabilityApprovalScope.ONCE):
+            content["persist"] = decision.scope.value
+    else:
+        content = None
+    return {
+        "id": request_id,
+        "result": {"action": decision.action.value, "content": content},
+    }
 
 
 def classify_message(message: object) -> MessageKind:
@@ -106,6 +134,8 @@ def parse_worker_input_request(message: object) -> WorkerInputRequest:
     if not isinstance(params, dict) or not all(isinstance(key, str) for key in params):
         raise CodexProtocolError(f"{method} params must be an object")
     typed_params = cast(dict[str, object], params)
+    if method == "mcpServer/elicitation/request" and _approval_meta(typed_params) is not None:
+        raise CodexProtocolError("capability approval request is not Worker input")
     if method == "item/tool/requestUserInput":
         question, choices = _tool_input(typed_params)
     else:
@@ -114,6 +144,112 @@ def parse_worker_input_request(message: object) -> WorkerInputRequest:
         return WorkerInputRequest(method, request_id, question, choices)
     except ValueError as error:
         raise CodexProtocolError("user-input request exceeds safe bounds") from error
+
+
+def is_capability_approval_request(message: object) -> bool:
+    """Recognize only the documented structured MCP approval marker."""
+
+    if classify_message(message) is not MessageKind.SERVER_REQUEST:
+        return False
+    payload = cast(dict[str, object], message)
+    if payload.get("method") != "mcpServer/elicitation/request":
+        return False
+    params = payload.get("params")
+    return (
+        isinstance(params, dict)
+        and all(isinstance(key, str) for key in params)
+        and _approval_meta(cast(dict[str, object], params)) is not None
+    )
+
+
+def parse_capability_approval_request(
+    message: object,
+) -> WorkerCapabilityApprovalRequest:
+    """Project a native capability request without retaining its raw payload."""
+
+    if classify_message(message) is not MessageKind.SERVER_REQUEST:
+        raise CodexProtocolError("expected an app-server server request")
+    payload = cast(dict[str, object], message)
+    if payload.get("method") != "mcpServer/elicitation/request":
+        raise CodexProtocolError("server request is not an MCP elicitation")
+    protocol_request_id = payload.get("id")
+    _safe_request_id(protocol_request_id)
+    params = payload.get("params")
+    if not isinstance(params, dict) or not all(isinstance(key, str) for key in params):
+        raise CodexProtocolError("elicitation params must be an object")
+    typed_params = cast(dict[str, object], params)
+    meta = _approval_meta(typed_params)
+    if meta is None:
+        raise CodexProtocolError("elicitation is not a structured capability approval")
+    thread_id = _bounded_field(typed_params, "threadId", 128, required=True)
+    turn_id = _bounded_field(typed_params, "turnId", 128, required=True)
+    server_name = _bounded_field(typed_params, "serverName", 200, required=True)
+    request, _ = _mcp_elicitation(typed_params)
+    capability_id = _bounded_field(meta, "connector_id", 200)
+    connector_name = _bounded_field(meta, "connector_name", 200)
+    tool_name = _bounded_field(meta, "tool_name", 200)
+    tool_title = _bounded_field(meta, "tool_title", 200)
+    capability = (
+        "Computer Use"
+        if capability_id == "browser-use"
+        else connector_name or tool_title or tool_name or server_name
+    )
+    application = connector_name
+    scopes = _approval_scopes(meta.get("persist"))
+    try:
+        return WorkerCapabilityApprovalRequest(
+            method="mcpServer/elicitation/request",
+            protocol_request_id=cast(int | str, protocol_request_id),
+            thread_id=cast(str, thread_id),
+            turn_id=cast(str, turn_id),
+            server_name=cast(str, server_name),
+            request=request,
+            capability=capability,
+            application=application,
+            capability_id=capability_id,
+            tool_name=tool_name,
+            available_scopes=scopes,
+        )
+    except ValueError as error:
+        raise CodexProtocolError("capability approval exceeds safe bounds") from error
+
+
+def _approval_meta(params: dict[str, object]) -> dict[str, object] | None:
+    value = params.get("_meta")
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+        raise CodexProtocolError("elicitation _meta must be an object")
+    meta = cast(dict[str, object], value)
+    marker = meta.get("codex_approval_kind")
+    if marker is None:
+        return None
+    if marker != "mcp_tool_call":
+        raise CodexProtocolError("elicitation has an unknown approval kind")
+    return meta
+
+
+def _bounded_field(
+    values: dict[str, object], name: str, limit: int, *, required: bool = False
+) -> str | None:
+    value = values.get(name)
+    if value is None and not required:
+        return None
+    if not isinstance(value, str) or value == "" or len(value) > limit:
+        raise CodexProtocolError(f"capability approval {name} is invalid")
+    return _sanitize_text(value)
+
+
+def _approval_scopes(value: object) -> tuple[CapabilityApprovalScope, ...]:
+    offered: list[CapabilityApprovalScope] = [CapabilityApprovalScope.ONCE]
+    raw = [] if value is None else value if isinstance(value, list) else [value]
+    if not all(item in {"session", "always"} for item in raw):
+        raise CodexProtocolError("capability approval persistence scope is invalid")
+    for item in raw:
+        scope = CapabilityApprovalScope(cast(str, item))
+        if scope not in offered:
+            offered.append(scope)
+    return tuple(offered)
 
 
 def _safe_request_id(value: object) -> str:
@@ -218,8 +354,11 @@ __all__ = [
     "TURN_START_METHOD",
     "USER_INPUT_REQUEST_METHODS",
     "classify_message",
+    "is_capability_approval_request",
     "notification_message",
+    "parse_capability_approval_request",
     "parse_worker_input_request",
     "request_message",
     "response_result",
+    "server_response_message",
 ]

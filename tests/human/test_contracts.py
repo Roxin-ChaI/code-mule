@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 import unittest
 
 from code_mule.domain import (
+    CapabilityApprovalScope,
     HumanAction,
     HumanActionCategory,
     HumanActionStatus,
@@ -10,6 +11,7 @@ from code_mule.domain import (
     HumanResolutionStrategy,
     ProjectStatus,
     WorkerInputDetails,
+    WorkerCapabilityApprovalDetails,
 )
 from code_mule.human import pending_action, request_human_action
 from code_mule.state.serialization import (
@@ -79,7 +81,7 @@ class HumanActionContractTests(unittest.TestCase):
         del legacy["human_actions"]
         del legacy["human_resolutions"]
         migrated = deserialize_project_state(legacy)
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 13)
+        self.assertEqual(CURRENT_SCHEMA_VERSION, 14)
         self.assertEqual(migrated.human_actions, ())
         self.assertEqual(migrated.human_resolutions, ())
 
@@ -154,6 +156,51 @@ class HumanActionContractTests(unittest.TestCase):
             action.pop("worker_input")
         migrated = deserialize_project_state(payload)
         self.assertIsNone(migrated.human_actions[-1].worker_input)
+
+    def test_capability_approval_round_trips_without_raw_protocol_payload(self):
+        details = WorkerCapabilityApprovalDetails(
+            request_method="mcpServer/elicitation/request",
+            request_id="88",
+            thread_id="thread-1",
+            turn_id="turn-1",
+            server_name="cua_repl",
+            capability="Computer Use",
+            application="Google Chrome",
+            capability_id="browser-use",
+            tool_name="control_browser",
+            approval_scopes=(
+                CapabilityApprovalScope.ONCE,
+                CapabilityApprovalScope.SESSION,
+            ),
+            worker_attempt=1,
+            baseline_head="a" * 40,
+            partial_paths=("index.html",),
+        )
+        identifiers = iter(("source-capability", "requested-capability"))
+        gated = request_human_action(
+            make_project_state(),
+            category=HumanActionCategory.WORKER_APPROVAL,
+            summary="Capability approval required",
+            requested_action="Allow browser control?",
+            risk="Original connection is required",
+            task_id="task-1",
+            operation_time=NOW,
+            action_id="action-capability",
+            event_id_factory=lambda: next(identifiers),
+            source_event_types=("task.human_required",),
+            capability_approval=details,
+        )
+        payload = serialize_project_state(gated)
+        restored = deserialize_project_state(payload)
+        self.assertEqual(restored, gated)
+        self.assertNotIn("raw_payload", str(payload))
+        self.assertNotIn("secret-value", str(payload))
+
+        payload["schema_version"] = 13
+        for action in payload["human_actions"]:
+            action.pop("capability_approval")
+        migrated = deserialize_project_state(payload)
+        self.assertIsNone(migrated.human_actions[-1].capability_approval)
 
 
 if __name__ == "__main__":

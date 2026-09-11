@@ -93,6 +93,14 @@ class WorkerHumanActionKind(StrEnum):
     EXTERNAL_SIDE_EFFECT = "external_side_effect"
 
 
+class CapabilityApprovalScope(StrEnum):
+    """Persistence scopes explicitly offered by a native capability request."""
+
+    ONCE = "once"
+    SESSION = "session"
+    ALWAYS = "always"
+
+
 class HumanActionStatus(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
@@ -112,6 +120,7 @@ class HumanResolutionStrategy(StrEnum):
 
 __all__ = [
     "BossCommandType",
+    "CapabilityApprovalScope",
     "ChangeRequestStatus",
     "HumanActionCategory",
     "HumanActionStatus",

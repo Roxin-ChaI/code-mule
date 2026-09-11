@@ -13,7 +13,7 @@ class VerificationPersistenceTests(unittest.TestCase):
         check = WorkerVerificationCheck("visual", WorkerCheckType.TEST, WorkerCheckStatus.NOT_RUN, False)
         state = replace(state, execution_reports=(replace(state.execution_reports[0], tests=("visual: not_run",), static_checks=(), verification_checks=(check,)),))
         payload = serialize_project_state(state)
-        self.assertEqual(payload["schema_version"], 13)
+        self.assertEqual(payload["schema_version"], 14)
         self.assertEqual(deserialize_project_state(payload), state)
         old = copy.deepcopy(payload)
         old["schema_version"] = 10

@@ -9,7 +9,12 @@ from code_mule.domain.enums import (
     HumanActionStatus,
     ProjectStatus,
 )
-from code_mule.domain.models import HumanAction, ProjectEvent, WorkerInputDetails
+from code_mule.domain.models import (
+    HumanAction,
+    ProjectEvent,
+    WorkerCapabilityApprovalDetails,
+    WorkerInputDetails,
+)
 from code_mule.domain.state_machine import validate_transition
 from code_mule.recovery.contracts import (
     BoundaryRecoverability,
@@ -49,6 +54,7 @@ def request_human_action(
     source_event_types: tuple[str, ...],
     source_metadata: dict[str, str] | None = None,
     worker_input: WorkerInputDetails | None = None,
+    capability_approval: WorkerCapabilityApprovalDetails | None = None,
     phase: ExecutionPhase | None = None,
 ) -> ProjectState:
     """Persist a single typed action and enter HUMAN_REQUIRED atomically."""
@@ -70,6 +76,7 @@ def request_human_action(
         status=HumanActionStatus.PENDING,
         created_at=operation_time,
         worker_input=worker_input,
+        capability_approval=capability_approval,
     )
     source_events = tuple(
         ProjectEvent(
@@ -151,6 +158,7 @@ def request_human_action(
         recoverability=(
             BoundaryRecoverability.UNCERTAIN
             if category is HumanActionCategory.RECOVERY_UNCERTAIN
+            or capability_approval is not None
             else BoundaryRecoverability.RECOVERABLE
         ),
         worker_started=worker_started,

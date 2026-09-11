@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import TypeVar, cast
 
 from code_mule.domain.enums import (
+    CapabilityApprovalScope,
     ChangeRequestStatus,
     HumanActionCategory,
     HumanActionStatus,
@@ -34,6 +35,7 @@ from code_mule.domain.models import (
     Requirement,
     Task,
     WorkerInputDetails,
+    WorkerCapabilityApprovalDetails,
     WorkerHumanAction,
 )
 from code_mule.execution.contracts import ExecutionLease, ExecutionLeaseStatus
@@ -63,7 +65,7 @@ from .models import ProjectState
 from code_mule.domain.worker_verification import WorkerCheckStatus, WorkerCheckType, WorkerVerificationCheck
 
 
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 14
 
 
 class UnsupportedStateSchema(ValueError):
@@ -347,6 +349,11 @@ def _human_action_to_payload(action: HumanAction) -> dict[str, object]:
             if action.worker_input is None
             else _worker_input_to_payload(action.worker_input)
         ),
+        "capability_approval": (
+            None
+            if action.capability_approval is None
+            else _capability_approval_to_payload(action.capability_approval)
+        ),
     }
 
 
@@ -360,6 +367,27 @@ def _worker_input_to_payload(details: WorkerInputDetails) -> dict[str, object]:
         "baseline_head": details.baseline_head,
         "partial_paths": list(details.partial_paths),
         "answer": details.answer,
+    }
+
+
+def _capability_approval_to_payload(
+    details: WorkerCapabilityApprovalDetails,
+) -> dict[str, object]:
+    return {
+        "request_method": details.request_method,
+        "request_id": details.request_id,
+        "thread_id": details.thread_id,
+        "turn_id": details.turn_id,
+        "server_name": details.server_name,
+        "capability": details.capability,
+        "application": details.application,
+        "capability_id": details.capability_id,
+        "tool_name": details.tool_name,
+        "approval_scopes": [scope.value for scope in details.approval_scopes],
+        "worker_attempt": details.worker_attempt,
+        "baseline_head": details.baseline_head,
+        "partial_paths": list(details.partial_paths),
+        "native_request_active": details.native_request_active,
     }
 
 
@@ -1094,6 +1122,22 @@ def _migrate_v12_to_v13(root: dict[str, object]) -> dict[str, object]:
     return migrated
 
 
+def _migrate_v13_to_v14(root: dict[str, object]) -> dict[str, object]:
+    """Add safe native capability approval evidence to HumanActions."""
+
+    actions: list[dict[str, object]] = []
+    for item in _expect_list(
+        _field(root, "human_actions", "project state"), "human_actions"
+    ):
+        action = dict(_expect_object(item, "human_action"))
+        action["capability_approval"] = None
+        actions.append(action)
+    migrated = dict(root)
+    migrated["schema_version"] = 14
+    migrated["human_actions"] = actions
+    return migrated
+
+
 def _legacy_completion_evidence(
     root: dict[str, object], active_plan_id: str | None
 ) -> tuple[str, str]:
@@ -1459,6 +1503,7 @@ def _event_from_payload(value: object) -> ProjectEvent:
 def _human_action_from_payload(value: object) -> HumanAction:
     payload = _expect_object(value, "human_action")
     resolved_value = _field(payload, "resolved_at", "human_action")
+    capability_value = _field(payload, "capability_approval", "human_action")
     return HumanAction(
         id=_expect_str(_field(payload, "id", "human_action"), "human_action.id"),
         project_id=_expect_str(
@@ -1505,6 +1550,11 @@ def _human_action_from_payload(value: object) -> HumanAction:
                 _field(payload, "worker_input", "human_action")
             )
         ),
+        capability_approval=(
+            None
+            if capability_value is None
+            else _capability_approval_from_payload(capability_value)
+        ),
     )
 
 
@@ -1539,6 +1589,73 @@ def _worker_input_from_payload(value: object) -> WorkerInputDetails:
         ),
         answer=_expect_optional_str(
             _field(payload, "answer", "worker_input"), "worker_input.answer"
+        ),
+    )
+
+
+def _capability_approval_from_payload(
+    value: object,
+) -> WorkerCapabilityApprovalDetails:
+    payload = _expect_object(value, "capability_approval")
+    return WorkerCapabilityApprovalDetails(
+        request_method=_expect_str(
+            _field(payload, "request_method", "capability_approval"),
+            "capability_approval.request_method",
+        ),
+        request_id=_expect_str(
+            _field(payload, "request_id", "capability_approval"),
+            "capability_approval.request_id",
+        ),
+        thread_id=_expect_str(
+            _field(payload, "thread_id", "capability_approval"),
+            "capability_approval.thread_id",
+        ),
+        turn_id=_expect_str(
+            _field(payload, "turn_id", "capability_approval"),
+            "capability_approval.turn_id",
+        ),
+        server_name=_expect_str(
+            _field(payload, "server_name", "capability_approval"),
+            "capability_approval.server_name",
+        ),
+        capability=_expect_str(
+            _field(payload, "capability", "capability_approval"),
+            "capability_approval.capability",
+        ),
+        application=_expect_optional_str(
+            _field(payload, "application", "capability_approval"),
+            "capability_approval.application",
+        ),
+        capability_id=_expect_optional_str(
+            _field(payload, "capability_id", "capability_approval"),
+            "capability_approval.capability_id",
+        ),
+        tool_name=_expect_optional_str(
+            _field(payload, "tool_name", "capability_approval"),
+            "capability_approval.tool_name",
+        ),
+        approval_scopes=tuple(
+            CapabilityApprovalScope(item)
+            for item in _strings(
+                _field(payload, "approval_scopes", "capability_approval"),
+                "capability_approval.approval_scopes",
+            )
+        ),
+        worker_attempt=_expect_int(
+            _field(payload, "worker_attempt", "capability_approval"),
+            "capability_approval.worker_attempt",
+        ),
+        baseline_head=_expect_optional_str(
+            _field(payload, "baseline_head", "capability_approval"),
+            "capability_approval.baseline_head",
+        ),
+        partial_paths=_strings(
+            _field(payload, "partial_paths", "capability_approval"),
+            "capability_approval.partial_paths",
+        ),
+        native_request_active=_expect_bool(
+            _field(payload, "native_request_active", "capability_approval"),
+            "capability_approval.native_request_active",
         ),
     )
 
@@ -1985,6 +2102,7 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
         10,
         11,
         12,
+        13,
         CURRENT_SCHEMA_VERSION,
     }:
         raise UnsupportedStateSchema(
@@ -2025,6 +2143,9 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
         schema_version = 12
     if schema_version == 12:
         root = _migrate_v12_to_v13(root)
+        schema_version = 13
+    if schema_version == 13:
+        root = _migrate_v13_to_v14(root)
 
     try:
         quality_value = _field(root, "quality_status", "project state")

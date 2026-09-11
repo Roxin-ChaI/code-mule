@@ -2,6 +2,7 @@
 
 from .enums import (
     BossCommandType,
+    CapabilityApprovalScope,
     ChangeRequestStatus,
     HumanActionCategory,
     HumanActionStatus,
@@ -31,12 +32,14 @@ from .models import (
     Requirement,
     Task,
     WorkerInputDetails,
+    WorkerCapabilityApprovalDetails,
     WorkerHumanAction,
 )
 from .state_machine import InvalidProjectTransition, can_transition, validate_transition
 
 __all__ = [
     "BossCommandType",
+    "CapabilityApprovalScope",
     "ChangeRequest",
     "ChangeRequestStatus",
     "Decision",
@@ -64,6 +67,7 @@ __all__ = [
     "Task",
     "TaskStatus",
     "WorkerInputDetails",
+    "WorkerCapabilityApprovalDetails",
     "WorkerHumanAction",
     "WorkerHumanActionKind",
     "can_transition",
