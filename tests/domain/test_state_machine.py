@@ -41,6 +41,7 @@ EXPECTED_TRANSITIONS = {
     (ProjectStatus.PAUSED_BY_BOSS, ProjectStatus.CANCELLED),
     (ProjectStatus.HUMAN_REQUIRED, ProjectStatus.PLANNING),
     (ProjectStatus.HUMAN_REQUIRED, ProjectStatus.RUNNING),
+    (ProjectStatus.HUMAN_REQUIRED, ProjectStatus.CHANGE_REQUESTED),
     (ProjectStatus.HUMAN_REQUIRED, ProjectStatus.PAUSED_BY_BOSS),
     (ProjectStatus.HUMAN_REQUIRED, ProjectStatus.FAILED),
     (ProjectStatus.HUMAN_REQUIRED, ProjectStatus.CANCELLED),
