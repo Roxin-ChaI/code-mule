@@ -2,6 +2,7 @@ from dataclasses import replace
 import unittest
 
 from code_mule.domain import (
+    CapabilityApprovalScope,
     HumanAction,
     HumanActionCategory,
     HumanActionStatus,
@@ -9,6 +10,7 @@ from code_mule.domain import (
     SupervisorDecisionType,
     TaskStatus,
     WorkerInputDetails,
+    WorkerCapabilityApprovalDetails,
 )
 from code_mule.presentation import (
     decision_label,
@@ -74,6 +76,48 @@ class PresentationModelTests(unittest.TestCase):
         verbose = "\n".join(render_human_action(action, verbose=True))
         self.assertIn("worker_request_method: item/tool/requestUserInput", verbose)
         self.assertIn("worker_request_id: request-9", verbose)
+
+    def test_native_capability_approval_uses_approve_and_safe_protocol_facts(self):
+        action = HumanAction(
+            "action-capability",
+            "project-1",
+            "task-1",
+            HumanActionCategory.WORKER_APPROVAL,
+            "Native approval required",
+            "Allow browser control?",
+            "The original connection is required",
+            HumanActionStatus.PENDING,
+            CREATED,
+            capability_approval=WorkerCapabilityApprovalDetails(
+                "mcpServer/elicitation/request",
+                "88",
+                "thread-1",
+                "turn-1",
+                "cua_repl",
+                "Computer Use",
+                "Google Chrome",
+                "browser-use",
+                "control_browser",
+                (CapabilityApprovalScope.ONCE, CapabilityApprovalScope.SESSION),
+                1,
+                "a" * 40,
+                ("index.html",),
+            ),
+        )
+        default = "\n".join(render_human_action(action))
+        self.assertIn("Category    Worker approval", default)
+        self.assertIn("Capability  Computer Use", default)
+        self.assertIn("Application Google Chrome", default)
+        self.assertIn("Scope       once, session", default)
+        self.assertIn("code-mule approve action-capability", default)
+        self.assertIn("code-mule reject action-capability", default)
+        self.assertNotIn("code-mule answer", default)
+        self.assertNotIn("thread-1", default)
+
+        verbose = "\n".join(render_human_action(action, verbose=True))
+        self.assertIn("worker_thread_id: thread-1", verbose)
+        self.assertIn("native_request_active: false", verbose)
+        self.assertNotIn("raw_payload", verbose)
 
     def test_final_verification_is_boss_readable_and_keeps_details_bounded(self):
         state = make_project_state()

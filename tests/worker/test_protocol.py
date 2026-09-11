@@ -1012,6 +1012,62 @@ class CodexAppServerClientTests(unittest.TestCase):
                     client.wait_for_turn(thread_id, turn_id)
                 client.close()
 
+        client, holder = make_client()
+        client._capability_approval_handler = lambda request: CapabilityApprovalDecision(
+            CapabilityApprovalAction.ACCEPT
+        )
+        client.initialize()
+        thread_id = client.start_thread()
+        turn_id = client.start_turn(thread_id, "prompt")
+        holder["process"].stdout.emit(
+            {
+                "id": 93,
+                "method": "mcpServer/elicitation/request",
+                "params": {
+                    "threadId": "different-thread",
+                    "turnId": turn_id,
+                    "serverName": "cua_repl",
+                    "message": "Allow browser control?",
+                    "_meta": {
+                        "codex_approval_kind": "mcp_tool_call",
+                        "connector_id": "browser-use",
+                    },
+                },
+            }
+        )
+        with self.assertRaisesRegex(CodexProtocolError, "current thread"):
+            client.wait_for_turn(thread_id, turn_id)
+        client.close()
+
+        def failing_handler(request):
+            raise RuntimeError("credential=must-not-leak")
+
+        client, holder = make_client()
+        client._capability_approval_handler = failing_handler
+        client.initialize()
+        thread_id = client.start_thread()
+        turn_id = client.start_turn(thread_id, "prompt")
+        holder["process"].stdout.emit(
+            {
+                "id": 94,
+                "method": "mcpServer/elicitation/request",
+                "params": {
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "serverName": "cua_repl",
+                    "message": "Allow browser control?",
+                    "_meta": {
+                        "codex_approval_kind": "mcp_tool_call",
+                        "connector_id": "browser-use",
+                    },
+                },
+            }
+        )
+        with self.assertRaises(CodexProtocolError) as raised:
+            client.wait_for_turn(thread_id, turn_id)
+        self.assertNotIn("must-not-leak", str(raised.exception))
+        client.close()
+
     def test_explicit_failed_and_interrupted_turns_raise(self):
         for status in ("failed", "interrupted"):
             with self.subTest(status=status):

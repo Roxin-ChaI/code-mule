@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 import unittest
 
 from code_mule.domain import (
+    CapabilityApprovalScope,
     HumanActionCategory,
     HumanActionStatus,
     HumanResolutionStrategy,
@@ -10,6 +11,7 @@ from code_mule.domain import (
     ProjectRevision,
     TaskStatus,
     WorkerInputDetails,
+    WorkerCapabilityApprovalDetails,
 )
 from code_mule.git_delivery import GitBaseline
 from code_mule.human import (
@@ -68,6 +70,30 @@ def worker_input_state():
         source,
         human_actions=(action,),
         git_baselines=(GitBaseline("task-1", "/repo", "a" * 40, ()),),
+    )
+
+
+def capability_approval_state():
+    source = gated_state(HumanActionCategory.WORKER_APPROVAL)
+    details = WorkerCapabilityApprovalDetails(
+        request_method="mcpServer/elicitation/request",
+        request_id="88",
+        thread_id="thread-1",
+        turn_id="turn-1",
+        server_name="cua_repl",
+        capability="Computer Use",
+        application="Google Chrome",
+        capability_id="browser-use",
+        tool_name="control_browser",
+        approval_scopes=(CapabilityApprovalScope.ONCE,),
+        worker_attempt=1,
+        baseline_head="a" * 40,
+        partial_paths=("index.html",),
+        native_request_active=False,
+    )
+    return replace(
+        source,
+        human_actions=(replace(source.human_actions[0], capability_approval=details),),
     )
 
 
@@ -145,6 +171,26 @@ class HumanResolutionServiceTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(InvalidHumanResolution, "already closed"):
             service(store).approve("action-1")
+
+    def test_expired_native_approval_decision_fails_project_without_retry(self):
+        for operation, expected_status in (
+            ("approve", HumanActionStatus.APPROVED),
+            ("reject", HumanActionStatus.REJECTED),
+        ):
+            with self.subTest(operation=operation):
+                store = MemoryStore(capability_approval_state())
+                updated = getattr(service(store), operation)("action-1")
+                self.assertIs(updated.project.status, ProjectStatus.FAILED)
+                self.assertIsNone(updated.project.current_task_id)
+                self.assertIs(updated.tasks[0].status, TaskStatus.BLOCKED)
+                self.assertIs(updated.human_actions[0].status, expected_status)
+                self.assertIn(
+                    "worker.capability_approval_expired",
+                    tuple(event.event_type for event in updated.events),
+                )
+                self.assertFalse(
+                    any(event.event_type == "task.execution_started" for event in updated.events)
+                )
 
     def test_unknown_action_and_wrong_operation_fail_closed(self):
         store = MemoryStore(gated_state(HumanActionCategory.ATTEMPT_LIMIT))

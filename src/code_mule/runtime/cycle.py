@@ -18,6 +18,7 @@ from code_mule.domain.models import (
     ExecutionReport,
     ProjectEvent,
     Task,
+    WorkerCapabilityApprovalDetails,
     WorkerInputDetails,
 )
 from code_mule.domain.state_machine import validate_transition
@@ -56,6 +57,7 @@ from code_mule.supervisor.contracts import ReviewRequest, ReviewResult
 from code_mule.supervisor import supervisor_failure_metadata
 from code_mule.worker.contracts import (
     CodexApprovalRequired,
+    CodexCapabilityApprovalRequired,
     CodexUserInputRequired,
     CodexTurnTimeout,
     CodexWorkerError,
@@ -282,7 +284,10 @@ class TaskCycleService:
                         return self._human_outcome(
                             task.id, reports, decisions, final_prompt=None
                         )
-                    if isinstance(error, CodexUserInputRequired):
+                    if isinstance(
+                        error,
+                        (CodexUserInputRequired, CodexCapabilityApprovalRequired),
+                    ):
                         self._clear_worker_identity(task.id)
                     self._emit_worker_failure(state, task, error)
                     return self._human_outcome(
@@ -1171,25 +1176,61 @@ class TaskCycleService:
     ) -> ProjectState:
         category, summary, requested_action, risk = self._worker_failure_action(error)
         worker_input = None
-        if isinstance(error, CodexUserInputRequired):
+        capability_approval = None
+        latest = self._store.load()
+        lifecycle = tuple(item for item in latest.execution_attempts if item.task_id == task.id)
+        attempt = max(lifecycle, key=lambda item: item.attempt).attempt if lifecycle else task.execution_attempts + 1
+        partial_paths: tuple[str, ...] = ()
+        baseline_head = None
+        if baseline is not None and self._git_delivery is not None:
+            partial_paths = self._git_delivery.capture_partial_paths(baseline)
+            baseline_head = baseline.baseline_head
+        if isinstance(error, CodexCapabilityApprovalRequired):
             request = error.request
-            partial_paths: tuple[str, ...] = ()
-            baseline_head = None
-            if baseline is not None and self._git_delivery is not None:
-                partial_paths = self._git_delivery.capture_partial_paths(baseline)
-                baseline_head = baseline.baseline_head
+            capability_approval = WorkerCapabilityApprovalDetails(
+                request_method=request.method,
+                request_id=request.request_id,
+                thread_id=request.thread_id,
+                turn_id=request.turn_id,
+                server_name=request.server_name,
+                capability=request.capability,
+                application=request.application,
+                capability_id=request.capability_id,
+                tool_name=request.tool_name,
+                approval_scopes=request.available_scopes,
+                worker_attempt=attempt,
+                baseline_head=baseline_head,
+                partial_paths=partial_paths,
+                native_request_active=False,
+            )
+            repeated = any(
+                action.task_id == task.id
+                and action.capability_approval is not None
+                and action.capability_approval.identity == capability_approval.identity
+                and action.status is not HumanActionStatus.PENDING
+                for action in latest.human_actions
+            )
+            if repeated:
+                category = HumanActionCategory.RECOVERY_UNCERTAIN
+                summary = "Permission continuation failed after a prior decision"
+                requested_action = (
+                    "Inspect the preserved workspace and choose an explicit safe resolution"
+                )
+                risk = (
+                    "A fresh Worker requested the same native capability; another "
+                    "automatic continuation could repeat indefinitely"
+                )
+        elif isinstance(error, CodexUserInputRequired):
+            request = error.request
             worker_input = WorkerInputDetails(
                 request_method=request.method,
                 request_id=request.request_id,
                 question=request.question,
                 choices=request.choices,
-                worker_attempt=task.execution_attempts + 1,
+                worker_attempt=attempt,
                 baseline_head=baseline_head,
                 partial_paths=partial_paths,
             )
-        latest = self._store.load()
-        lifecycle = tuple(item for item in latest.execution_attempts if item.task_id == task.id)
-        attempt = max(lifecycle, key=lambda item: item.attempt).attempt if lifecycle else task.execution_attempts + 1
         if any(item.task_id == task.id and item.attempt == attempt for item in latest.execution_attempts):
             latest = update_attempt(
                 latest,
@@ -1198,19 +1239,28 @@ class TaskCycleService:
                 ExecutionAttemptStatus.UNCERTAIN,
                 terminal_at=self._clock(),
                 failure_kind=type(error).__name__.lower()[:64],
-                partial_paths_exist=worker_input is not None and bool(worker_input.partial_paths),
+                partial_paths_exist=bool(partial_paths),
             )
             self._store.save(latest)
         transitioned = self._transition_human_required(
             latest,
             task,
             event_types=("task.execution_failed", "task.human_required"),
-            metadata=worker_failure_metadata(error),
+            metadata={
+                **worker_failure_metadata(error),
+                **(
+                    {"failure_kind": "permission_continuation_loop"}
+                    if category is HumanActionCategory.RECOVERY_UNCERTAIN
+                    and capability_approval is not None
+                    else {}
+                ),
+            },
             category=category,
             summary=summary,
             requested_action=requested_action,
             risk=risk,
             worker_input=worker_input,
+            capability_approval=capability_approval,
         )
         if category is HumanActionCategory.RECOVERY_UNCERTAIN:
             reason = (
@@ -1382,6 +1432,13 @@ class TaskCycleService:
 
     @staticmethod
     def _worker_failure_action(error: CodexWorkerError):
+        if isinstance(error, CodexCapabilityApprovalRequired):
+            return (
+                HumanActionCategory.WORKER_APPROVAL,
+                "Codex Worker requires native capability approval",
+                error.request.request,
+                "This capability can only continue through its original live app-server request",
+            )
         if isinstance(error, CodexApprovalRequired):
             return (
                 HumanActionCategory.WORKER_APPROVAL,
@@ -1415,6 +1472,7 @@ class TaskCycleService:
         requested_action: str,
         risk: str,
         worker_input: WorkerInputDetails | None = None,
+        capability_approval: WorkerCapabilityApprovalDetails | None = None,
     ) -> ProjectState:
         state, task = self._reload_task_state(task.id)
         operation_time = self._clock()
@@ -1431,6 +1489,7 @@ class TaskCycleService:
             source_event_types=event_types,
             source_metadata=metadata,
             worker_input=worker_input,
+            capability_approval=capability_approval,
         )
         self._store.save(new_state)
         return new_state

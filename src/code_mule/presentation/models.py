@@ -45,6 +45,10 @@ class HumanActionView:
     choices: tuple[str, ...]
     worker_request_method: str | None
     worker_request_id: str | None
+    capability: str | None = None
+    application: str | None = None
+    approval_scopes: tuple[str, ...] = ()
+    native_request_active: bool | None = None
 
 
 def project_view(state: ProjectState) -> ProjectView:
@@ -104,6 +108,7 @@ def project_view(state: ProjectState) -> ProjectView:
 
 def human_action_view(action: HumanAction) -> HumanActionView:
     worker_input = action.worker_input
+    capability = action.capability_approval
     return HumanActionView(
         category=humanize_identifier(action.category.value),
         task=action.task_id,
@@ -120,10 +125,24 @@ def human_action_view(action: HumanAction) -> HumanActionView:
         question=None if worker_input is None else worker_input.question,
         choices=() if worker_input is None else worker_input.choices,
         worker_request_method=(
-            None if worker_input is None else worker_input.request_method
+            capability.request_method
+            if capability is not None
+            else None if worker_input is None else worker_input.request_method
         ),
         worker_request_id=(
-            None if worker_input is None else worker_input.request_id
+            capability.request_id
+            if capability is not None
+            else None if worker_input is None else worker_input.request_id
+        ),
+        capability=None if capability is None else capability.capability,
+        application=None if capability is None else capability.application,
+        approval_scopes=(
+            ()
+            if capability is None
+            else tuple(scope.value for scope in capability.approval_scopes)
+        ),
+        native_request_active=(
+            None if capability is None else capability.native_request_active
         ),
     )
 

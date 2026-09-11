@@ -3,8 +3,10 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 from code_mule.domain.enums import (
+    CapabilityApprovalScope,
     ChangeRequestStatus,
     HumanActionCategory,
+    HumanActionStatus,
     ProjectStatus,
     SupervisorDecisionType,
     TaskStatus,
@@ -39,10 +41,12 @@ from code_mule.runtime import (
 )
 from code_mule.supervisor.contracts import ReviewResult
 from code_mule.worker import (
+    CodexCapabilityApprovalRequired,
     CodexApprovalRequired,
     CodexTurnHardTimeout,
     CodexTurnTimeout,
     InvalidWorkerReport,
+    WorkerCapabilityApprovalRequest,
 )
 from code_mule.worker import CodexUserInputRequired, WorkerInputRequest
 
@@ -290,6 +294,109 @@ class TaskCycleContractTests(unittest.TestCase):
 
 
 class TaskCycleGitDeliveryTests(unittest.TestCase):
+    @staticmethod
+    def capability_request(*, request_id="approval-1", thread_id="thread-1"):
+        return WorkerCapabilityApprovalRequest(
+            method="mcpServer/elicitation/request",
+            protocol_request_id=request_id,
+            thread_id=thread_id,
+            turn_id="turn-1",
+            server_name="cua_repl",
+            request="Allow Computer Use to control Google Chrome?",
+            capability="Computer Use",
+            application="Google Chrome",
+            capability_id="browser-use",
+            tool_name="control_browser",
+            available_scopes=(CapabilityApprovalScope.ONCE,),
+        )
+
+    def test_native_capability_request_persists_approval_not_worker_input(self):
+        delivery = FakeGitDelivery()
+        session = FakeWorkerSession(
+            [CodexCapabilityApprovalRequired(self.capability_request())]
+        )
+        service, request, store, session, supervisor, _ = build_cycle(
+            session=session,
+            supervisor=FakeSupervisor([]),
+            git_delivery=delivery,
+        )
+
+        outcome = service.execute(request)
+
+        self.assertTrue(outcome.human_action_required)
+        action = store.current.human_actions[-1]
+        self.assertIs(action.category, HumanActionCategory.WORKER_APPROVAL)
+        self.assertIsNone(action.worker_input)
+        self.assertEqual(action.capability_approval.capability, "Computer Use")
+        self.assertEqual(action.capability_approval.application, "Google Chrome")
+        self.assertEqual(action.capability_approval.partial_paths, ("calculator.py",))
+        self.assertEqual(action.capability_approval.baseline_head, "a" * 40)
+        self.assertFalse(action.capability_approval.native_request_active)
+        self.assertEqual(supervisor.requests, [])
+        self.assertEqual(delivery.commit_calls, [])
+        self.assertEqual(session.closed, 1)
+
+    def test_repeated_structured_permission_fails_closed_without_unbounded_actions(self):
+        delivery = FakeGitDelivery()
+        store = FakeStore(cycle_state())
+        first = FakeWorkerSession(
+            [CodexCapabilityApprovalRequired(self.capability_request())]
+        )
+        service, request, store, _, _, _ = build_cycle(
+            store=store,
+            session=first,
+            supervisor=FakeSupervisor([]),
+            git_delivery=delivery,
+        )
+        service.execute(request)
+        first_action = store.current.human_actions[-1]
+        closed = replace(
+            first_action,
+            status=HumanActionStatus.APPROVED,
+            resolved_at=NOW,
+        )
+        task = replace(store.current.tasks[0], status=TaskStatus.IN_PROGRESS)
+        store.save(
+            replace(
+                store.current,
+                project=replace(
+                    store.current.project,
+                    status=ProjectStatus.RUNNING,
+                    current_task_id=task.id,
+                ),
+                tasks=(task,),
+                human_actions=(closed,),
+            )
+        )
+        second = FakeWorkerSession(
+            [
+                CodexCapabilityApprovalRequired(
+                    self.capability_request(
+                        request_id="approval-2", thread_id="thread-2"
+                    )
+                )
+            ]
+        )
+        second_service, second_request, _, _, _, _ = build_cycle(
+            store=store,
+            session=second,
+            supervisor=FakeSupervisor([]),
+            git_delivery=delivery,
+        )
+
+        outcome = second_service.execute(second_request)
+
+        self.assertTrue(outcome.human_action_required)
+        self.assertEqual(len(store.current.human_actions), 2)
+        repeated = store.current.human_actions[-1]
+        self.assertIs(repeated.category, HumanActionCategory.RECOVERY_UNCERTAIN)
+        self.assertIn("Permission continuation failed", repeated.summary)
+        self.assertEqual(
+            repeated.capability_approval.identity,
+            first_action.capability_approval.identity,
+        )
+        self.assertEqual(delivery.commit_calls, [])
+
     def test_answer_reuses_original_baseline_for_one_fresh_worker(self):
         delivery = FakeGitDelivery()
         first_session = FakeWorkerSession(

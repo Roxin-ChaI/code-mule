@@ -667,7 +667,12 @@ class CodexAppServerClient:
                 )
             if self._capability_approval_handler is None:
                 raise CodexCapabilityApprovalRequired(request)
-            decision = self._capability_approval_handler(request)
+            try:
+                decision = self._capability_approval_handler(request)
+            except Exception:
+                raise CodexProtocolError(
+                    "capability approval handler failed closed"
+                ) from None
             if not isinstance(decision, CapabilityApprovalDecision):
                 raise CodexProtocolError(
                     "capability approval handler returned an invalid decision"

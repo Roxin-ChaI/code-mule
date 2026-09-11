@@ -11,13 +11,18 @@ from code_mule.diagnosis import (
     DiagnosisStage,
 )
 from code_mule.domain import (
+    CapabilityApprovalScope,
     HumanActionCategory,
     HumanActionStatus,
     ProjectEvent,
     ProjectStatus,
     TaskStatus,
 )
-from code_mule.domain.models import HumanAction, WorkerInputDetails
+from code_mule.domain.models import (
+    HumanAction,
+    WorkerCapabilityApprovalDetails,
+    WorkerInputDetails,
+)
 from code_mule.human import request_human_action
 from code_mule.recovery import ExecutionPhase
 from code_mule.state.serialization import serialize_project_state
@@ -29,7 +34,7 @@ class ProjectDiagnosisServiceTests(unittest.TestCase):
         self.service = ProjectDiagnosisService()
 
     @staticmethod
-    def human_state(category, *, worker_input=None):
+    def human_state(category, *, worker_input=None, capability_approval=None):
         state = make_project_state()
         action = HumanAction(
             "action-1",
@@ -42,6 +47,7 @@ class ProjectDiagnosisServiceTests(unittest.TestCase):
             HumanActionStatus.PENDING,
             UPDATED,
             worker_input=worker_input,
+            capability_approval=capability_approval,
         )
         return replace(
             state,
@@ -102,6 +108,39 @@ class ProjectDiagnosisServiceTests(unittest.TestCase):
                 self.assertIs(diagnosis.blocker_category, expected)
                 self.assertTrue(diagnosis.boss_action_required)
                 self.assertIs(diagnosis.recommended_next_action, DiagnosisNextAction.INSPECT)
+
+    def test_native_capability_and_permission_loop_have_distinct_diagnoses(self):
+        details = WorkerCapabilityApprovalDetails(
+            "mcpServer/elicitation/request",
+            "88",
+            "thread-1",
+            "turn-1",
+            "cua_repl",
+            "Computer Use",
+            "Google Chrome",
+            "browser-use",
+            "control_browser",
+            (CapabilityApprovalScope.ONCE,),
+            1,
+        )
+        approval = self.service.diagnose(
+            self.human_state(
+                HumanActionCategory.WORKER_APPROVAL,
+                capability_approval=details,
+            )
+        )
+        self.assertIs(approval.blocker_stage, DiagnosisStage.WORKER_APPROVAL)
+        self.assertIs(approval.recoverability, DiagnosisRecoverability.UNCERTAIN)
+        self.assertIn("original app-server connection", approval.blocker_summary)
+
+        loop = self.service.diagnose(
+            self.human_state(
+                HumanActionCategory.RECOVERY_UNCERTAIN,
+                capability_approval=details,
+            )
+        )
+        self.assertIs(loop.blocker_stage, DiagnosisStage.WORKER_APPROVAL)
+        self.assertIn("repeated", loop.blocker_summary)
 
     def test_planning_supervisor_failure_has_planning_stage_and_next_action(self):
         base = make_project_state()

@@ -370,6 +370,39 @@ class HumanResolutionService:
     ) -> ProjectState:
         operation_time = self._clock()
         closed = replace(action, status=status, resolved_at=operation_time)
+        project = replace(state.project, updated_at=operation_time)
+        tasks = state.tasks
+        expiry_event: ProjectEvent | None = None
+        capability = action.capability_approval
+        if capability is not None and not capability.native_request_active:
+            validate_transition(state.project.status, ProjectStatus.FAILED)
+            project = replace(
+                project,
+                status=ProjectStatus.FAILED,
+                current_task_id=None,
+            )
+            if action.task_id is not None:
+                matching = tuple(task for task in tasks if task.id == action.task_id)
+                if len(matching) != 1:
+                    raise InvalidHumanResolution(
+                        "capability approval Task is unavailable"
+                    )
+                blocked = replace(
+                    matching[0], status=TaskStatus.BLOCKED, updated_at=operation_time
+                )
+                tasks = tuple(
+                    blocked if task.id == blocked.id else task for task in tasks
+                )
+            expiry_event = self._event(
+                state,
+                action,
+                "worker.capability_approval_expired",
+                operation_time,
+                {
+                    "native_delivery": "unavailable",
+                    "request_method": capability.request_method,
+                },
+            )
         resolution = HumanResolution(
             id=self._resolution_id_factory(),
             action_id=action.id,
@@ -391,10 +424,13 @@ class HumanResolutionService:
         )
         updated = replace(
             state,
-            project=replace(state.project, updated_at=operation_time),
+            project=project,
+            tasks=tasks,
             human_actions=self._replace_action(state.human_actions, closed),
             human_resolutions=state.human_resolutions + (resolution,),
-            events=state.events + (event,),
+            events=state.events
+            + (() if expiry_event is None else (expiry_event,))
+            + (event,),
         )
         self._store.save(updated)
         return updated

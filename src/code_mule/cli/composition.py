@@ -653,10 +653,19 @@ class ProductionCliComposition:
             raise InvalidCliProjectState(str(error)) from error
         action = self._action(state, action_id)
         lines = (
-            "ACTION APPROVED",
-            "The approval is bound to this action only.",
-            "No operation has been executed.",
-            "Worker session recovery is not available; the project remains safely stopped.",
+            (
+                "CAPABILITY DECISION RECORDED",
+                "The original app-server request is no longer active.",
+                "The approval was not delivered and no new Worker was started.",
+                "The project failed closed; partial workspace changes were preserved.",
+            )
+            if action.capability_approval is not None
+            else (
+                "ACTION APPROVED",
+                "The approval is bound to this action only.",
+                "No operation has been executed.",
+                "Worker session recovery is not available; the project remains safely stopped.",
+            )
         )
         if verbose:
             lines += (
@@ -673,9 +682,18 @@ class ProductionCliComposition:
             raise InvalidCliProjectState(str(error)) from error
         action = self._action(state, action_id)
         lines = (
-            "ACTION REJECTED",
-            "The requested operation was not executed.",
-            "The project remains safely stopped.",
+            (
+                "CAPABILITY REQUEST REJECTED",
+                "The original app-server request is no longer active.",
+                "No operation was executed and no new Worker was started.",
+                "The project failed closed; partial workspace changes were preserved.",
+            )
+            if action.capability_approval is not None
+            else (
+                "ACTION REJECTED",
+                "The requested operation was not executed.",
+                "The project remains safely stopped.",
+            )
         )
         if verbose:
             lines += (

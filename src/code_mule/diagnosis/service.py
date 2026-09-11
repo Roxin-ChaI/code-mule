@@ -263,8 +263,9 @@ class ProjectDiagnosisService:
                 DiagnosisNextAction.INSPECT,
             )
         if pending:
+            action = pending[0]
             classification = _HUMAN_ACTIONS.get(
-                pending[0].category,
+                action.category,
                 _Classification(
                     DiagnosisBlockerCategory.INCONSISTENT_STATE,
                     DiagnosisStage.PROJECT_STATE,
@@ -274,7 +275,25 @@ class ProjectDiagnosisService:
                     DiagnosisNextAction.INSPECT,
                 ),
             )
-            if planning_failure_is_persisted(state, pending[0]):
+            if action.capability_approval is not None:
+                if action.category is HumanActionCategory.RECOVERY_UNCERTAIN:
+                    return _Classification(
+                        DiagnosisBlockerCategory.RECOVERY_UNCERTAIN,
+                        DiagnosisStage.WORKER_APPROVAL,
+                        "A native capability approval repeated after its original session closed.",
+                        DiagnosisRecoverability.UNCERTAIN,
+                        True,
+                        DiagnosisNextAction.INSPECT,
+                    )
+                return _Classification(
+                    DiagnosisBlockerCategory.WORKER_APPROVAL,
+                    DiagnosisStage.WORKER_APPROVAL,
+                    "A native capability request cannot be answered after its original app-server connection closed.",
+                    DiagnosisRecoverability.UNCERTAIN,
+                    True,
+                    DiagnosisNextAction.INSPECT,
+                )
+            if planning_failure_is_persisted(state, action):
                 return replace(classification, stage=DiagnosisStage.PLANNING)
             return classification
         status = state.project.status

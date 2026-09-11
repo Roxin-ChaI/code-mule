@@ -272,6 +272,18 @@ def render_human_action(
         f"Category    {view.category}",
         f"Task        {view.task or 'None'}",
     )
+    if view.capability is not None:
+        lines += (
+            f"Capability  {view.capability}",
+            f"Application {view.application or 'Not provided by protocol'}",
+            "Scope       " + ", ".join(view.approval_scopes),
+            "Session     "
+            + (
+                "Original request is active"
+                if view.native_request_active
+                else "Original request is closed; fresh-session approval is unsafe"
+            ),
+        )
     if view.question is not None:
         lines += (f"Question    {view.question}",)
         if view.choices:
@@ -349,6 +361,17 @@ def render_human_action(
             lines += (
                 f"worker_request_method: {view.worker_request_method}",
                 f"worker_request_id: {view.worker_request_id or '-'}",
+            )
+        if action.capability_approval is not None:
+            details = action.capability_approval
+            lines += (
+                f"worker_thread_id: {details.thread_id}",
+                f"worker_turn_id: {details.turn_id}",
+                f"mcp_server: {details.server_name}",
+                "approval_scopes: "
+                + ",".join(scope.value for scope in details.approval_scopes),
+                "native_request_active: "
+                + str(details.native_request_active).lower(),
             )
         if state is not None:
             lines += _render_worker_failure(state, action)
