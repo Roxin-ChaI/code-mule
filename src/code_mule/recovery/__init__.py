@@ -12,6 +12,10 @@ from .contracts import (
     SafePoint,
     SafePointKind,
     WorkerTerminalState,
+    WorkerOwnershipStatus,
+    WorkerStopCause,
+    WorkerUncertaintyEvidence,
+    WorkerWorkspaceState,
 )
 
 __all__ = [
@@ -26,4 +30,8 @@ __all__ = [
     "SafePoint",
     "SafePointKind",
     "WorkerTerminalState",
+    "WorkerOwnershipStatus",
+    "WorkerStopCause",
+    "WorkerUncertaintyEvidence",
+    "WorkerWorkspaceState",
 ]

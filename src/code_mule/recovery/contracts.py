@@ -90,6 +90,30 @@ class RecoveryMode(StrEnum):
     NOT_NEEDED = "not_needed"
 
 
+class WorkerStopCause(StrEnum):
+    INACTIVITY_TIMEOUT = "inactivity_timeout"
+    HARD_TIMEOUT = "hard_timeout"
+    ERROR_NOTIFICATION = "error_notification"
+    TURN_FAILED = "turn_failed"
+    TURN_INTERRUPTED = "turn_interrupted"
+    APP_SERVER_START = "app_server_start"
+    PROTOCOL_ERROR = "protocol_error"
+    UNKNOWN = "unknown"
+
+
+class WorkerOwnershipStatus(StrEnum):
+    RELEASED_MATCHED = "released_matched"
+    ACTIVE_MATCHED = "active_matched"
+    IDENTITY_MISMATCH = "identity_mismatch"
+    UNAVAILABLE = "unavailable"
+
+
+class WorkerWorkspaceState(StrEnum):
+    CHANGED = "changed"
+    CLEAN = "clean"
+    UNKNOWN = "unknown"
+
+
 def _optional_id(value: str | None, name: str) -> None:
     if value is not None and not re.fullmatch(r"[^\s\x00-\x1f]{1,128}", value):
         raise ValueError(f"{name} must be a bounded identifier")
@@ -198,6 +222,58 @@ class RecoveryPlan:
                 raise ValueError(f"{name} must be bounded")
 
 
+@dataclass(frozen=True)
+class WorkerUncertaintyEvidence:
+    """Safe persisted facts for one exact uncertain Worker boundary."""
+
+    revision_number: int | None
+    plan_version: int | None
+    task_id: str
+    task_title: str
+    attempt: int
+    worker_started: bool
+    last_trusted_stage: str
+    trusted_terminal_result: bool
+    report_persisted: bool
+    workspace_state: WorkerWorkspaceState
+    partial_paths: tuple[str, ...]
+    partial_paths_complete: bool
+    commit_created: bool
+    commit_sha: str | None
+    ownership_status: WorkerOwnershipStatus
+    stop_cause: WorkerStopCause
+    retry_safe: bool
+
+    def __post_init__(self) -> None:
+        _optional_id(self.task_id, "task_id")
+        if self.revision_number is not None and self.revision_number < 1:
+            raise ValueError("revision_number must be positive")
+        if self.plan_version is not None and self.plan_version < 1:
+            raise ValueError("plan_version must be positive")
+        if self.attempt < 1:
+            raise ValueError("attempt must be positive")
+        if not self.task_title or len(self.task_title) > 200:
+            raise ValueError("task_title must be bounded")
+        if not self.last_trusted_stage or len(self.last_trusted_stage) > 120:
+            raise ValueError("last_trusted_stage must be bounded")
+        if len(self.partial_paths) > 100:
+            raise ValueError("partial_paths must be bounded")
+        for path in self.partial_paths:
+            if not path or len(path) > 240 or "\n" in path or "\x00" in path:
+                raise ValueError("partial path must be bounded")
+        _sha(self.commit_sha)
+        if self.commit_created != (self.commit_sha is not None):
+            raise ValueError("commit_created and commit_sha disagree")
+        if self.retry_safe and (
+            self.worker_started
+            or self.workspace_state is not WorkerWorkspaceState.CLEAN
+            or self.report_persisted
+            or self.commit_created
+            or self.ownership_status is WorkerOwnershipStatus.ACTIVE_MATCHED
+        ):
+            raise ValueError("unsafe Worker evidence cannot permit retry")
+
+
 __all__ = [
     "BoundaryRecoverability",
     "ExecutionAttempt",
@@ -210,4 +286,8 @@ __all__ = [
     "SafePoint",
     "SafePointKind",
     "WorkerTerminalState",
+    "WorkerOwnershipStatus",
+    "WorkerStopCause",
+    "WorkerUncertaintyEvidence",
+    "WorkerWorkspaceState",
 ]

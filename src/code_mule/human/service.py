@@ -385,6 +385,33 @@ class HumanResolutionService:
             summary = "Boss explicitly stopped the project"
         elif strategy is HumanResolutionStrategy.ACKNOWLEDGE:
             summary = "Boss acknowledged the action; project remains safely stopped"
+            if action.category is HumanActionCategory.RECOVERY_UNCERTAIN:
+                resolution = HumanResolution(
+                    id=self._resolution_id_factory(),
+                    action_id=action.id,
+                    project_id=state.project.id,
+                    strategy=strategy,
+                    summary=(
+                        "Boss acknowledged uncertain Worker ownership; "
+                        "the Human Gate remains pending"
+                    ),
+                    created_at=operation_time,
+                )
+                event = self._event(
+                    state,
+                    action,
+                    "human_action.acknowledged",
+                    operation_time,
+                    {"strategy": strategy.value, "resolution_id": resolution.id},
+                )
+                updated = replace(
+                    state,
+                    project=replace(state.project, updated_at=operation_time),
+                    human_resolutions=state.human_resolutions + (resolution,),
+                    events=state.events + (event,),
+                )
+                self._store.save(updated)
+                return updated
             if action.category is HumanActionCategory.FINAL_REVIEW_DECISION:
                 validate_transition(project.status, ProjectStatus.PAUSED_BY_BOSS)
                 project = replace(

@@ -22,6 +22,7 @@ from code_mule.human import (
 )
 from code_mule.state.models import ProjectState
 from code_mule.recovery.service import RecoveryClassifier
+from code_mule.recovery.uncertainty import worker_uncertainty_evidence
 from code_mule.revision import latest_revision
 from code_mule.project_verification import final_review_human_judgment_evidence
 
@@ -191,6 +192,23 @@ class ProjectDiagnosisService:
             if action is None
             else final_review_human_judgment_evidence(state, action)
         )
+        worker_uncertainty = (
+            None
+            if action is None
+            else worker_uncertainty_evidence(state, action)
+        )
+        if worker_uncertainty is not None:
+            classification = _Classification(
+                DiagnosisBlockerCategory.RECOVERY_UNCERTAIN,
+                DiagnosisStage.WORKER_EXECUTION,
+                (
+                    "Worker execution stopped after trusted activity; its "
+                    "side-effect outcome is not proven."
+                ),
+                DiagnosisRecoverability.UNCERTAIN,
+                True,
+                DiagnosisNextAction.INSPECT,
+            )
         if replanning_failure is not None:
             classification = _Classification(
                 DiagnosisBlockerCategory.SUPERVISOR_FAILURE,
@@ -331,6 +349,7 @@ class ProjectDiagnosisService:
                 if final_review is None
                 else final_review.completion_head_candidate
             ),
+            worker_uncertainty=worker_uncertainty,
         )
 
     def _classification(self, state, pending, inconsistent) -> _Classification:

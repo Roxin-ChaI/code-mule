@@ -5,6 +5,7 @@ from enum import StrEnum
 
 from code_mule.domain import ProjectStatus
 from code_mule.domain.worker_verification import WorkerCheckStatus, WorkerCheckType
+from code_mule.recovery.contracts import WorkerUncertaintyEvidence
 
 
 class DiagnosisBlockerCategory(StrEnum):
@@ -35,6 +36,7 @@ class DiagnosisStage(StrEnum):
     WORKER_VERIFICATION = "worker_verification"
     WORKSPACE_BASELINE = "workspace_baseline"
     EXECUTION_RECOVERY = "execution_recovery"
+    WORKER_EXECUTION = "worker_execution"
     TASK_REVIEW = "task_review"
     DEPENDENCY_RESOLUTION = "dependency_resolution"
     BOSS_CONTROL = "boss_control"
@@ -113,6 +115,7 @@ class ProjectDiagnosis:
     final_review_outcome: str | None = None
     project_verification_status: str | None = None
     completion_head_candidate: str | None = None
+    worker_uncertainty: WorkerUncertaintyEvidence | None = None
 
     def __post_init__(self) -> None:
         bounded = {

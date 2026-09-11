@@ -64,6 +64,15 @@ def diagnosis_dashboard(diagnosis, terminal, lines, *, verbose=False):
             row("Final Review", humanize_identifier(diagnosis.final_review_outcome)),
             row("Candidate HEAD", diagnosis.completion_head_candidate or "—"),
         )
+    if diagnosis.worker_uncertainty is not None:
+        evidence = diagnosis.worker_uncertainty
+        diagnosis_rows += (
+            row("Worker attempt", evidence.attempt),
+            row("Stop cause", humanize_identifier(evidence.stop_cause.value)),
+            row("Workspace", humanize_identifier(evidence.workspace_state.value)),
+            row("Ownership", humanize_identifier(evidence.ownership_status.value)),
+            row("Retry safe", "Yes" if evidence.retry_safe else "No"),
+        )
     sections = (
         DashboardSection("PROJECT · " + diagnosis.project_name, (
             row("Status", status_label(diagnosis.project_status)),

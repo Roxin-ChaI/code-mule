@@ -1242,12 +1242,25 @@ class TaskCycleService:
                 partial_paths_exist=bool(partial_paths),
             )
             self._store.save(latest)
+        safe_partial_paths = tuple(
+            path[:240]
+            for path in partial_paths[:100]
+            if "\n" not in path and "\x00" not in path
+        )
+        partial_metadata = {"partial_path_count": str(len(safe_partial_paths))}
+        partial_metadata.update(
+            {
+                f"partial_path_{index}": path
+                for index, path in enumerate(safe_partial_paths, start=1)
+            }
+        )
         transitioned = self._transition_human_required(
             latest,
             task,
             event_types=("task.execution_failed", "task.human_required"),
             metadata={
                 **worker_failure_metadata(error),
+                **partial_metadata,
                 **(
                     {"failure_kind": "permission_continuation_loop"}
                     if category is HumanActionCategory.RECOVERY_UNCERTAIN

@@ -92,6 +92,9 @@ def render_project_diagnosis(
             f"Check status    {humanize_identifier(verification.check_status.value)}",
             f"Required        {'Yes' if verification.required else 'No'}",
         )
+    if diagnosis.worker_uncertainty is not None:
+        evidence = diagnosis.worker_uncertainty
+        lines += _worker_uncertainty_lines(evidence, include_context=False)
     lines += (
         "",
         "BOSS ACTION",
@@ -374,6 +377,17 @@ def render_human_action(
     ):
         replanning = _render_post_completion_replanning_failure(state, action)
         lines += replanning or _render_planning_failure(state, action)
+    if (
+        action.category is HumanActionCategory.RECOVERY_UNCERTAIN
+        and state is not None
+    ):
+        from code_mule.recovery.uncertainty import worker_uncertainty_evidence
+
+        uncertainty = worker_uncertainty_evidence(state, action)
+        if uncertainty is not None:
+            lines += ("", "RECOVERY UNCERTAIN") + _worker_uncertainty_lines(
+                uncertainty, include_context=True
+            )
     lines += (f"Risk        {view.risk}", "", (
         "No delivery commit was created. Worker changes were preserved."
         if action.category is HumanActionCategory.WORKER_VERIFICATION
@@ -423,6 +437,13 @@ def render_human_action(
                     '  code-mule change "<Boss correction>"',
                     "Acknowledging only records awareness and pauses safely; it does not approve completion.",
                 )
+            elif action.category is HumanActionCategory.RECOVERY_UNCERTAIN:
+                lines += (
+                    "",
+                    "Acknowledge records awareness only. The Human Gate stays pending,",
+                    "the Task remains incomplete, and no retry or commit is performed.",
+                    "After acknowledgement, inspect manually or fail the project explicitly.",
+                )
         else:
             lines += ("", "No resolve strategy is available for this action.")
     else:
@@ -463,6 +484,43 @@ def render_human_action(
     if terminal is not None and terminal.interactive:
         return human_dashboard(action, state, terminal, lines, verbose=verbose)
     return lines if terminal is None else terminal.legacy(lines)
+
+
+def _worker_uncertainty_lines(evidence, *, include_context: bool) -> tuple[str, ...]:
+    from .labels import humanize_identifier
+
+    lines: tuple[str, ...] = ()
+    if include_context:
+        lines += (
+            f"Revision          {evidence.revision_number or '-'}",
+            f"Plan              {'-' if evidence.plan_version is None else f'v{evidence.plan_version}'}",
+            f"Task              {evidence.task_id} · {evidence.task_title}",
+        )
+    lines += (
+        f"Attempt           {evidence.attempt}",
+        f"Worker started    {'Yes' if evidence.worker_started else 'No'}",
+        f"Last trusted      {evidence.last_trusted_stage}",
+        "Terminal result   "
+        + ("Received" if evidence.trusted_terminal_result else "Missing"),
+        f"Report persisted  {'Yes' if evidence.report_persisted else 'No'}",
+        "Workspace changed "
+        + humanize_identifier(evidence.workspace_state.value),
+    )
+    if evidence.partial_paths:
+        suffix = "" if evidence.partial_paths_complete else " (last trusted report)"
+        lines += ("Partial paths" + suffix,)
+        lines += tuple(f"- {path}" for path in evidence.partial_paths)
+    else:
+        lines += ("Partial paths     None recorded",)
+    lines += (
+        "Commit created    "
+        + (evidence.commit_sha if evidence.commit_created else "No"),
+        "Ownership status  "
+        + humanize_identifier(evidence.ownership_status.value),
+        "Stop cause        " + humanize_identifier(evidence.stop_cause.value),
+        f"Retry safe        {'Yes' if evidence.retry_safe else 'No'}",
+    )
+    return lines
 
 
 def _render_planning_failure(
