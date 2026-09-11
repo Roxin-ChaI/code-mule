@@ -310,6 +310,36 @@ def build_impact_analysis_prompt(
         if milestone.id == milestone_id
         for task_id in milestone.task_ids
     )
+    post_completion = (
+        active_plan is not None
+        and active_plan.status.value == "completed"
+        and state.project.current_task_id is None
+    )
+    if post_completion:
+        lifecycle_rules = (
+            " This is post-completion replanning for a new revision. Preserve "
+            "the completed base Plan as immutable history. Represent completed "
+            "work through affected_completed_tasks and Task lineage fields only. "
+            "For this operation milestone_ids_reused, tasks_to_reopen, "
+            "tasks_to_cancel, affected_in_progress_tasks, and "
+            "affected_pending_tasks must all be empty arrays. Propose at least "
+            "one fresh executable Task in tasks_to_add. Every new Task must be "
+            "owned exactly once by a fresh Milestone in milestones; do not put "
+            "historical completed Tasks or Milestones into the new executable "
+            "Plan graph."
+        )
+    else:
+        lifecycle_rules = (
+            " Put still-valid existing Milestone IDs in milestone_ids_reused; "
+            "do not redeclare them in milestones. The milestones field contains "
+            "only genuinely new Milestone proposals with fresh IDs. Example — "
+            "if M1 exists, incorrect new milestone id: M1. Correct reuse: "
+            "reference M1 in milestone_ids_reused. Correct new milestone: use "
+            "a fresh ID such as M2. Preserve completed work unless "
+            "tasks_to_reopen explicitly names its Task ID. The reused and new "
+            "Milestones together must place every Task retained by the "
+            "replacement Plan exactly once."
+        )
     user_prompt = (
         f"{_render_project_state(state)}\n\n"
         "Current operation context:\n"
@@ -341,23 +371,16 @@ def build_impact_analysis_prompt(
         "Milestone, and Task IDs may be used only in reference, reuse, or update-"
         "target fields. Every *_to_add item and every new entity proposal must "
         "use a fresh ID that does not collide with any historical ProjectState "
-        "entity. Put still-valid existing Milestone IDs in milestone_ids_reused; "
-        "do not redeclare them in milestones. The milestones field contains only "
-        "genuinely new Milestone proposals with fresh IDs. Example — if M1 "
-        "exists, incorrect new milestone id: M1. Correct reuse: reference M1 in "
-        "milestone_ids_reused. Correct new milestone: use a fresh ID such as M2. "
-        "Preserve completed work unless "
-        "tasks_to_reopen explicitly names its Task ID. Put added Requirements in "
+        "entity. Put added Requirements in "
         "requirements_to_add and replacements in requirements_to_update. The "
         "requirement_ids of an existing or reopened Task remain unchanged unless "
         "task_requirement_updates explicitly maps that Task ID to its complete "
         "replacement Requirement ID list. Use this field when a retained Task "
         "must move from a superseded Requirement to its replacement; never infer "
         "Task traceability from names or Milestone placement. Every active Task's "
-        "Requirement IDs must belong to the replacement Plan. The "
-        "reused and new Milestones together must place every Task retained by the "
-        "replacement Plan exactly once. Return an impact and replan proposal "
+        "Requirement IDs must belong to the replacement Plan. Return an impact and replan proposal "
         "only; do not modify requirements, tasks, milestones, or plans."
+        f"{lifecycle_rules}"
     )
     return _system_prompt(SupervisorOperation.IMPACT_ANALYSIS), user_prompt
 

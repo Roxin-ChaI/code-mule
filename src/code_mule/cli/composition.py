@@ -28,6 +28,7 @@ from code_mule.human import (
     HumanResolutionService,
     pending_action,
     planning_failure_is_persisted,
+    post_completion_replanning_failure_is_persisted,
 )
 from code_mule.git_delivery import (
     GitDeliveryService,
@@ -86,6 +87,7 @@ from code_mule.replanning import (
     ChangeExecutionService,
     ChangeReplanningRequest,
     ChangeReplanningService,
+    ReplanningError,
 )
 from code_mule.recovery import (
     RecoveryMode,
@@ -484,6 +486,11 @@ class ProductionCliComposition:
                     )
         except KeyboardInterrupt:
             self._raise_interrupted()
+        except ReplanningError:
+            expected = self._replanning_human_action_result(verbose=verbose)
+            if expected is None:
+                raise
+            return expected
         final = self._load()
         stop_reason = getattr(getattr(outcome, "execution", None), "stop_reason", None)
         stop_value = None if stop_reason is None else stop_reason.value
@@ -550,7 +557,11 @@ class ProductionCliComposition:
             with self._acquire_execution(verbose) as ownership:
                 state = self._load()
                 try:
-                    plan = RecoveryClassifier().classify(state, validate_workspace=True)
+                    plan = RecoveryClassifier().classify(
+                        state,
+                        validate_workspace=True,
+                        owned_lease_id=ownership.lease.id,
+                    )
                 except RecoveryPreflightError as error:
                     raise CliRecoveryRequired(str(error)) from error
                 if not plan.automatic_resume_allowed:
@@ -603,11 +614,33 @@ class ProductionCliComposition:
                             if planned.ready_for_execution
                             else None
                         )
+                elif plan.recovery_mode is RecoveryMode.FRESH_REPLANNING:
+                    changes = tuple(
+                        item
+                        for item in state.change_requests
+                        if item.status is ChangeRequestStatus.PENDING
+                    )
+                    if len(changes) != 1:
+                        raise CliRecoveryRequired(
+                            "replanning recovery requires one pending ChangeRequest"
+                        )
+                    with runtime.renderer:
+                        change_outcome = runtime.change_execution.apply_and_resume(
+                            ChangeReplanningRequest(
+                                state.project.id, changes[0].id
+                            )
+                        )
+                    outcome = change_outcome.execution
                 else:
                     with runtime.renderer:
                         outcome = runtime.execution.recover(plan)
         except KeyboardInterrupt:
             self._raise_interrupted()
+        except ReplanningError:
+            expected = self._replanning_human_action_result(verbose=verbose)
+            if expected is None:
+                raise
+            return expected
         final = self._load()
         lines = (
             "RECOVERY",
@@ -742,10 +775,13 @@ class ProductionCliComposition:
             f"Strategy    {strategy.value.replace('_', ' ').title()}",
             f"Project     {status_label(state.project.status)}",
         )
-        if strategy is HumanResolutionStrategy.RETRY_PLANNING:
+        if strategy in {
+            HumanResolutionStrategy.RETRY_PLANNING,
+            HumanResolutionStrategy.RETRY_REPLANNING,
+        }:
             lines += (
                 "",
-                "No Plan or Worker was created by this resolution.",
+                "No Plan, Revision, or Worker was created by this resolution.",
                 "Next",
                 "  code-mule recover",
             )
@@ -1113,6 +1149,35 @@ class ProductionCliComposition:
         if (
             action is None
             or not planning_failure_is_persisted(state, action)
+        ):
+            return None
+        return CliCommandResult(
+            CliExitCode.HUMAN_ACTION_REQUIRED,
+            render_human_action(
+                action,
+                verbose=verbose,
+                state=state,
+                terminal=TerminalDashboard.for_stream(self._stdout),
+            ),
+        )
+
+    def _replanning_human_action_result(
+        self, *, verbose: bool
+    ) -> CliCommandResult | None:
+        """Project only an exact, durably persisted revision replanning gate."""
+
+        state = self._load()
+        if state.project.status is not ProjectStatus.HUMAN_REQUIRED:
+            return None
+        try:
+            action = pending_action(state)
+        except ValueError:
+            return None
+        if (
+            action is None
+            or not post_completion_replanning_failure_is_persisted(
+                state, action
+            )
         ):
             return None
         return CliCommandResult(

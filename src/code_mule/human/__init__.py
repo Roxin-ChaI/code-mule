@@ -9,6 +9,9 @@ from .service import (
     allowed_resolution_strategies,
     planning_failure_is_persisted,
     planning_retry_is_safe,
+    post_completion_replanning_failure_evidence,
+    post_completion_replanning_failure_is_persisted,
+    post_completion_replanning_retry_is_safe,
 )
 
 __all__ = [
@@ -20,5 +23,8 @@ __all__ = [
     "pending_action",
     "planning_failure_is_persisted",
     "planning_retry_is_safe",
+    "post_completion_replanning_failure_evidence",
+    "post_completion_replanning_failure_is_persisted",
+    "post_completion_replanning_retry_is_safe",
     "request_human_action",
 ]

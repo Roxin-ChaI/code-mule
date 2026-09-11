@@ -25,8 +25,14 @@ class RecoveryPreflightError(ValueError):
 class RecoveryClassifier:
     """Classify recovery from persisted facts without mutating state."""
 
-    def classify(self, state: ProjectState, *, validate_workspace: bool = False) -> RecoveryPlan:
-        plan = self._classify(state)
+    def classify(
+        self,
+        state: ProjectState,
+        *,
+        validate_workspace: bool = False,
+        owned_lease_id: str | None = None,
+    ) -> RecoveryPlan:
+        plan = self._classify(state, owned_lease_id=owned_lease_id)
         if validate_workspace and plan.automatic_resume_allowed and plan.requires_workspace_validation:
             try:
                 self._validate_workspace(state, plan)
@@ -34,7 +40,9 @@ class RecoveryClassifier:
                 raise RecoveryPreflightError("Git recovery preflight failed or timed out") from error
         return plan
 
-    def _classify(self, state: ProjectState) -> RecoveryPlan:
+    def _classify(
+        self, state: ProjectState, *, owned_lease_id: str | None = None
+    ) -> RecoveryPlan:
         point = state.latest_safe_point
         safe = SafePointKind.UNCERTAIN if point is None else point.kind
         pending = tuple(
@@ -71,6 +79,34 @@ class RecoveryClassifier:
                     "code-mule recover",
                 )
             return self._blocked(safe, None, "Materialized Plan and project control status disagree.")
+        if state.project.status is ProjectStatus.CHANGE_REQUESTED:
+            from code_mule.replanning.recovery import (
+                post_completion_replanning_recovery_safety,
+            )
+
+            retry = post_completion_replanning_recovery_safety(
+                state,
+                validate_workspace=False,
+                owned_lease_id=owned_lease_id,
+            )
+            if retry.safe:
+                return self._plan(
+                    RecoveryMode.FRESH_REPLANNING,
+                    safe,
+                    BoundaryRecoverability.RECOVERABLE,
+                    False,
+                    True,
+                    False,
+                    True,
+                    "No replacement Plan or Revision was materialized; rerun impact analysis for the same ChangeRequest.",
+                    "code-mule recover",
+                )
+            return self._blocked(
+                safe,
+                None,
+                "Post-completion replanning recovery is not proven safe: "
+                + retry.reason,
+            )
         if state.project.status is not ProjectStatus.RUNNING:
             return self._blocked(safe, state.project.current_task_id, "Project control state does not permit execution recovery.")
         task_id = state.project.current_task_id
@@ -186,6 +222,11 @@ class RecoveryClassifier:
             if item.task_id == plan.task_id and item.attempt == plan.attempt
         )
         expected = attempts[0].baseline_head if len(attempts) == 1 else None
+        if expected is None and plan.recovery_mode is RecoveryMode.FRESH_REPLANNING:
+            from code_mule.revision import completed_revision
+
+            revision = completed_revision(state)
+            expected = None if revision is None else revision.completion_head
         if expected is None and plan.recovery_mode is RecoveryMode.CONTINUE_AFTER_INPUT:
             actions = tuple(action for action in state.human_actions if action.task_id == plan.task_id and action.worker_input is not None and action.status is HumanActionStatus.RESOLVED)
             if len(actions) == 1:
@@ -228,7 +269,11 @@ class RecoveryClassifier:
                 raise RecoveryPreflightError("Worker input continuation is ambiguous")
             if actual != set(actions[0].worker_input.partial_paths):
                 raise RecoveryPreflightError("workspace paths differ from the Worker input boundary")
-        elif plan.recovery_mode in {RecoveryMode.RESUME_PLAN, RecoveryMode.DISPATCH_FRESH_WORKER} and actual:
+        elif plan.recovery_mode in {
+            RecoveryMode.RESUME_PLAN,
+            RecoveryMode.DISPATCH_FRESH_WORKER,
+            RecoveryMode.FRESH_REPLANNING,
+        } and actual:
             raise RecoveryPreflightError("workspace is not clean after resolving its block")
 
 

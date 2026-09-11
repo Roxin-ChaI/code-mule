@@ -33,6 +33,7 @@ from code_mule.progress import (
     resilient_progress_sink,
 )
 from code_mule.recovery import SafePointKind
+from code_mule.recovery import ExecutionPhase
 from code_mule.recovery.state import with_safe_point
 from code_mule.revision import begin_revision
 from code_mule.scheduler import SchedulerError, TaskScheduler
@@ -48,6 +49,8 @@ from code_mule.supervisor import (
 from .contracts import ChangeReplanningOutcome, ChangeReplanningRequest
 from .errors import (
     InvalidReplanningState,
+    PostCompletionReplanningStage,
+    ReplanFailureCode,
     ReplanMaterializationError,
     SupervisorReplanningError,
 )
@@ -101,7 +104,13 @@ class PostCompletionReplanner:
                 ImpactAnalysisRequest(state, change_request)
             )
         except BaseException as error:
-            self._fail(state, change_request, error)
+            self._fail(
+                state,
+                change_request,
+                base_plan,
+                error,
+                stage=PostCompletionReplanningStage.IMPACT_ANALYSIS,
+            )
             raise SupervisorReplanningError(
                 "Supervisor Impact Analysis failed"
             ) from error
@@ -109,6 +118,19 @@ class PostCompletionReplanner:
         if state.project.status is ProjectStatus.CANCELLED:
             raise InvalidReplanningState("replanning was cancelled")
         self._emit(state, ProgressEventType.SUPERVISOR_IMPACT_COMPLETED)
+        try:
+            self._validate_proposal(
+                state, change_request, base_plan, base_graph_tasks, proposal
+            )
+        except ReplanMaterializationError as error:
+            self._fail(
+                state,
+                change_request,
+                base_plan,
+                error,
+                stage=PostCompletionReplanningStage.PROPOSAL_VALIDATION,
+            )
+            raise
         try:
             materialized = self._materialize(
                 state,
@@ -118,7 +140,13 @@ class PostCompletionReplanner:
                 proposal,
             )
         except (ValueError, ReplanMaterializationError) as error:
-            self._fail(state, change_request, error)
+            self._fail(
+                state,
+                change_request,
+                base_plan,
+                error,
+                stage=PostCompletionReplanningStage.MATERIALIZATION,
+            )
             raise
         plan = next(
             item for item in materialized.plans
@@ -197,10 +225,27 @@ class PostCompletionReplanner:
             raise InvalidReplanningState(
                 "requested revision must exceed base revision"
             )
+        if any(
+            plan.change_request_id == change_request.id
+            or plan.revision_number == change_request.requested_revision
+            for plan in state.plans
+        ):
+            raise InvalidReplanningState(
+                "ChangeRequest already has a materialized Plan binding"
+            )
+        if any(
+            revision.change_request_id == change_request.id
+            or revision.revision_number == change_request.requested_revision
+            for revision in state.revisions
+        ):
+            raise InvalidReplanningState(
+                "requested revision already has a materialized record"
+            )
         base_plans = tuple(
             plan
             for plan in state.plans
             if plan.id == state.project.active_plan_id
+            and plan.id == change_request.base_plan_id
             and plan.version == change_request.base_plan_version
             and plan.status is PlanStatus.COMPLETED
         )
@@ -325,12 +370,11 @@ class PostCompletionReplanner:
     ) -> ProjectState:
         if proposal.change_request_id != change_request.id:
             raise ReplanMaterializationError(
-                "proposal targets a different ChangeRequest"
+                "proposal targets a different ChangeRequest",
+                failure_code=ReplanFailureCode.CHANGE_REQUEST_MISMATCH,
+                field_path="change_request_id",
             )
         base_task_ids = tuple(item.id for item in base_tasks)
-        self._validate_proposal(
-            state, change_request, base_plan, base_tasks, proposal
-        )
         plan_id = self._plan_id_factory()
         now = self._clock()
         occupied = {
@@ -354,7 +398,9 @@ class PostCompletionReplanner:
             entity_id in occupied for entity_id in proposed_ids
         ):
             raise ReplanMaterializationError(
-                "proposal or Plan ID collides with history"
+                "proposal or Plan ID collides with history",
+                failure_code=ReplanFailureCode.ENTITY_ID_COLLISION,
+                field_path="new_entity_ids",
             )
 
         superseded_requirements = {
@@ -505,7 +551,9 @@ class PostCompletionReplanner:
             self._scheduler.validate(materialized)
         except SchedulerError as error:
             raise ReplanMaterializationError(
-                "materialized reopened Plan is not schedulable"
+                "materialized reopened Plan is not schedulable",
+                failure_code=ReplanFailureCode.UNSCHEDULABLE_PLAN,
+                field_path="replacement_plan",
             ) from error
         return materialized
 
@@ -519,32 +567,46 @@ class PostCompletionReplanner:
     ) -> None:
         if proposal.tasks_to_reopen or proposal.tasks_to_cancel:
             raise ReplanMaterializationError(
-                "completed revision Tasks cannot be reopened or cancelled"
+                "completed revision Tasks cannot be reopened or cancelled",
+                failure_code=ReplanFailureCode.HISTORICAL_TASK_MUTATION,
+                field_path="tasks_to_reopen/tasks_to_cancel",
             )
         if proposal.milestone_ids_reused:
             raise ReplanMaterializationError(
-                "reopened Plans must not reuse historical Milestones"
+                "reopened Plans must not reuse historical Milestones",
+                failure_code=ReplanFailureCode.HISTORICAL_MILESTONE_REUSE,
+                field_path="milestone_ids_reused",
             )
         if proposal.affected_in_progress_tasks or proposal.affected_pending_tasks:
             raise ReplanMaterializationError(
-                "completed revision has no in-progress or pending Tasks"
+                "completed revision has no in-progress or pending Tasks",
+                failure_code=ReplanFailureCode.AFFECTED_TASK_CLASSIFICATION,
+                field_path=(
+                    "affected_in_progress_tasks/affected_pending_tasks"
+                ),
             )
         base_ids = set(base_tasks and tuple(item.id for item in base_tasks))
         unknown = set(proposal.affected_task_ids) - base_ids
         if unknown:
             raise ReplanMaterializationError(
-                "affected Task must belong to the completed base Plan"
+                "affected Task must belong to the completed base Plan",
+                failure_code=ReplanFailureCode.AFFECTED_TASK_CLASSIFICATION,
+                field_path="affected_task_ids",
             )
         if set(proposal.affected_completed_tasks) != set(
             proposal.affected_task_ids
         ):
             raise ReplanMaterializationError(
-                "affected completed Task classification is incomplete"
+                "affected completed Task classification is incomplete",
+                failure_code=ReplanFailureCode.AFFECTED_TASK_CLASSIFICATION,
+                field_path="affected_completed_tasks",
             )
         new_ids = tuple(item.id for item in proposal.tasks_to_add)
         if len(new_ids) != len(set(new_ids)) or not new_ids:
             raise ReplanMaterializationError(
-                "reopened Plan requires at least one new executable Task"
+                "reopened Plan requires at least one new executable Task",
+                failure_code=ReplanFailureCode.NEW_TASK_REQUIRED,
+                field_path="tasks_to_add",
             )
         milestone_task_ids = {
             task_id
@@ -553,20 +615,26 @@ class PostCompletionReplanner:
         }
         if milestone_task_ids != set(new_ids):
             raise ReplanMaterializationError(
-                "reopened Plan milestones must own exactly the new Tasks"
+                "reopened Plan milestones must own exactly the new Tasks",
+                failure_code=ReplanFailureCode.NEW_MILESTONE_TASK_COVERAGE,
+                field_path="milestones[*].task_ids",
             )
         for task in proposal.tasks_to_add:
             if task.supersedes_task_id is not None and (
                 task.supersedes_task_id not in base_ids
             ):
                 raise ReplanMaterializationError(
-                    f"Task {task.id} supersedes an unknown historical Task"
+                    f"Task {task.id} supersedes an unknown historical Task",
+                    failure_code=ReplanFailureCode.UNKNOWN_TASK_LINEAGE,
+                    field_path="tasks_to_add[*].supersedes_task_id",
                 )
             if task.derived_from_task_ids and not set(
                 task.derived_from_task_ids
             ).issubset(base_ids):
                 raise ReplanMaterializationError(
-                    f"Task {task.id} derives from an unknown historical Task"
+                    f"Task {task.id} derives from an unknown historical Task",
+                    failure_code=ReplanFailureCode.UNKNOWN_TASK_LINEAGE,
+                    field_path="tasks_to_add[*].derived_from_task_ids",
                 )
         self._acyclic(proposal)
 
@@ -587,7 +655,9 @@ class PostCompletionReplanner:
             state = states.get(task_id)
             if state == "visiting":
                 raise ReplanMaterializationError(
-                    "new Task dependency cycle"
+                    "new Task dependency cycle",
+                    failure_code=ReplanFailureCode.NEW_TASK_DEPENDENCY_CYCLE,
+                    field_path="tasks_to_add[*].dependencies",
                 )
             if state == "visited":
                 return
@@ -654,7 +724,10 @@ class PostCompletionReplanner:
         self,
         state: ProjectState,
         change_request: ChangeRequest,
+        base_plan: Plan,
         error: BaseException,
+        *,
+        stage: PostCompletionReplanningStage,
     ) -> None:
         state = self._store.load()
         now = self._clock()
@@ -662,7 +735,36 @@ class PostCompletionReplanner:
             change_request,
             status=ChangeRequestStatus.REJECTED,
         )
-        metadata = supervisor_failure_metadata(error)
+        metadata = supervisor_failure_metadata(
+            error,
+            category=(
+                SupervisorFailureCategory.DETERMINISTIC_VALIDATION_FAILURE
+                if isinstance(error, (ValueError, ReplanMaterializationError))
+                else None
+            ),
+        )
+        supervisor_operation = metadata.pop("operation", None)
+        metadata.update(
+            {
+                "operation": "post_completion_replanning",
+                "stage": stage.value,
+                "change_request_id": change_request.id,
+                "base_revision": str(change_request.base_revision),
+                "requested_revision": str(change_request.requested_revision),
+                "base_plan_id": base_plan.id,
+                "base_plan_version": str(base_plan.version),
+                "target_plan_version": str(base_plan.version + 1),
+                "plan_materialized": "false",
+                "revision_materialized": "false",
+                "worker_started": "false",
+            }
+        )
+        if supervisor_operation is not None:
+            metadata["supervisor_operation"] = supervisor_operation
+        if isinstance(error, ReplanMaterializationError):
+            metadata["validation_code"] = error.failure_code.value
+            if error.field_path is not None:
+                metadata["field_path"] = error.field_path
         failed = replace(
             state,
             change_requests=tuple(
@@ -684,6 +786,7 @@ class PostCompletionReplanner:
             event_id_factory=self._event_id_factory,
             source_event_types=("replanning.failed",),
             source_metadata=metadata,
+            phase=ExecutionPhase.REPLANNING,
         )
         self._store.save(failed)
 

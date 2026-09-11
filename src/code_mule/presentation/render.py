@@ -1,6 +1,6 @@
 """Line-oriented Boss CLI rendering from immutable view models."""
 
-from code_mule.domain.enums import HumanActionCategory
+from code_mule.domain.enums import HumanActionCategory, RevisionStatus
 from code_mule.domain.models import HumanAction
 from code_mule.diagnosis import (
     DiagnosisRecoverability,
@@ -59,6 +59,30 @@ def render_project_diagnosis(
         f"Stage          {humanize_identifier(diagnosis.blocker_stage.value)}",
         f"Recoverable    {recoverability}",
     )
+    if diagnosis.target_plan_version is not None:
+        lines += (
+            f"Base Revision  {diagnosis.base_revision or '-'}",
+            f"Requested      {diagnosis.requested_revision or '-'}",
+            f"Base Plan      v{diagnosis.base_plan_version or '-'}",
+            f"Target Plan    v{diagnosis.target_plan_version}",
+            "Plan created  "
+            + ("Yes" if diagnosis.plan_materialized else "No"),
+            "Revision created "
+            + (
+                "Yes"
+                if diagnosis.requested_revision_materialized
+                else "No"
+            ),
+            "Failure        "
+            + humanize_identifier(
+                diagnosis.failure_category or "unknown_failure"
+            ),
+        )
+        if diagnosis.failure_code is not None:
+            lines += (
+                "Validation     "
+                + humanize_identifier(diagnosis.failure_code),
+            )
     if diagnosis.verification is not None:
         verification = diagnosis.verification
         lines += (
@@ -208,12 +232,22 @@ def render_change_requested(
     state: ProjectState, request: str, *, verbose: bool = False
 ) -> tuple[str, ...]:
     view = project_view(state)
+    completed_revision_change = any(
+        revision.lifecycle_status is RevisionStatus.COMPLETED
+        and revision.plan_id == state.project.active_plan_id
+        for revision in state.revisions
+    ) and state.project.current_task_id is None
+    boundary_message = (
+        "Completed revision will remain unchanged while the next revision is planned."
+        if completed_revision_change
+        else "Current task will finish safely before replanning."
+    )
     lines = (
         "CHANGE REQUESTED",
         "",
         f'"{request}"',
         "",
-        "Current task will finish safely before replanning.",
+        boundary_message,
         f"Plan        {'—' if view.plan_version is None else f'v{view.plan_version}'}",
         "Next        Impact analysis",
         "",
@@ -295,7 +329,8 @@ def render_human_action(
     if action.category is HumanActionCategory.WORKER_VERIFICATION and state is not None:
         lines += _render_verification_failure(state, action, verbose=verbose)
     if action.category is HumanActionCategory.SUPERVISOR_FAILURE and state is not None:
-        lines += _render_planning_failure(state, action)
+        replanning = _render_post_completion_replanning_failure(state, action)
+        lines += replanning or _render_planning_failure(state, action)
     lines += (f"Risk        {view.risk}", "", (
         "No delivery commit was created. Worker changes were preserved."
         if action.category is HumanActionCategory.WORKER_VERIFICATION
@@ -443,6 +478,54 @@ def _render_planning_failure(
             "Safe after explicit resolution"
             if planning_retry_is_safe(state, action)
             else "Not proven safe"
+        ),
+    )
+
+
+def _render_post_completion_replanning_failure(
+    state: ProjectState, action: HumanAction
+) -> tuple[str, ...]:
+    """Render bounded, persisted post-completion failure and retry evidence."""
+
+    from code_mule.replanning.recovery import (
+        post_completion_replanning_failure_evidence,
+        post_completion_replanning_retry_safety,
+    )
+
+    evidence = post_completion_replanning_failure_evidence(state, action)
+    if evidence is None:
+        return ()
+    retry = post_completion_replanning_retry_safety(
+        state, action, validate_workspace=True
+    )
+    lines = (
+        "",
+        "POST-COMPLETION REPLANNING FAILURE",
+        "Stage        " + humanize_identifier(evidence.failure_stage),
+        f"Base         Revision {evidence.base_revision} · "
+        f"Plan v{evidence.base_plan.version}",
+        f"Requested    Revision {evidence.requested_revision} · "
+        f"Plan v{evidence.target_plan_version}",
+        f"Plan created {'Yes' if evidence.plan_materialized else 'No'}",
+        "Revision created "
+        + ("Yes" if evidence.revision_materialized else "No"),
+        f"Worker started {'Yes' if evidence.worker_started else 'No'}",
+        "Failure      " + humanize_identifier(evidence.failure_category),
+        "Validation   "
+        + (
+            "Unavailable in legacy evidence"
+            if evidence.failure_code is None
+            else humanize_identifier(evidence.failure_code)
+        ),
+    )
+    if evidence.field_path is not None:
+        lines += (f"Field         {evidence.field_path}",)
+    return lines + (
+        "Fresh replan "
+        + (
+            "Safe after explicit resolution"
+            if retry.safe
+            else "Not proven safe: " + retry.reason
         ),
     )
 

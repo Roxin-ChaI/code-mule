@@ -102,6 +102,11 @@ class ProjectDiagnosis:
     base_revision: int | None = None
     base_plan_id: str | None = None
     base_plan_version: int | None = None
+    target_plan_version: int | None = None
+    plan_materialized: bool | None = None
+    requested_revision_materialized: bool | None = None
+    failure_category: str | None = None
+    failure_code: str | None = None
     change_summary: str | None = None
 
     def __post_init__(self) -> None:
@@ -117,6 +122,8 @@ class ProjectDiagnosis:
             "latest_task_commit": (self.latest_task_commit, 128),
             "pending_action_id": (self.pending_action_id, 128),
             "worker_input_question": (self.worker_input_question, 2_000),
+            "failure_category": (self.failure_category, 64),
+            "failure_code": (self.failure_code, 64),
         }
         for name, (value, limit) in bounded.items():
             if not isinstance(value, str) or not value or len(value) > limit:
@@ -126,6 +133,8 @@ class ProjectDiagnosis:
                 raise ValueError(f"{name} exceeds diagnosis bounds")
         if self.active_plan_version is not None and self.active_plan_version < 1:
             raise ValueError("active_plan_version must be positive")
+        if self.target_plan_version is not None and self.target_plan_version < 1:
+            raise ValueError("target_plan_version must be positive")
         if not 0 <= self.completed_tasks <= self.total_tasks:
             raise ValueError("task progress is invalid")
 

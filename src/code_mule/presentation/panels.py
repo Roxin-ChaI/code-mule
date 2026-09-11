@@ -41,6 +41,23 @@ def project_dashboard(state, terminal: TerminalDashboard, lines, *, verbose=Fals
 def diagnosis_dashboard(diagnosis, terminal, lines, *, verbose=False):
     # Values come from Phase 20/21 diagnosis; no new recoverability inference.
     from .labels import status_label
+    diagnosis_rows = (
+        row("Blocker", humanize_identifier(diagnosis.blocker_category.value)),
+        row("Reason", diagnosis.blocker_summary),
+        row("Stage", humanize_identifier(diagnosis.blocker_stage.value)),
+        row("Safe Point", humanize_identifier(diagnosis.last_safe_point or "unknown")),
+        row("Stop Reason", humanize_identifier(diagnosis.stop_reason or "none")),
+        row("Recoverability", humanize_identifier(diagnosis.recoverability.value)),
+    )
+    if diagnosis.target_plan_version is not None:
+        diagnosis_rows += (
+            row("Base Revision", diagnosis.base_revision or "—"),
+            row("Requested", diagnosis.requested_revision or "—"),
+            row("Base Plan", f"v{diagnosis.base_plan_version or '—'}"),
+            row("Target Plan", f"v{diagnosis.target_plan_version}"),
+            row("Plan materialized", "Yes" if diagnosis.plan_materialized else "No"),
+            row("Failure", humanize_identifier(diagnosis.failure_category or "unknown_failure")),
+        )
     sections = (
         DashboardSection("PROJECT · " + diagnosis.project_name, (
             row("Status", status_label(diagnosis.project_status)),
@@ -48,13 +65,7 @@ def diagnosis_dashboard(diagnosis, terminal, lines, *, verbose=False):
             row("Plan", "—" if diagnosis.active_plan_version is None else f"v{diagnosis.active_plan_version}"),
             row("Progress", terminal.progress(diagnosis.completed_tasks, diagnosis.total_tasks)),
             row("Current", diagnosis.current_task_title or "None"))),
-        DashboardSection("DIAGNOSIS", (
-            row("Blocker", humanize_identifier(diagnosis.blocker_category.value)),
-            row("Reason", diagnosis.blocker_summary),
-            row("Stage", humanize_identifier(diagnosis.blocker_stage.value)),
-            row("Safe Point", humanize_identifier(diagnosis.last_safe_point or "unknown")),
-            row("Stop Reason", humanize_identifier(diagnosis.stop_reason or "none")),
-            row("Recoverability", humanize_identifier(diagnosis.recoverability.value)))),
+        DashboardSection("DIAGNOSIS", diagnosis_rows),
         DashboardSection("NEXT ACTION", (diagnosis.recommended_next_action.value,)),
     )
     if diagnosis.verification is not None:

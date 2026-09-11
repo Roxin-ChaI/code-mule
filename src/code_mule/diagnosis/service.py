@@ -16,7 +16,10 @@ from code_mule.domain.worker_verification import (
     WorkerCheckType,
     safe_check_name,
 )
-from code_mule.human import planning_failure_is_persisted
+from code_mule.human import (
+    planning_failure_is_persisted,
+    post_completion_replanning_failure_evidence,
+)
 from code_mule.state.models import ProjectState
 from code_mule.recovery.service import RecoveryClassifier
 from code_mule.revision import latest_revision
@@ -169,8 +172,25 @@ class ProjectDiagnosisService:
         completed = tuple(task for task in tasks if task.status is TaskStatus.COMPLETED)
         latest_completed = max(completed, key=lambda task: task.updated_at, default=None)
         action = pending[0] if len(pending) == 1 else None
+        replanning_failure = (
+            None
+            if action is None
+            else post_completion_replanning_failure_evidence(state, action)
+        )
+        if replanning_failure is not None:
+            classification = _Classification(
+                DiagnosisBlockerCategory.SUPERVISOR_FAILURE,
+                DiagnosisStage.REPLANNING,
+                "Post-completion impact analysis or replanning failed closed.",
+                DiagnosisRecoverability.RECOVERABLE,
+                True,
+                DiagnosisNextAction.INSPECT,
+            )
         revision = latest_revision(state)
         open_change = (
+            replanning_failure.change_request
+            if replanning_failure is not None
+            else
             next(
                 (
                     item
@@ -246,6 +266,31 @@ class ProjectDiagnosisService:
                 None
                 if open_change is None
                 else open_change.base_plan_version
+            ),
+            target_plan_version=(
+                None
+                if replanning_failure is None
+                else replanning_failure.target_plan_version
+            ),
+            plan_materialized=(
+                None
+                if replanning_failure is None
+                else replanning_failure.plan_materialized
+            ),
+            requested_revision_materialized=(
+                None
+                if replanning_failure is None
+                else replanning_failure.revision_materialized
+            ),
+            failure_category=(
+                None
+                if replanning_failure is None
+                else replanning_failure.failure_category
+            ),
+            failure_code=(
+                None
+                if replanning_failure is None
+                else replanning_failure.failure_code
             ),
             change_summary=(
                 None if open_change is None else open_change.description

@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Protocol
 
 from code_mule.domain.enums import (
+    ChangeRequestStatus,
     HumanActionCategory,
     HumanActionStatus,
     HumanResolutionStrategy,
@@ -111,6 +112,40 @@ def planning_retry_is_safe(state: ProjectState, action: HumanAction) -> bool:
     )
 
 
+def post_completion_replanning_failure_evidence(
+    state: ProjectState, action: HumanAction
+):
+    """Load post-completion evidence lazily to avoid package import cycles."""
+
+    from code_mule.replanning.recovery import (
+        post_completion_replanning_failure_evidence as classify,
+    )
+
+    return classify(state, action)
+
+
+def post_completion_replanning_failure_is_persisted(
+    state: ProjectState, action: HumanAction
+) -> bool:
+    from code_mule.replanning.recovery import (
+        post_completion_replanning_failure_is_persisted as classify,
+    )
+
+    return classify(state, action)
+
+
+def post_completion_replanning_retry_is_safe(
+    state: ProjectState, action: HumanAction
+) -> bool:
+    from code_mule.replanning.recovery import (
+        post_completion_replanning_retry_safety,
+    )
+
+    return post_completion_replanning_retry_safety(
+        state, action, validate_workspace=True
+    ).safe
+
+
 def allowed_resolution_strategies(
     state: ProjectState, action: HumanAction
 ) -> tuple[HumanResolutionStrategy, ...]:
@@ -126,6 +161,8 @@ def allowed_resolution_strategies(
         strategies.append(HumanResolutionStrategy.RETRY_TASK)
     if planning_retry_is_safe(state, action):
         strategies.append(HumanResolutionStrategy.RETRY_PLANNING)
+    if post_completion_replanning_retry_is_safe(state, action):
+        strategies.append(HumanResolutionStrategy.RETRY_REPLANNING)
     strategies.extend(
         (
             HumanResolutionStrategy.FAIL_PROJECT,
@@ -298,6 +335,39 @@ class HumanResolutionService:
                 updated_at=operation_time,
             )
             summary = "Boss explicitly authorized a fresh initial planning call"
+        elif strategy is HumanResolutionStrategy.RETRY_REPLANNING:
+            from code_mule.replanning.recovery import (
+                post_completion_replanning_retry_safety,
+            )
+
+            safety = post_completion_replanning_retry_safety(
+                state, action, validate_workspace=True
+            )
+            if not safety.safe or safety.evidence is None:
+                raise InvalidHumanResolution(
+                    "retry_replanning safety proof no longer holds"
+                )
+            change = safety.evidence.change_request
+            validate_transition(project.status, ProjectStatus.CHANGE_REQUESTED)
+            project = replace(
+                project,
+                status=ProjectStatus.CHANGE_REQUESTED,
+                current_task_id=None,
+                updated_at=operation_time,
+            )
+            pending_change = replace(
+                change, status=ChangeRequestStatus.PENDING
+            )
+            state = replace(
+                state,
+                change_requests=tuple(
+                    pending_change if item.id == change.id else item
+                    for item in state.change_requests
+                ),
+            )
+            summary = (
+                "Boss explicitly authorized fresh post-completion replanning"
+            )
         elif strategy is HumanResolutionStrategy.FAIL_PROJECT:
             validate_transition(project.status, ProjectStatus.FAILED)
             project = replace(

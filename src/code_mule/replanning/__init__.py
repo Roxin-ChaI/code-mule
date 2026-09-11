@@ -11,7 +11,9 @@ from .errors import (
     InvalidReplanDependency,
     InvalidReplanProposal,
     InvalidReplanningState,
+    PostCompletionReplanningStage,
     ReplanDependencyCycle,
+    ReplanFailureCode,
     ReplanIdCollision,
     ReplanMaterializationError,
     ReplanningError,
@@ -20,6 +22,14 @@ from .errors import (
 )
 from .validation import ChangeReplanValidator
 from .materialization import ChangeReplanMaterializer
+from .recovery import (
+    PostCompletionReplanningEvidence,
+    ReplanningRetrySafety,
+    post_completion_replanning_failure_evidence,
+    post_completion_replanning_failure_is_persisted,
+    post_completion_replanning_recovery_safety,
+    post_completion_replanning_retry_safety,
+)
 from .service import ChangeReplanningService
 
 __all__ = [
@@ -30,14 +40,22 @@ __all__ = [
     "ChangeReplanningOutcome",
     "ChangeExecutionService",
     "ChangeExecutionOutcome",
+    "PostCompletionReplanningEvidence",
+    "ReplanningRetrySafety",
     "ConflictingTaskChange",
     "InvalidReplanDependency",
     "InvalidReplanProposal",
     "InvalidReplanningState",
+    "PostCompletionReplanningStage",
     "ReplanDependencyCycle",
+    "ReplanFailureCode",
     "ReplanIdCollision",
     "ReplanMaterializationError",
     "ReplanningError",
     "SupervisorReplanningError",
     "UnknownReplanReference",
+    "post_completion_replanning_failure_evidence",
+    "post_completion_replanning_failure_is_persisted",
+    "post_completion_replanning_recovery_safety",
+    "post_completion_replanning_retry_safety",
 ]

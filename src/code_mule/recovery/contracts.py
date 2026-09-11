@@ -27,6 +27,7 @@ class ExecutionStopReason(StrEnum):
 class ExecutionPhase(StrEnum):
     PROJECT = "project"
     PLANNING = "planning"
+    REPLANNING = "replanning"
     EXECUTION = "execution"
     WORKER = "worker"
     REVIEW = "review"
@@ -84,6 +85,7 @@ class RecoveryMode(StrEnum):
     CONTINUE_AFTER_REPORT = "continue_after_report"
     CONTINUE_AFTER_INPUT = "continue_after_input"
     FRESH_PLANNING = "fresh_planning"
+    FRESH_REPLANNING = "fresh_replanning"
     BLOCKED = "blocked"
     NOT_NEEDED = "not_needed"
 
