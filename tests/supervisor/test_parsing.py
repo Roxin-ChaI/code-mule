@@ -222,6 +222,13 @@ class ParsingTests(unittest.TestCase):
             with self.subTest(payload=payload):
                 with self.assertRaises(InvalidSupervisorResponse):
                     parse_final_review_response(payload)
+        for payload in (
+            {"decision": "human_required", "rationale": "x" * 4_001, "issues": []},
+            {"decision": "human_required", "rationale": "Bounded.", "issues": ["x" * 501]},
+        ):
+            with self.subTest(payload="unbounded final review"):
+                with self.assertRaises(InvalidSupervisorResponse):
+                    parse_final_review_response(payload)
 
     def test_plan_parser_restores_nested_tuples_in_original_order(self):
         result = parse_plan_response(plan_payload())

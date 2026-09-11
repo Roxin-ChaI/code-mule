@@ -8,6 +8,7 @@ from code_mule.project_verification import (
     ProjectVerificationResult,
     ProjectVerificationStatus,
 )
+from code_mule.domain import ChangeRequestStatus, ProjectRevision
 from code_mule.supervisor.contracts import (
     FinalReviewRequest,
     ImpactAnalysisRequest,
@@ -51,7 +52,55 @@ class SupervisorPromptTests(unittest.TestCase):
         self.assertIn("test: Tests = pass", prompt)
         self.assertIn("return HUMAN_REQUIRED", prompt)
         self.assertIn("Do not return REWORK", prompt)
+        self.assertIn("active Plan remains active", prompt)
+        self.assertIn("Boss-relevant finding", prompt)
         self.assertNotIn("Generate a shell command", prompt)
+
+    def test_final_review_includes_applied_boss_change_for_current_revision(self):
+        state = make_project_state()
+        change = replace(
+            state.change_requests[0],
+            status=ChangeRequestStatus.APPLIED,
+            description="Persist with localStorage",
+            created_by="boss",
+            requested_revision=2,
+            base_revision=1,
+            base_plan_id=state.plans[0].id,
+            base_plan_version=1,
+        )
+        plan = replace(
+            state.plans[0],
+            version=2,
+            change_request_id=change.id,
+            revision_number=2,
+        )
+        revision = ProjectRevision(
+            2,
+            state.project.created_at,
+            plan_id=plan.id,
+            plan_version=2,
+            base_revision=1,
+            change_request_id=change.id,
+        )
+        state = replace(
+            state,
+            plans=(plan,),
+            change_requests=(change,),
+            revisions=(revision,),
+        )
+        now = datetime(2026, 9, 3, tzinfo=UTC)
+        result = ProjectVerificationResult(
+            "verification-2", state.project.id, plan.id,
+            "a" * 40, "a" * 40, (), now, now,
+        )
+
+        _, prompt = build_final_review_prompt(FinalReviewRequest(state, result))
+
+        self.assertIn("Revision: 2", prompt)
+        self.assertIn("Boss-authorized revision change", prompt)
+        self.assertIn("description=\"Persist with localStorage\"", prompt)
+        self.assertIn("created_by=\"boss\"", prompt)
+        self.assertIn("explicit Boss authorization", prompt)
 
     def test_plan_prompt_contains_current_facts_and_context(self):
         state = make_project_state()

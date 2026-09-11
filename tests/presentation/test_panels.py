@@ -59,7 +59,7 @@ class PanelIntegrationTests(TestCase):
         )
 
     def test_all_human_categories_keep_commands_and_hide_internal_ids(self):
-        for category in (HumanActionCategory.WORKER_INPUT, HumanActionCategory.WORKER_APPROVAL, HumanActionCategory.EXTERNAL_SIDE_EFFECT, HumanActionCategory.WORKER_VERIFICATION, HumanActionCategory.WORKSPACE_BLOCK, HumanActionCategory.RECOVERY_UNCERTAIN):
+        for category in (HumanActionCategory.WORKER_INPUT, HumanActionCategory.WORKER_APPROVAL, HumanActionCategory.EXTERNAL_SIDE_EFFECT, HumanActionCategory.WORKER_VERIFICATION, HumanActionCategory.WORKSPACE_BLOCK, HumanActionCategory.RECOVERY_UNCERTAIN, HumanActionCategory.FINAL_REVIEW_DECISION):
             value = action(category)
             for width in (40, 60, 80, 120):
                 with self.subTest(category=category, width=width):

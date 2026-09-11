@@ -5,7 +5,15 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from code_mule.domain import PlanStatus, ProjectStatus, TaskStatus
+from code_mule.domain import (
+    HumanActionCategory,
+    PlanStatus,
+    ProjectRevision,
+    ProjectStatus,
+    RevisionCheckStatus,
+    RevisionStatus,
+    TaskStatus,
+)
 from code_mule.git_delivery import GitCommitResult
 from code_mule.progress import ProgressEventType, RecordingProgressSink
 from code_mule.orchestrator import OrchestratorService, StopCommand
@@ -48,16 +56,19 @@ class MemoryStore:
 
 
 class FakeFinalSupervisor:
-    def __init__(self, decision=FinalReviewDecision.APPROVE, error=None):
+    def __init__(self, decision=FinalReviewDecision.APPROVE, error=None, issues=()):
         self.decision = decision
         self.error = error
+        self.issues = issues
         self.requests = []
 
     def final_review(self, request):
         self.requests.append(request)
         if self.error:
             raise self.error
-        return FinalReviewResult(self.decision, "Deterministic final review.", ())
+        return FinalReviewResult(
+            self.decision, "Deterministic final review.", self.issues
+        )
 
 
 class InvalidFinalReviewClient:
@@ -285,6 +296,88 @@ class ProjectFinalizationTests(FinalVerificationCase):
                 final = service.finalize(store.state)
                 self.assertIs(final.project.status, ProjectStatus.HUMAN_REQUIRED)
                 self.assertEqual(len(final.human_actions), 1)
+                self.assertIs(
+                    final.human_actions[0].category,
+                    HumanActionCategory.FINAL_REVIEW_DECISION
+                    if supervisor.error is None
+                    else HumanActionCategory.SUPERVISOR_FAILURE,
+                )
+
+    def test_human_judgment_persists_only_bounded_structured_findings(self):
+        supervisor = FakeFinalSupervisor(
+            FinalReviewDecision.HUMAN_REQUIRED,
+            issues=(
+                "Acceptance criterion REQ-1 needs Boss judgment. "
+                "token=top-secret-value",
+            ),
+        )
+        state = self.state()
+        service, store = self.finalizer(state, supervisor)
+
+        final = service.finalize(store.state)
+
+        action = final.human_actions[-1]
+        source = next(
+            event
+            for event in final.events
+            if event.event_type == "project.final_review_human_judgment"
+        )
+        self.assertIs(action.category, HumanActionCategory.FINAL_REVIEW_DECISION)
+        self.assertEqual(
+            source.metadata["issue_1"],
+            "Acceptance criterion REQ-1 needs Boss judgment. [REDACTED]",
+        )
+        self.assertNotIn("top-secret-value", str(final.events))
+        self.assertNotIn("top-secret-value", str(final.human_actions))
+        self.assertNotIn("raw_response", source.metadata)
+        self.assertNotIn("reasoning", source.metadata)
+
+    def test_human_judgment_records_revision_evidence_without_mutating_history(self):
+        state = self.state()
+        revision_one = ProjectRevision(
+            1,
+            NOW,
+            lifecycle_status=RevisionStatus.COMPLETED,
+            plan_id="historical-plan",
+            plan_version=1,
+            completed_at=NOW,
+            completion_head="b" * 40,
+            verification_status=RevisionCheckStatus.PASS,
+            final_review_status=RevisionCheckStatus.PASS,
+            verification_result_id="historical-verification",
+        )
+        revision_two = ProjectRevision(
+            2,
+            NOW,
+            plan_id=state.project.active_plan_id,
+            plan_version=2,
+            base_revision=1,
+        )
+        state = replace(
+            state,
+            plans=(replace(state.plans[0], version=2),),
+            revisions=(revision_one, revision_two),
+        )
+        service, store = self.finalizer(
+            state,
+            FakeFinalSupervisor(FinalReviewDecision.HUMAN_REQUIRED),
+        )
+
+        final = service.finalize(store.state)
+
+        self.assertEqual(final.revisions[0], revision_one)
+        self.assertIs(
+            final.revisions[1].verification_status,
+            RevisionCheckStatus.PASS,
+        )
+        self.assertIs(
+            final.revisions[1].final_review_status,
+            RevisionCheckStatus.UNKNOWN,
+        )
+        self.assertEqual(
+            final.revisions[1].verification_result_id,
+            final.project_verification_results[-1].id,
+        )
 
     def test_malformed_final_review_exhausts_bounded_retry_then_requires_human(self):
         client = InvalidFinalReviewClient()

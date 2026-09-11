@@ -6,9 +6,11 @@ from code_mule.domain.enums import (
     PlanStatus,
     ProjectStatus,
     RequirementStatus,
+    RevisionCheckStatus,
+    RevisionStatus,
     TaskStatus,
 )
-from code_mule.domain.models import Plan
+from code_mule.domain.models import Plan, ProjectRevision
 from code_mule.replanning import (
     ChangeReplanMaterializer,
     ChangeReplanValidator,
@@ -89,6 +91,54 @@ class ChangeReplanMaterializerTests(unittest.TestCase):
                     set(tasks[task_id].requirement_ids),
                     set(active_plan.requirement_ids),
                 )
+
+    def test_same_revision_change_updates_binding_without_rewriting_history(self):
+        change = replace(
+            self.change,
+            requested_revision=2,
+            base_revision=2,
+            base_plan_id="PLAN-1",
+            base_plan_version=1,
+        )
+        revision = ProjectRevision(
+            2,
+            NOW,
+            lifecycle_status=RevisionStatus.IN_PROGRESS,
+            plan_id="PLAN-1",
+            plan_version=1,
+            verification_status=RevisionCheckStatus.PASS,
+            final_review_status=RevisionCheckStatus.UNKNOWN,
+            verification_result_id="verification-old",
+        )
+        source = replace(
+            self.state,
+            change_requests=(change,),
+            revisions=(revision,),
+        )
+        original_tasks = source.tasks
+
+        result = self.materializer.materialize(
+            source,
+            change,
+            valid_proposal(),
+            plan_id="PLAN-2",
+            operation_time=NOW,
+        )
+
+        self.assertEqual(result.revisions[0].revision_number, 2)
+        self.assertEqual(result.revisions[0].plan_id, "PLAN-2")
+        self.assertEqual(result.revisions[0].plan_version, 2)
+        self.assertIs(
+            result.revisions[0].verification_status,
+            RevisionCheckStatus.NOT_RUN,
+        )
+        self.assertIs(
+            result.revisions[0].final_review_status,
+            RevisionCheckStatus.NOT_RUN,
+        )
+        self.assertEqual(result.tasks[0].created_at, original_tasks[0].created_at)
+        self.assertEqual(result.plans[-1].revision_number, 2)
+        self.assertEqual(result.plans[-1].change_request_id, change.id)
 
     def test_explicit_traceability_update_is_materialized_for_reopened_task(self):
         proposal = replace(
