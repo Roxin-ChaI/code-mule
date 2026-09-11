@@ -67,7 +67,10 @@ ProjectEvents form an append-only audit trail. Current views may be derived from
 2. The active atomic turn reaches a Safe Point.
 3. Repository and execution state are reconciled and persisted.
 4. The Supervisor proposes an ImpactAnalysis and a new Plan version.
-5. The Orchestrator validates the proposal, updates affected Tasks audibly, and resumes only when safe.
+5. The Orchestrator validates the proposal, updates affected Tasks audibly, and
+   resumes only when safe. After a completed Revision, historical Tasks and
+   Milestones are lineage evidence only; the next Revision receives fresh
+   executable Plan objects in one atomic materialization.
 
 ### Human Gate
 

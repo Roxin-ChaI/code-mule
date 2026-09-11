@@ -15,6 +15,7 @@ class ReplanFailureCode(StrEnum):
     NEW_TASK_REQUIRED = "new_task_required"
     NEW_MILESTONE_TASK_COVERAGE = "new_milestone_task_coverage"
     UNKNOWN_TASK_LINEAGE = "unknown_task_lineage"
+    CONFLICTING_TASK_LINEAGE = "conflicting_task_lineage"
     NEW_TASK_DEPENDENCY_CYCLE = "new_task_dependency_cycle"
     UNSCHEDULABLE_PLAN = "unschedulable_plan"
 

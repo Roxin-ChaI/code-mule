@@ -118,7 +118,9 @@ def review_response_schema() -> dict[str, object]:
     )
 
 
-def impact_analysis_response_schema() -> dict[str, object]:
+def impact_analysis_response_schema(
+    *, post_completion: bool = False
+) -> dict[str, object]:
     requirement_update_schema = _strict_object(
         {
             "supersedes_id": {"type": "string", "minLength": 1},
@@ -140,48 +142,66 @@ def impact_analysis_response_schema() -> dict[str, object]:
         },
         ["task_id", "requirement_ids"],
     )
-    return _strict_object(
-        {
-            "change_request_id": {"type": "string", "minLength": 1},
-            "summary": {"type": "string", "minLength": 1},
-            "architecture_impact": {"type": "string"},
-            "affected_components": _string_array(),
-            "affected_requirement_ids": _string_array(),
-            "affected_task_ids": _string_array(),
-            "affected_completed_tasks": _string_array(),
-            "affected_in_progress_tasks": _string_array(),
-            "affected_pending_tasks": _string_array(),
-            "requirements_to_add": {
-                "type": "array",
-                "items": _requirement_proposal_schema(),
-            },
-            "requirements_to_update": {
-                "type": "array",
-                "items": requirement_update_schema,
-            },
-            "tasks_to_add": {
-                "type": "array",
-                "items": _task_proposal_schema(),
-            },
-            "tasks_to_reopen": _string_array(),
-            "tasks_to_cancel": _string_array(),
-            "milestone_ids_reused": _string_array(),
-            "milestones": {
-                "type": "array",
-                "items": _milestone_proposal_schema(),
-            },
-            "dependency_changes": {
-                "type": "array",
-                "items": dependency_change_schema,
-            },
-            "task_requirement_updates": {
-                "type": "array",
-                "items": task_requirement_update_schema,
-            },
-            "risks": _string_array(),
-            "recommendation": {"type": "string", "minLength": 1},
-            "rationale": {"type": "string", "minLength": 1},
+    properties: dict[str, object] = {
+        "change_request_id": {"type": "string", "minLength": 1},
+        "summary": {"type": "string", "minLength": 1},
+        "architecture_impact": {"type": "string"},
+        "affected_components": _string_array(),
+        "affected_requirement_ids": _string_array(),
+        "affected_task_ids": _string_array(),
+        "affected_completed_tasks": _string_array(),
+        "affected_in_progress_tasks": _string_array(),
+        "affected_pending_tasks": _string_array(),
+        "requirements_to_add": {
+            "type": "array",
+            "items": _requirement_proposal_schema(),
         },
+        "requirements_to_update": {
+            "type": "array",
+            "items": requirement_update_schema,
+        },
+        "tasks_to_add": {
+            "type": "array",
+            "items": _task_proposal_schema(),
+        },
+        "tasks_to_reopen": _string_array(),
+        "tasks_to_cancel": _string_array(),
+        "milestone_ids_reused": _string_array(),
+        "milestones": {
+            "type": "array",
+            "items": _milestone_proposal_schema(),
+        },
+        "dependency_changes": {
+            "type": "array",
+            "items": dependency_change_schema,
+        },
+        "task_requirement_updates": {
+            "type": "array",
+            "items": task_requirement_update_schema,
+        },
+        "risks": _string_array(),
+        "recommendation": {"type": "string", "minLength": 1},
+        "rationale": {"type": "string", "minLength": 1},
+    }
+    if post_completion:
+        for field_name in (
+            "affected_in_progress_tasks",
+            "affected_pending_tasks",
+            "tasks_to_reopen",
+            "tasks_to_cancel",
+            "milestone_ids_reused",
+            "dependency_changes",
+            "task_requirement_updates",
+        ):
+            field_schema = properties[field_name]
+            if isinstance(field_schema, dict):
+                field_schema["maxItems"] = 0
+        for field_name in ("tasks_to_add", "milestones"):
+            field_schema = properties[field_name]
+            if isinstance(field_schema, dict):
+                field_schema["minItems"] = 1
+    return _strict_object(
+        properties,
         [
             "change_request_id",
             "summary",

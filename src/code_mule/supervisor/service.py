@@ -109,10 +109,25 @@ class SupervisorService:
         self,
         request: ImpactAnalysisRequest,
     ) -> ImpactAnalysisResult:
+        active_plan = next(
+            (
+                plan
+                for plan in request.project_state.plans
+                if plan.id == request.project_state.project.active_plan_id
+            ),
+            None,
+        )
+        post_completion = (
+            active_plan is not None
+            and active_plan.status.value == "completed"
+            and request.project_state.project.current_task_id is None
+        )
         return self._execute(
             operation=SupervisorOperation.IMPACT_ANALYSIS,
             prompts=build_impact_analysis_prompt(request),
-            schema_factory=impact_analysis_response_schema,
+            schema_factory=lambda: impact_analysis_response_schema(
+                post_completion=post_completion
+            ),
             parser=parse_impact_analysis_response,
             project_id=request.project_state.project.id,
             task_id=None,

@@ -322,11 +322,19 @@ def build_impact_analysis_prompt(
             "work through affected_completed_tasks and Task lineage fields only. "
             "For this operation milestone_ids_reused, tasks_to_reopen, "
             "tasks_to_cancel, affected_in_progress_tasks, and "
-            "affected_pending_tasks must all be empty arrays. Propose at least "
+            "affected_pending_tasks, dependency_changes, and "
+            "task_requirement_updates must all be empty arrays. Propose at least "
             "one fresh executable Task in tasks_to_add. Every new Task must be "
             "owned exactly once by a fresh Milestone in milestones; do not put "
             "historical completed Tasks or Milestones into the new executable "
-            "Plan graph."
+            "Plan graph. Use supersedes_task_id for the one historical Task a "
+            "new Task replaces. Use derived_from_task_ids only for other "
+            "historical Tasks that informed it; never repeat supersedes_task_id "
+            "inside derived_from_task_ids. Historical reuse is semantic lineage, "
+            "not executable-object reuse. Propose fresh semantic Requirement, "
+            "Milestone, and Task IDs in the existing project ID style; do not "
+            "invent a Plan ID or internal UUID because Code Mule owns the "
+            "persistent Plan identity."
         )
     else:
         lifecycle_rules = (

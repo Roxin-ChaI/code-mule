@@ -139,7 +139,7 @@ class PostCompletionReplanner:
                 base_graph_tasks,
                 proposal,
             )
-        except (ValueError, ReplanMaterializationError) as error:
+        except ReplanMaterializationError as error:
             self._fail(
                 state,
                 change_request,
@@ -394,8 +394,12 @@ class PostCompletionReplanner:
             + tuple(item.id for item in proposal.tasks_to_add)
             + tuple(item.id for item in proposal.milestones)
         )
-        if plan_id in occupied or any(
-            entity_id in occupied for entity_id in proposed_ids
+        if (
+            plan_id in occupied
+            or len(proposed_ids) != len(set(proposed_ids))
+            or any(
+                entity_id in occupied for entity_id in proposed_ids
+            )
         ):
             raise ReplanMaterializationError(
                 "proposal or Plan ID collides with history",
@@ -585,6 +589,12 @@ class PostCompletionReplanner:
                     "affected_in_progress_tasks/affected_pending_tasks"
                 ),
             )
+        if proposal.dependency_changes or proposal.task_requirement_updates:
+            raise ReplanMaterializationError(
+                "completed revision Tasks cannot receive in-place updates",
+                failure_code=ReplanFailureCode.HISTORICAL_TASK_MUTATION,
+                field_path="dependency_changes/task_requirement_updates",
+            )
         base_ids = set(base_tasks and tuple(item.id for item in base_tasks))
         unknown = set(proposal.affected_task_ids) - base_ids
         if unknown:
@@ -608,18 +618,31 @@ class PostCompletionReplanner:
                 failure_code=ReplanFailureCode.NEW_TASK_REQUIRED,
                 field_path="tasks_to_add",
             )
-        milestone_task_ids = {
+        milestone_task_ids = tuple(
             task_id
             for milestone in proposal.milestones
             for task_id in milestone.task_ids
-        }
-        if milestone_task_ids != set(new_ids):
+        )
+        if (
+            len(milestone_task_ids) != len(set(milestone_task_ids))
+            or set(milestone_task_ids) != set(new_ids)
+        ):
             raise ReplanMaterializationError(
                 "reopened Plan milestones must own exactly the new Tasks",
                 failure_code=ReplanFailureCode.NEW_MILESTONE_TASK_COVERAGE,
                 field_path="milestones[*].task_ids",
             )
         for task in proposal.tasks_to_add:
+            if (
+                task.supersedes_task_id is not None
+                and task.supersedes_task_id in task.derived_from_task_ids
+            ):
+                raise ReplanMaterializationError(
+                    "Task replacement and derived lineage must not repeat "
+                    "the same historical Task",
+                    failure_code=ReplanFailureCode.CONFLICTING_TASK_LINEAGE,
+                    field_path="tasks_to_add[*].derived_from_task_ids",
+                )
             if task.supersedes_task_id is not None and (
                 task.supersedes_task_id not in base_ids
             ):

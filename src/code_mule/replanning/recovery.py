@@ -60,6 +60,7 @@ _SAFE_FIELD_PATHS = frozenset(
         "tasks_to_reopen/tasks_to_cancel",
         "milestone_ids_reused",
         "affected_in_progress_tasks/affected_pending_tasks",
+        "dependency_changes/task_requirement_updates",
         "affected_task_ids",
         "affected_completed_tasks",
         "tasks_to_add",

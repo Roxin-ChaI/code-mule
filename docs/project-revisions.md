@@ -33,7 +33,11 @@ only advances the Plan version.
 - Plan v1 Tasks are never reopened or set back to TODO after Revision 1.
 - A modification creates a new Task with typed lineage:
   `supersedes_task_id` and/or `derived_from_task_ids` point to the historical
-  Task it changes or builds on.
+  Task it changes or builds on. One historical Task ID cannot appear in both
+  fields: replacement and derivation are distinct facts.
+- Historical work may be reused semantically through impact and lineage
+  references, but it is never reused as an executable Task or Milestone in the
+  new Revision. Each Revision owns fresh executable Plan objects.
 - Revisions 1/2/3 each keep their own Plan, completed Tasks, Git commits,
   verification evidence, and completion HEAD.
 - A new Revision never inherits PASS from an earlier verification/final review;
@@ -45,6 +49,11 @@ A post-completion Plan vN+1 contains only the executable Tasks for the new
 Revision. Completed historical Tasks are not counted in current progress.
 `status` may show a `Reused` count for work carried forward from earlier
 versions.
+
+The Supervisor owns the semantic proposal and its fresh Requirement,
+Milestone, and Task identifiers. Code Mule owns the persistent Plan identity,
+validates every proposed identifier and lineage edge, and atomically persists
+the Plan, Revision, executable graph, and ChangeRequest binding.
 
 ## Git and workspace safety
 
