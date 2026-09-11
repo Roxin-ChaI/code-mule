@@ -239,6 +239,25 @@ class HumanResolutionServiceTests(unittest.TestCase):
             service(store).resolve("action-1", HumanResolutionStrategy.RETRY_TASK)
         self.assertIs(store.state.project.status, ProjectStatus.HUMAN_REQUIRED)
 
+    def test_uncertain_acknowledge_records_awareness_without_clearing_gate(self):
+        store = MemoryStore(gated_state(HumanActionCategory.RECOVERY_UNCERTAIN))
+        updated = service(store).resolve(
+            "action-1", HumanResolutionStrategy.ACKNOWLEDGE
+        )
+
+        self.assertIs(updated.project.status, ProjectStatus.HUMAN_REQUIRED)
+        self.assertIs(updated.project.current_task_id, store.state.project.current_task_id)
+        self.assertIs(updated.human_actions[0].status, HumanActionStatus.PENDING)
+        self.assertIs(updated.tasks[0].status, TaskStatus.IN_PROGRESS)
+        self.assertEqual(updated.events[-1].event_type, "human_action.acknowledged")
+        self.assertEqual(
+            allowed_resolution_strategies(updated, updated.human_actions[0]),
+            (HumanResolutionStrategy.FAIL_PROJECT,),
+        )
+        self.assertFalse(
+            any(event.event_type == "task.execution_started" for event in updated.events)
+        )
+
     def test_fail_project_is_an_explicit_nonapproval_resolution(self):
         store = MemoryStore(gated_state(HumanActionCategory.SUPERVISOR_FAILURE))
         updated = service(store).resolve(

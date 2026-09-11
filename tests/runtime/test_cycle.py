@@ -988,6 +988,24 @@ class TaskCycleFailureTests(unittest.TestCase):
         self.assertEqual(failure_events[-1].metadata["max_turn_seconds"], "900")
         self.assertNotIn("private payload", str(failure_events[-1].metadata))
 
+    def test_worker_failure_persists_bounded_partial_path_diagnostics(self):
+        session = FakeWorkerSession([CodexTurnHardTimeout("timeout")])
+        git_delivery = FakeGitDelivery()
+        service, request, store, _, _, _ = build_cycle(
+            session=session, git_delivery=git_delivery
+        )
+
+        service.execute(request)
+
+        event = next(
+            event
+            for event in reversed(store.current.events)
+            if event.event_type == "task.execution_failed"
+        )
+        self.assertEqual(event.metadata["partial_path_count"], "1")
+        self.assertEqual(event.metadata["partial_path_1"], "calculator.py")
+        self.assertNotIn("raw_payload", event.metadata)
+
     def test_worker_failure_preserves_persisted_recovery_identity(self):
         base = cycle_state()
         lease = ExecutionLease(
