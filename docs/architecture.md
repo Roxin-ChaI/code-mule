@@ -115,3 +115,19 @@ STOP and PAUSE remain safe-point controls. If an in-flight Task fails after a
 PAUSE or CHANGE was persisted, the project enters typed `HUMAN_REQUIRED` rather
 than losing the external control state or releasing ownership as if recovery
 were certain.
+
+## Delivery and runtime handoff
+
+For newly initialized projects, finalization materializes a strictly validated
+`DeliveryManifest` for the active Revision before final review and `DONE`. The
+manifest candidate is repository content produced by the final Task; the
+deterministic runtime owns its identity and validation. Every later Revision
+must produce a separate snapshot, so historical launch facts are never silently
+overwritten or inherited.
+
+`RuntimeHandoffService` is downstream of project execution. It reads only the
+completed Revision, its verified manifest, and exact Git completion evidence.
+It does not invoke Supervisor or Worker. Long-running local processes use a
+separate `RuntimeSession`; this is not an execution lease. The session combines
+PID, process-start fingerprint, command fingerprint, revision, and manifest
+identity so PID reuse fails closed. See [Runtime Handoff](runtime-handoff.md).

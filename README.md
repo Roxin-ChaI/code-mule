@@ -10,7 +10,7 @@ Turn one coding objective into a controlled **PLAN → CODE → REVIEW → VERIF
 COMMIT** workflow.
 
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB)
-![Tests 623](https://img.shields.io/badge/tests-623%20passed-2E7D32)
+![Tests 719](https://img.shields.io/badge/tests-719%20passed-2E7D32)
 ![ProjectState v13](https://img.shields.io/badge/ProjectState-v13-6A5ACD)
 
 ## Demo
@@ -274,6 +274,8 @@ The contributor flow for building Code Mule itself is documented under
 | `start --objective "..."` | Initialize the current Git workspace with defaults and run the first objective |
 | `run --objective "..."` / `run` | Start planning or continue RUNNING work |
 | `status` | Read deterministic Plan and Task progress |
+| `deliverable` | Inspect the verified output and usage |
+| `launch` / `app-status` / `stop-app` | Start, inspect, and gracefully stop a verified local app |
 | `diagnose` | Explain blockers, recoverability, and the next Boss action (read-only) |
 | `recover` | Continue from a persisted, deterministically validated execution boundary |
 | `chat` | Open the natural-language Boss interface |
@@ -350,7 +352,7 @@ Details: [Execution Recovery](docs/execution-recovery.md),
 
 Current v0.1.1 release-preparation baseline:
 
-- **623 automated tests PASS**, including real shell restart regressions that
+- **719 automated tests PASS**, including runtime-handoff, PID-reuse, and real shell restart regressions that
   runs the persistent launcher without the repository `.venv` on `PATH`;
 - `compileall`, `pip check`, and `git diff --check` PASS;
 - real DeepSeek + Codex E2E: Plan v1, 6/6 Tasks, Worker Input → Boss answer
@@ -373,6 +375,7 @@ Release has been created; the v0.1.0 tag and its historical evidence are unchang
 - An interrupted Codex turn is not transparently reconnected.
 - Remote and irreversible side effects remain Human Gates.
 - Project verification runs configured hooks only; it does not invent missing checks.
+- Historical states created before delivery manifests remain readable but cannot be launched from inferred data.
 
 ## Documentation
 
@@ -383,5 +386,6 @@ Release has been created; the v0.1.0 tag and its historical evidence are unchang
 - [Execution Recovery](docs/execution-recovery.md)
 - [Git Delivery](docs/git-delivery.md)
 - [Project Verification](docs/project-verification.md)
+- [Runtime Handoff](docs/runtime-handoff.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [v0.1.1 Release Notes](docs/releases/v0.1.1.md)

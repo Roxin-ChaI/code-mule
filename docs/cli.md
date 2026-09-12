@@ -285,7 +285,7 @@ line-oriented, and contains no ANSI or spinner control characters.
 Normal errors identify the failing boundary and give a safe next command.
 Tracebacks remain exclusive to global `--debug` mode.
 
-The current v0.1.1 baseline uses ProjectState schema v13 and was real-E2E
+The current development baseline uses ProjectState schema v15; the v0.1.1 baseline was real-E2E
 validated with Codex CLI 0.153.4 (not a minimum-version claim). Historical state
 migrations remain supported, but old Code Mule versions may not read new state;
 back up state before upgrading. See [release notes](releases/v0.1.1.md).
@@ -294,6 +294,25 @@ Completed projects can be reopened with `code-mule change ...` as a new linear
 Revision. See [Project Revisions](project-revisions.md) for the revision
 record, task lineage, per-revision verification reset, and Git continuity
 rules.
+
+## Delivery handoff
+
+After final verification, `deliverable` shows the verified type, entry point,
+usage, revision, and Plan version. Runnable local products additionally support
+`launch`, `app-status`, and `stop-app`. These commands never infer a command from
+README text or model conversation history; they use the typed manifest persisted
+for the completed revision.
+
+```bash
+code-mule deliverable
+code-mule launch
+code-mule app-status
+code-mule stop-app
+```
+
+Libraries and other non-runnable deliverables return their usage without starting
+a process. See [Runtime Handoff](runtime-handoff.md) for the manifest contract,
+local health checks, PID-reuse protection, and migration boundary.
 
 ## Environment
 

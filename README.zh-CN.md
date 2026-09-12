@@ -10,7 +10,7 @@
 工作流。
 
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB)
-![Tests 623](https://img.shields.io/badge/tests-623%20passed-2E7D32)
+![Tests 719](https://img.shields.io/badge/tests-719%20passed-2E7D32)
 ![ProjectState v13](https://img.shields.io/badge/ProjectState-v13-6A5ACD)
 
 ## Demo
@@ -281,6 +281,8 @@ bash scripts/install.sh
 | `start --objective "..."` | 用默认值初始化当前 Git workspace 并执行首个目标 |
 | `run --objective "..."` / `run` | 开始规划，或继续 RUNNING 工作 |
 | `status` | 读取确定性的 Plan 和 Task 进度 |
+| `deliverable` | 查看已验证的交付物和使用方式 |
+| `launch` / `app-status` / `stop-app` | 启动、查看并安全停止已验证的本地应用 |
 | `diagnose` | 只读解释阻塞原因、可恢复性和 Boss 下一步操作 |
 | `recover` | 从已持久化且通过确定性校验的执行边界继续 |
 | `chat` | 打开自然语言 Boss 界面 |
@@ -326,7 +328,7 @@ Code Mule 适合需要以下能力的本地软件开发：
 
 当前 v0.1.1 发布准备基线：
 
-- **623 项自动化测试 PASS**，包括不激活仓库 `.venv` 的真实 shell 重启回归测试；
+- **719 项自动化测试 PASS**，包括 runtime handoff、PID 复用防护及不激活仓库 `.venv` 的真实 shell 重启回归测试；
 - `compileall`、`pip check` 和 `git diff --check` PASS；
 - 真实 DeepSeek + Codex E2E：Plan v1、6/6 Tasks、Worker Input → Boss answer
   → fresh-session continuation、每个 Task 一个 delivery commit、最终 review
@@ -345,6 +347,7 @@ v0.1.1 GitHub Release 尚未创建；v0.1.0 tag 与历史证据保持不变。
 - 被中断的 Codex turn 不会透明重连。
 - 远端和不可逆副作用仍需 Human Gate。
 - 项目验证只运行已配置 hooks，不会自行猜测缺失检查。
+- 引入交付清单前的历史状态仍可读取，但不会根据推测数据启动。
 
 ## 文档
 
@@ -355,5 +358,6 @@ v0.1.1 GitHub Release 尚未创建；v0.1.0 tag 与历史证据保持不变。
 - [Execution Recovery](docs/execution-recovery.md)
 - [Git Delivery](docs/git-delivery.md)
 - [Project Verification](docs/project-verification.md)
+- [Runtime Handoff](docs/runtime-handoff.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [v0.1.1 Release Notes](docs/releases/v0.1.1.md)
