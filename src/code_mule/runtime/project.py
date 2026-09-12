@@ -73,6 +73,37 @@ class TaskPromptBuilder:
             f"- {dependency.id}: {dependency.title}"
             for dependency in completed_dependencies
         ) or "- None"
+        active = next(
+            (plan for plan in state.plans if plan.id == state.project.active_plan_id),
+            None,
+        )
+        active_task_ids = set()
+        if active is not None:
+            active_task_ids = {
+                task_id for milestone in state.milestones
+                if milestone.id in set(active.milestone_ids)
+                for task_id in milestone.task_ids
+            }
+        final_delivery_task = (
+            state.delivery_manifest_required
+            and task.id in active_task_ids
+            and all(
+                item.id == task.id or item.status is TaskStatus.COMPLETED
+                for item in state.tasks if item.id in active_task_ids
+            )
+        )
+        delivery = (
+            "\n\nFinal delivery handoff:\n"
+            "- Create code-mule-delivery.json at the repository root for the actual deliverable.\n"
+            "- Use exact top-level fields: deliverable_type, runnable, entry_point, launch_spec, "
+            "verification_spec, health_check_spec, access_spec, stop_spec, required_environment, "
+            "runtime_generated_paths, usage.\n"
+            "- Commands are objects with executable and args arrays; never use shell strings.\n"
+            "- Runnable products need local launch, health, access, and graceful-stop metadata. "
+            "Libraries/components must use runnable=false and launch_spec/access_spec/stop_spec=null.\n"
+            "- Do not include secrets. Runtime-generated paths must be Git ignored.\n"
+            if final_delivery_task else ""
+        )
         return (
             "Execute this Code Mule task in the provided repository.\n\n"
             f"Project: {state.project.name}\n"
@@ -109,6 +140,7 @@ class TaskPromptBuilder:
             "credentials, raw protocol payloads, or prompts in human_action.\n\n"
             "The Worker layer enforces its structured report contract through "
             "the native output schema; do not invent another control protocol."
+            f"{delivery}"
         )
 
 

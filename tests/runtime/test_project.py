@@ -247,6 +247,15 @@ def build_service(
 
 
 class ProjectExecutionContractTests(unittest.TestCase):
+    def test_final_task_receives_delivery_manifest_contract_for_new_projects(self):
+        completed = make_task("done", status=TaskStatus.COMPLETED)
+        final = make_task("final")
+        state = replace(make_state((completed, final)), delivery_manifest_required=True)
+        prompt = TaskPromptBuilder().build(state, final)
+        self.assertIn("code-mule-delivery.json", prompt)
+        self.assertIn("executable and args arrays", prompt)
+        self.assertNotIn("code-mule-delivery.json", TaskPromptBuilder().build(state, completed))
+
     def test_worker_prompt_distinguishes_native_input_and_typed_report_actions(self):
         state = make_state((make_task("task-a"),))
         prompt = TaskPromptBuilder().build(state, state.tasks[0])

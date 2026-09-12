@@ -10,6 +10,7 @@ class ProjectVerificationCategory(StrEnum):
     LINT = "lint"
     TYPECHECK = "typecheck"
     BUILD = "build"
+    DELIVERY_MANIFEST = "delivery-manifest"
     GIT_CLEAN = "git-clean"
 
 
@@ -40,8 +41,11 @@ class ProjectVerificationCommand:
             raise ValueError("name must not be empty")
         if not self.command or any(part == "" for part in self.command):
             raise ValueError("command must contain non-empty arguments")
-        if self.category is ProjectVerificationCategory.GIT_CLEAN:
-            raise ValueError("git-clean is an implicit trusted check")
+        if self.category in {
+            ProjectVerificationCategory.GIT_CLEAN,
+            ProjectVerificationCategory.DELIVERY_MANIFEST,
+        }:
+            raise ValueError("implicit trusted checks cannot be configured")
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
 

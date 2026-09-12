@@ -60,12 +60,27 @@ from code_mule.recovery.contracts import (
     SafePointKind,
     WorkerTerminalState,
 )
+from code_mule.runtime_handoff.contracts import (
+    AccessSpec,
+    CommandSpec,
+    DeliverableType,
+    DeliveryManifest,
+    DeliveryManifestStatus,
+    HealthCheckSpec,
+    HealthCheckType,
+    LaunchSpec,
+    RuntimeHealthStatus,
+    RuntimeSession,
+    RuntimeSessionStatus,
+    StopSpec,
+    VerificationSpec,
+)
 
 from .models import ProjectState
 from code_mule.domain.worker_verification import WorkerCheckStatus, WorkerCheckType, WorkerVerificationCheck
 
 
-CURRENT_SCHEMA_VERSION = 14
+CURRENT_SCHEMA_VERSION = 15
 
 
 class UnsupportedStateSchema(ValueError):
@@ -572,6 +587,74 @@ def _project_revision_to_payload(revision: ProjectRevision) -> dict[str, object]
     }
 
 
+def _command_spec_to_payload(command: CommandSpec) -> dict[str, object]:
+    return {"executable": command.executable, "args": list(command.args)}
+
+
+def _delivery_manifest_to_payload(manifest: DeliveryManifest) -> dict[str, object]:
+    launch = manifest.launch_spec
+    health = manifest.health_check_spec
+    access = manifest.access_spec
+    stop = manifest.stop_spec
+    return {
+        "id": manifest.id,
+        "project_id": manifest.project_id,
+        "revision_number": manifest.revision_number,
+        "plan_version": manifest.plan_version,
+        "deliverable_type": manifest.deliverable_type.value,
+        "runnable": manifest.runnable,
+        "entry_point": manifest.entry_point,
+        "launch_spec": None if launch is None else {
+            "command": _command_spec_to_payload(launch.command),
+            "working_directory": launch.working_directory,
+            "environment_keys": list(launch.environment_keys),
+            "startup_timeout_seconds": launch.startup_timeout_seconds,
+            "expected_long_running": launch.expected_long_running,
+            "requires_args": launch.requires_args,
+            "supports_dynamic_port": launch.supports_dynamic_port,
+        },
+        "verification_spec": {
+            "required_paths": list(manifest.verification_spec.required_paths),
+            "launch_smoke_test_supported": manifest.verification_spec.launch_smoke_test_supported,
+        },
+        "health_check_spec": {
+            "type": health.type.value,
+            "url": health.url,
+            "command": None if health.command is None else _command_spec_to_payload(health.command),
+            "expected_status": health.expected_status,
+            "timeout_seconds": health.timeout_seconds,
+        },
+        "access_spec": None if access is None else {
+            "host": access.host, "port": access.port, "path": access.path,
+        },
+        "stop_spec": None if stop is None else {"grace_seconds": stop.grace_seconds},
+        "required_environment": list(manifest.required_environment),
+        "runtime_generated_paths": list(manifest.runtime_generated_paths),
+        "usage": manifest.usage,
+        "generated_at": manifest.generated_at.isoformat(),
+        "verified_at": None if manifest.verified_at is None else manifest.verified_at.isoformat(),
+        "status": manifest.status.value,
+    }
+
+
+def _runtime_session_to_payload(session: RuntimeSession) -> dict[str, object]:
+    return {
+        "id": session.id,
+        "project_id": session.project_id,
+        "revision_number": session.revision_number,
+        "manifest_id": session.manifest_id,
+        "pid": session.pid,
+        "started_at": session.started_at.isoformat(),
+        "status": session.status.value,
+        "access_url": session.access_url,
+        "health_status": session.health_status.value,
+        "process_start_identity": session.process_start_identity,
+        "command_fingerprint": session.command_fingerprint,
+        "exit_code": session.exit_code,
+        "stop_requested_at": None if session.stop_requested_at is None else session.stop_requested_at.isoformat(),
+    }
+
+
 def serialize_project_state(state: ProjectState) -> dict[str, object]:
     """Convert a complete snapshot to a JSON-compatible object."""
 
@@ -640,6 +723,13 @@ def serialize_project_state(state: ProjectState) -> dict[str, object]:
         ],
         "revisions": [
             _project_revision_to_payload(item) for item in state.revisions
+        ],
+        "delivery_manifest_required": state.delivery_manifest_required,
+        "delivery_manifests": [
+            _delivery_manifest_to_payload(item) for item in state.delivery_manifests
+        ],
+        "runtime_sessions": [
+            _runtime_session_to_payload(item) for item in state.runtime_sessions
         ],
     }
 
@@ -1135,6 +1225,17 @@ def _migrate_v13_to_v14(root: dict[str, object]) -> dict[str, object]:
     migrated = dict(root)
     migrated["schema_version"] = 14
     migrated["human_actions"] = actions
+    return migrated
+
+
+def _migrate_v14_to_v15(root: dict[str, object]) -> dict[str, object]:
+    """Add conservative runtime handoff state without inventing a manifest."""
+
+    migrated = dict(root)
+    migrated["schema_version"] = 15
+    migrated["delivery_manifest_required"] = False
+    migrated["delivery_manifests"] = []
+    migrated["runtime_sessions"] = []
     return migrated
 
 
@@ -2080,6 +2181,106 @@ def _project_revision_from_payload(value: object) -> ProjectRevision:
     )
 
 
+def _command_spec_from_payload(value: object, context: str) -> CommandSpec:
+    payload = _expect_object(value, context)
+    return CommandSpec(
+        _expect_str(_field(payload, "executable", context), f"{context}.executable"),
+        _strings(_field(payload, "args", context), f"{context}.args"),
+    )
+
+
+def _delivery_manifest_from_payload(value: object) -> DeliveryManifest:
+    payload = _expect_object(value, "delivery_manifest")
+    launch_value = _field(payload, "launch_spec", "delivery_manifest")
+    launch = None
+    if launch_value is not None:
+        item = _expect_object(launch_value, "launch_spec")
+        launch = LaunchSpec(
+            _command_spec_from_payload(_field(item, "command", "launch_spec"), "launch_spec.command"),
+            _expect_str(_field(item, "working_directory", "launch_spec"), "launch_spec.working_directory"),
+            _strings(_field(item, "environment_keys", "launch_spec"), "launch_spec.environment_keys"),
+            _expect_number(_field(item, "startup_timeout_seconds", "launch_spec"), "launch_spec.startup_timeout_seconds"),
+            _expect_bool(_field(item, "expected_long_running", "launch_spec"), "launch_spec.expected_long_running"),
+            _expect_bool(_field(item, "requires_args", "launch_spec"), "launch_spec.requires_args"),
+            _expect_bool(_field(item, "supports_dynamic_port", "launch_spec"), "launch_spec.supports_dynamic_port"),
+        )
+    verification_payload = _expect_object(
+        _field(payload, "verification_spec", "delivery_manifest"),
+        "verification_spec",
+    )
+    health_payload = _expect_object(
+        _field(payload, "health_check_spec", "delivery_manifest"),
+        "health_check_spec",
+    )
+    health_command = _field(health_payload, "command", "health_check_spec")
+    access_value = _field(payload, "access_spec", "delivery_manifest")
+    access = None
+    if access_value is not None:
+        item = _expect_object(access_value, "access_spec")
+        access = AccessSpec(
+            _expect_optional_str(_field(item, "host", "access_spec"), "access_spec.host"),
+            _expect_optional_int(_field(item, "port", "access_spec"), "access_spec.port"),
+            _expect_str(_field(item, "path", "access_spec"), "access_spec.path"),
+        )
+    stop_value = _field(payload, "stop_spec", "delivery_manifest")
+    stop = None
+    if stop_value is not None:
+        item = _expect_object(stop_value, "stop_spec")
+        stop = StopSpec(
+            _expect_number(_field(item, "grace_seconds", "stop_spec"), "stop_spec.grace_seconds")
+        )
+    verified_value = _field(payload, "verified_at", "delivery_manifest")
+    return DeliveryManifest(
+        _expect_str(_field(payload, "id", "delivery_manifest"), "delivery_manifest.id"),
+        _expect_str(_field(payload, "project_id", "delivery_manifest"), "delivery_manifest.project_id"),
+        _expect_int(_field(payload, "revision_number", "delivery_manifest"), "delivery_manifest.revision_number"),
+        _expect_int(_field(payload, "plan_version", "delivery_manifest"), "delivery_manifest.plan_version"),
+        DeliverableType(_expect_str(_field(payload, "deliverable_type", "delivery_manifest"), "delivery_manifest.deliverable_type")),
+        _expect_bool(_field(payload, "runnable", "delivery_manifest"), "delivery_manifest.runnable"),
+        _expect_str(_field(payload, "entry_point", "delivery_manifest"), "delivery_manifest.entry_point"),
+        launch,
+        VerificationSpec(
+            _strings(_field(verification_payload, "required_paths", "verification_spec"), "verification_spec.required_paths"),
+            _expect_bool(_field(verification_payload, "launch_smoke_test_supported", "verification_spec"), "verification_spec.launch_smoke_test_supported"),
+        ),
+        HealthCheckSpec(
+            HealthCheckType(_expect_str(_field(health_payload, "type", "health_check_spec"), "health_check_spec.type")),
+            _expect_optional_str(_field(health_payload, "url", "health_check_spec"), "health_check_spec.url"),
+            None if health_command is None else _command_spec_from_payload(health_command, "health_check_spec.command"),
+            _expect_optional_int(_field(health_payload, "expected_status", "health_check_spec"), "health_check_spec.expected_status"),
+            _expect_number(_field(health_payload, "timeout_seconds", "health_check_spec"), "health_check_spec.timeout_seconds"),
+        ),
+        access,
+        stop,
+        _strings(_field(payload, "required_environment", "delivery_manifest"), "delivery_manifest.required_environment"),
+        _strings(_field(payload, "runtime_generated_paths", "delivery_manifest"), "delivery_manifest.runtime_generated_paths"),
+        _expect_str(_field(payload, "usage", "delivery_manifest"), "delivery_manifest.usage"),
+        _datetime(_field(payload, "generated_at", "delivery_manifest"), "delivery_manifest.generated_at"),
+        None if verified_value is None else _datetime(verified_value, "delivery_manifest.verified_at"),
+        DeliveryManifestStatus(_expect_str(_field(payload, "status", "delivery_manifest"), "delivery_manifest.status")),
+    )
+
+
+def _runtime_session_from_payload(value: object) -> RuntimeSession:
+    payload = _expect_object(value, "runtime_session")
+    stopped = _field(payload, "stop_requested_at", "runtime_session")
+    return RuntimeSession(
+        _expect_str(_field(payload, "id", "runtime_session"), "runtime_session.id"),
+        _expect_str(_field(payload, "project_id", "runtime_session"), "runtime_session.project_id"),
+        _expect_int(_field(payload, "revision_number", "runtime_session"), "runtime_session.revision_number"),
+        _expect_str(_field(payload, "manifest_id", "runtime_session"), "runtime_session.manifest_id"),
+        _expect_optional_int(_field(payload, "pid", "runtime_session"), "runtime_session.pid"),
+        _datetime(_field(payload, "started_at", "runtime_session"), "runtime_session.started_at"),
+        RuntimeSessionStatus(_expect_str(_field(payload, "status", "runtime_session"), "runtime_session.status")),
+        _expect_optional_str(_field(payload, "access_url", "runtime_session"), "runtime_session.access_url"),
+        RuntimeHealthStatus(_expect_str(_field(payload, "health_status", "runtime_session"), "runtime_session.health_status")),
+        _expect_optional_str(_field(payload, "process_start_identity", "runtime_session"), "runtime_session.process_start_identity"),
+        _expect_optional_str(_field(payload, "command_fingerprint", "runtime_session"), "runtime_session.command_fingerprint"),
+        _expect_optional_int(_field(payload, "exit_code", "runtime_session"), "runtime_session.exit_code"),
+        None if stopped is None else _datetime(stopped, "runtime_session.stop_requested_at"),
+    )
+
+
 def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     """Restore a complete snapshot, rejecting unknown or corrupt payloads."""
 
@@ -2103,6 +2304,7 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
         11,
         12,
         13,
+        14,
         CURRENT_SCHEMA_VERSION,
     }:
         raise UnsupportedStateSchema(
@@ -2146,6 +2348,9 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
         schema_version = 13
     if schema_version == 13:
         root = _migrate_v13_to_v14(root)
+        schema_version = 14
+    if schema_version == 14:
+        root = _migrate_v14_to_v15(root)
 
     try:
         quality_value = _field(root, "quality_status", "project state")
@@ -2269,6 +2474,20 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
                 _field(root, "revisions", "project state"),
                 "revisions",
                 _project_revision_from_payload,
+            ),
+            delivery_manifest_required=_expect_bool(
+                _field(root, "delivery_manifest_required", "project state"),
+                "delivery_manifest_required",
+            ),
+            delivery_manifests=_tuple_of(
+                _field(root, "delivery_manifests", "project state"),
+                "delivery_manifests",
+                _delivery_manifest_from_payload,
+            ),
+            runtime_sessions=_tuple_of(
+                _field(root, "runtime_sessions", "project state"),
+                "runtime_sessions",
+                _runtime_session_from_payload,
             ),
         )
     except InvalidProjectState:

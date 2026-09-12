@@ -1,6 +1,7 @@
 import subprocess
 import tempfile
 import unittest
+import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,6 +30,7 @@ from code_mule.project_verification.service import (
     ProjectVerificationService,
 )
 from code_mule.supervisor import FinalReviewResult, SupervisorService
+from runtime_handoff.test_contracts import candidate
 
 from state import make_project_state
 
@@ -198,6 +200,46 @@ class ProjectVerificationServiceTests(FinalVerificationCase):
 
 
 class ProjectFinalizationTests(FinalVerificationCase):
+    def _state_with_manifest_candidate(self, payload):
+        payload["entry_point"] = "app.py"
+        payload["verification_spec"]["required_paths"] = ["app.py"]
+        (self.root / "code-mule-delivery.json").write_text(json.dumps(payload), encoding="utf-8")
+        git(self.root, "add", "--", "code-mule-delivery.json")
+        git(self.root, "commit", "-q", "-m", "add delivery manifest")
+        head = git(self.root, "rev-parse", "HEAD")
+        state = self.state()
+        commit = replace(state.git_commit_results[-1], commit_sha=head, changed_paths=("code-mule-delivery.json",), staged_paths=("code-mule-delivery.json",))
+        return replace(state, git_commit_results=(commit,), delivery_manifest_required=True)
+
+    def test_required_manifest_is_materialized_before_final_review_and_done(self):
+        state = self._state_with_manifest_candidate(candidate())
+        supervisor = FakeFinalSupervisor()
+        service, store = self.finalizer(state, supervisor)
+        final = service.finalize(state)
+        self.assertIs(final.project.status, ProjectStatus.DONE)
+        self.assertEqual(len(final.delivery_manifests), 1)
+        self.assertEqual(len(supervisor.requests[0].project_state.delivery_manifests), 1)
+        check = next(item for item in final.project_verification_results[0].checks if item.category is ProjectVerificationCategory.DELIVERY_MANIFEST)
+        self.assertIs(check.status, ProjectVerificationStatus.PASS)
+
+    def test_missing_manifest_fails_closed_before_verification(self):
+        state = replace(self.state(), delivery_manifest_required=True)
+        supervisor = FakeFinalSupervisor()
+        service, store = self.finalizer(state, supervisor)
+        final = service.finalize(state)
+        self.assertIs(final.project.status, ProjectStatus.HUMAN_REQUIRED)
+        self.assertEqual(supervisor.requests, [])
+        self.assertEqual(final.project_verification_results, ())
+
+    def test_secret_in_manifest_fails_closed_without_persistence(self):
+        payload = candidate(); payload["usage"] = "token=do-not-persist"
+        state = self._state_with_manifest_candidate(payload)
+        service, store = self.finalizer(state, FakeFinalSupervisor())
+        final = service.finalize(state)
+        self.assertIs(final.project.status, ProjectStatus.HUMAN_REQUIRED)
+        self.assertEqual(final.delivery_manifests, ())
+        self.assertNotIn("do-not-persist", json.dumps(__import__("code_mule.state.serialization", fromlist=["serialize_project_state"]).serialize_project_state(final)))
+
     def test_stop_during_checks_prevents_final_review_and_done(self):
         supervisor = FakeFinalSupervisor()
         holder = {}

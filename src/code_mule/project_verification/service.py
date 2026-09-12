@@ -40,6 +40,11 @@ from code_mule.revision import (
     complete_revision,
     latest_revision,
 )
+from code_mule.runtime_handoff import InvalidDeliveryManifest
+from code_mule.runtime_handoff.validation import (
+    load_and_validate_manifest,
+    validate_manifest,
+)
 from code_mule.supervisor import (
     FinalReviewRequest,
     FinalReviewResult,
@@ -166,6 +171,7 @@ class ProjectVerificationService:
                         False,
                     )
                 )
+        checks.append(self._manifest_check(state, workspace))
         verified_head, git_check = self._git_check(workspace, expected_head)
         checks.append(git_check)
         return ProjectVerificationResult(
@@ -177,6 +183,50 @@ class ProjectVerificationService:
             checks=tuple(checks),
             started_at=started,
             completed_at=self._clock(),
+        )
+
+    @staticmethod
+    def _manifest_check(
+        state: ProjectState, workspace: Path
+    ) -> ProjectVerificationCheck:
+        if not state.delivery_manifest_required:
+            return ProjectVerificationCheck(
+                "Delivery manifest",
+                ProjectVerificationCategory.DELIVERY_MANIFEST,
+                (),
+                ProjectVerificationStatus.SKIPPED,
+                None,
+                "Historical project does not require a synthesized manifest.",
+                False,
+            )
+        plan = next(
+            item for item in state.plans if item.id == state.project.active_plan_id
+        )
+        revision = latest_revision(state)
+        revision_number = 1 if revision is None else revision.revision_number
+        matching = tuple(
+            item for item in state.delivery_manifests
+            if item.revision_number == revision_number
+            and item.plan_version == plan.version
+        )
+        valid = len(matching) == 1
+        if valid:
+            try:
+                validate_manifest(matching[0], workspace)
+            except InvalidDeliveryManifest:
+                valid = False
+        return ProjectVerificationCheck(
+            "Delivery manifest",
+            ProjectVerificationCategory.DELIVERY_MANIFEST,
+            (),
+            ProjectVerificationStatus.PASS if valid else ProjectVerificationStatus.FAIL,
+            0 if valid else 1,
+            (
+                "Revision-scoped delivery manifest is verified."
+                if valid
+                else "Current revision has no valid delivery manifest."
+            ),
+            True,
         )
 
     def _run_command(
@@ -320,6 +370,16 @@ class ProjectFinalizationService:
             return state
         if state.project.status is ProjectStatus.DONE:
             return state
+        try:
+            state = self._ensure_delivery_manifest(state)
+        except InvalidDeliveryManifest as error:
+            return self._human(
+                self._store.load(),
+                HumanActionCategory.RECOVERY_UNCERTAIN,
+                "Delivery manifest is missing or invalid",
+                "Correct the revision delivery manifest before final verification",
+                {"error_type": type(error).__name__},
+            )
         state = self._event_save(state, "project.verification_started", {})
         try:
             result = self._verification.run(state)
@@ -414,6 +474,56 @@ class ProjectFinalizationService:
                 phase=ExecutionPhase.FINALIZATION,
             )
         return self._complete(self._store.load(), result)
+
+    def _ensure_delivery_manifest(self, state: ProjectState) -> ProjectState:
+        if not state.delivery_manifest_required:
+            return state
+        plan = next(
+            (item for item in state.plans if item.id == state.project.active_plan_id),
+            None,
+        )
+        if plan is None or state.project.workspace is None:
+            raise InvalidDeliveryManifest("active revision context is unavailable")
+        revision = latest_revision(state)
+        revision_number = 1 if revision is None else revision.revision_number
+        matching = tuple(
+            item for item in state.delivery_manifests
+            if item.revision_number == revision_number
+            and item.plan_version == plan.version
+        )
+        if len(matching) > 1:
+            raise InvalidDeliveryManifest("delivery manifest identity is ambiguous")
+        if matching:
+            validate_manifest(matching[0], Path(state.project.workspace))
+            return state
+        manifest = load_and_validate_manifest(
+            Path(state.project.workspace),
+            project_id=state.project.id,
+            revision_number=revision_number,
+            plan_version=plan.version,
+            generated_at=self._clock(),
+        )
+        now = self._clock()
+        updated = replace(
+            state,
+            project=replace(state.project, updated_at=now),
+            delivery_manifests=state.delivery_manifests + (manifest,),
+            events=state.events + (
+                self._event(
+                    state,
+                    "delivery.manifest_verified",
+                    manifest.id,
+                    now,
+                    {
+                        "revision_number": str(revision_number),
+                        "plan_version": str(plan.version),
+                        "deliverable_type": manifest.deliverable_type.value,
+                    },
+                ),
+            ),
+        )
+        self._store.save(updated)
+        return updated
 
     @staticmethod
     def _record_revision_review(

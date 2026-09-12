@@ -25,6 +25,7 @@ from code_mule.project_verification.contracts import (
     ProjectVerificationSpec,
 )
 from code_mule.recovery.contracts import ExecutionAttempt, ExecutionStopBoundary, SafePoint
+from code_mule.runtime_handoff.contracts import DeliveryManifest, RuntimeSession
 
 
 @dataclass
@@ -52,6 +53,9 @@ class ProjectState:
     latest_safe_point: SafePoint | None = None
     execution_attempts: tuple[ExecutionAttempt, ...] = ()
     revisions: tuple[ProjectRevision, ...] = ()
+    delivery_manifest_required: bool = False
+    delivery_manifests: tuple[DeliveryManifest, ...] = ()
+    runtime_sessions: tuple[RuntimeSession, ...] = ()
 
 
 __all__ = ["ProjectState"]

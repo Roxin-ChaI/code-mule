@@ -154,7 +154,7 @@ class FinalReviewHumanJudgmentTests(unittest.TestCase):
         state = final_review_gate()
         payload = serialize_project_state(state)
         restored = deserialize_project_state(payload)
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 14)
+        self.assertEqual(CURRENT_SCHEMA_VERSION, 15)
         self.assertEqual(serialize_project_state(restored), payload)
         evidence = final_review_human_judgment_evidence(
             restored, restored.human_actions[-1]

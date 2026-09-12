@@ -270,6 +270,11 @@ def build_plan_prompt(request: PlanRequest) -> tuple[str, str]:
         "least one proposed or existing requirement. Dependencies must reference "
         "declared task IDs. Keep scope appropriate for v0.1.0, avoid over-design, "
         "and do not add deployment or release work unless explicitly requested. "
+        "For projects that require delivery handoff, include one final Task that "
+        "creates code-mule-delivery.json after the product is implemented. That "
+        "file is revision-scoped delivery metadata, must describe the actual "
+        "deliverable and structured local launch/health/stop contract, and must "
+        "not contain secrets or shell command strings. "
         "Return a planning proposal only; do not create or apply a domain Plan."
     )
     return _system_prompt(SupervisorOperation.PLAN), user_prompt
@@ -338,6 +343,8 @@ def build_impact_analysis_prompt(
             "Milestone, and Task IDs in the existing project ID style; do not "
             "invent a Plan ID or internal UUID because Code Mule owns the "
             "persistent Plan identity."
+            " Include a final fresh Task that updates code-mule-delivery.json "
+            "for this new revision's actual deliverable before final verification."
         )
     else:
         lifecycle_rules = (
