@@ -164,18 +164,16 @@ class RuntimeHandoffService:
         argv = self._command_argv(launch.command.executable, launch.command.args, workspace, launch.working_directory, port)
         cwd = workspace if launch.working_directory == "." else workspace / launch.working_directory
         session_id = self._session_id_factory()
-        log_dir = workspace / ".code-mule" / "runtime" / session_id
-        log_dir.mkdir(parents=True, exist_ok=False)
         safe_environment = {
             key: value for key, value in self._environment.items()
             if key in _BASE_ENVIRONMENT or key in launch.environment_keys
         }
         try:
-            with (log_dir / "stdout.log").open("wb") as stdout, (log_dir / "stderr.log").open("wb") as stderr:
-                process = self._popen(
-                    argv, cwd=cwd, env=safe_environment, stdin=subprocess.DEVNULL,
-                    stdout=stdout, stderr=stderr, shell=False, start_new_session=True,
-                )
+            process = self._popen(
+                argv, cwd=cwd, env=safe_environment, stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                shell=False, start_new_session=True,
+            )
         except OSError as error:
             raise RuntimeLaunchBlocked("verified launch command could not start") from error
         if not launch.expected_long_running:

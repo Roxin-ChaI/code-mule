@@ -178,6 +178,29 @@ class RuntimeHandoffE2E(unittest.TestCase):
             store.save(replace(state, revisions=(replace(state.revisions[0], lifecycle_status=RevisionStatus.COMPLETED), revision), delivery_manifests=(old, current)))
             self.assertEqual(service.deliverable().id, "current")
 
+    def test_terminal_runtime_history_is_preserved_across_relaunch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); store, service = self._ready(root, runnable=True)
+            service.launch(); service.stop_app()
+            observation = ProcessObservation(True, "d" * 64, "e" * 64)
+            fake = type("Process", (), {"pid": 54321})()
+            second = RuntimeHandoffService(
+                store=store, clock=lambda: NOW,
+                session_id_factory=lambda: "runtime-2",
+                event_id_factory=lambda: "event-2",
+                environment={"PATH": __import__("os").environ["PATH"]},
+                popen=lambda *args, **kwargs: fake,
+                process_observer=lambda pid: observation,
+                http_status=lambda url, timeout: 200,
+                dynamic_port_factory=lambda: 48124,
+                port_available=lambda port: True,
+                sleeper=lambda seconds: None,
+            )
+            second.launch()
+            sessions = store.load().runtime_sessions
+            self.assertEqual(tuple(item.id for item in sessions), ("runtime-1", "runtime-2"))
+            self.assertEqual(sessions[0].status.value, "stopped")
+
 
 if __name__ == "__main__":
     unittest.main()

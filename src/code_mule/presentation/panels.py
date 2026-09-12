@@ -30,6 +30,18 @@ def project_dashboard(state, terminal: TerminalDashboard, lines, *, verbose=Fals
         sections.append(DashboardSection("FINAL VERIFICATION", checks))
     elif view.total_tasks and view.completed_tasks == view.total_tasks:
         sections.append(DashboardSection("FINAL VERIFICATION", ("No persisted verification result is available.",)))
+    if view.raw_status == "done":
+        revision = next((item for item in reversed(state.revisions) if item.lifecycle_status.value == "completed"), None)
+        manifest = next((item for item in reversed(state.delivery_manifests) if revision is not None and item.revision_number == revision.revision_number and item.plan_version == revision.plan_version), None)
+        if manifest is not None:
+            sections.append(DashboardSection("DELIVERY HANDOFF", (
+                row("Type", humanize_identifier(manifest.deliverable_type.value)),
+                row("Entry", manifest.entry_point),
+                row("Runnable", "Yes" if manifest.runnable else "No"),
+                row("Next", "code-mule launch" if manifest.runnable else "code-mule deliverable"),
+            )))
+        elif not state.delivery_manifest_required:
+            sections.append(DashboardSection("DELIVERY HANDOFF", ("Unavailable for this historical state.",)))
     actions = tuple(action for action in state.human_actions if action.status is HumanActionStatus.PENDING)
     if actions:
         sections.append(DashboardSection("BOSS ACTION", (row("Category", view.boss_action),) + tuple(action.summary for action in actions) + ("", "Next: code-mule inspect")))

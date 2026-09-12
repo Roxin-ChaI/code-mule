@@ -548,6 +548,7 @@ class CliProcessBoundaryTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(output, "ok\n")
         self.assertEqual(errors, "")
+        self.assertEqual(commands.calls, [("status", (False,))])
 
     def test_dispatches_runtime_handoff_commands_without_model_configuration(self):
         for command, expected in (
@@ -561,8 +562,6 @@ class CliProcessBoundaryTests(unittest.TestCase):
                 code, output, errors = self.invoke([command], commands)
                 self.assertEqual((code, output, errors), (0, "ok\n", ""))
                 self.assertEqual(commands.calls[0][0], expected)
-        self.assertEqual(commands.calls, [("status", (False,))])
-
         commands = _FakeCommands()
         code, output, errors = self.invoke(["diagnose", "--verbose"], commands)
         self.assertEqual((code, output, errors), (0, "ok\n", ""))

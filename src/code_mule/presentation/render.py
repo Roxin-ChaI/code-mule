@@ -209,6 +209,30 @@ def render_project(
         )
     if state.project.status.value == "done":
         lines += ("", "PROJECT COMPLETED")
+        revision = next(
+            (item for item in reversed(state.revisions) if item.lifecycle_status.value == "completed"),
+            None,
+        )
+        manifest = next(
+            (
+                item for item in reversed(state.delivery_manifests)
+                if revision is not None
+                and item.revision_number == revision.revision_number
+                and item.plan_version == revision.plan_version
+            ),
+            None,
+        )
+        if manifest is not None:
+            lines += (
+                "",
+                "DELIVERY HANDOFF",
+                f"Type        {manifest.deliverable_type.value.replace('_', ' ').title()}",
+                f"Entry       {manifest.entry_point}",
+                f"Runnable    {'Yes' if manifest.runnable else 'No'}",
+                f"Next        {'code-mule launch' if manifest.runnable else 'code-mule deliverable'}",
+            )
+        elif not state.delivery_manifest_required:
+            lines += ("", "DELIVERY HANDOFF", "Unavailable for this historical state.")
     if verbose:
         lines += (
             "",
