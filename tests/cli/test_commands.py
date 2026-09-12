@@ -45,6 +45,10 @@ class _FakeCommands:
     def init_project(self, *values): return self._call("init", *values)
     def run(self, *values): return self._call("run", *values)
     def status(self, *values): return self._call("status", *values)
+    def deliverable(self, *values): return self._call("deliverable", *values)
+    def launch(self, *values): return self._call("launch", *values)
+    def app_status(self, *values): return self._call("app_status", *values)
+    def stop_app(self, *values): return self._call("stop_app", *values)
     def diagnose(self, *values): return self._call("diagnose", *values)
     def ask(self, *values): return self._call("ask", *values)
     def change(self, *values): return self._call("change", *values)
@@ -177,8 +181,18 @@ class ProductionCommandTests(unittest.TestCase):
         state = JsonProjectStateStore(self.state_file).load()
         self.assertEqual(state.project.status, ProjectStatus.IDLE)
         self.assertEqual(state.project.workspace, str(self.workspace.resolve()))
+        self.assertTrue(state.delivery_manifest_required)
         with self.assertRaisesRegex(Exception, "already exists"):
             composition.init_project("other", "Other", self.workspace)
+
+    def test_historical_completed_project_reports_manifest_unavailable_without_guessing(self):
+        composition = self.init()
+        store = JsonProjectStateStore(self.state_file)
+        state = store.load()
+        store.save(replace(state, project=replace(state.project, status=ProjectStatus.DONE), delivery_manifest_required=False))
+        result = composition.deliverable()
+        self.assertIn("historical project", " ".join(result.output).lower())
+        self.assertEqual(store.load().delivery_manifests, ())
 
     def test_run_new_and_existing_running_project(self):
         composition = self.composition(self.runtime_factory)
@@ -534,6 +548,19 @@ class CliProcessBoundaryTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(output, "ok\n")
         self.assertEqual(errors, "")
+
+    def test_dispatches_runtime_handoff_commands_without_model_configuration(self):
+        for command, expected in (
+            ("deliverable", "deliverable"),
+            ("launch", "launch"),
+            ("app-status", "app_status"),
+            ("stop-app", "stop_app"),
+        ):
+            with self.subTest(command=command):
+                commands = _FakeCommands()
+                code, output, errors = self.invoke([command], commands)
+                self.assertEqual((code, output, errors), (0, "ok\n", ""))
+                self.assertEqual(commands.calls[0][0], expected)
         self.assertEqual(commands.calls, [("status", (False,))])
 
         commands = _FakeCommands()

@@ -103,6 +103,8 @@ from code_mule.runtime import (
     TaskCycleService,
     TaskPromptBuilder,
 )
+from code_mule.runtime_handoff import LaunchDisposition, RuntimeHandoffError
+from code_mule.runtime_handoff.service import RuntimeHandoffService
 from code_mule.scheduler import TaskScheduler
 from code_mule.state.models import ProjectState
 from code_mule.state.serialization import InvalidProjectState
@@ -180,6 +182,7 @@ def _empty_state(project_id: str, name: str, workspace: Path) -> ProjectState:
         quality_status=None,
         events=(),
         latest_safe_point=SafePoint(SafePointKind.PROJECT_IDLE, now),
+        delivery_manifest_required=True,
     )
 
 
@@ -411,6 +414,110 @@ class ProductionCliComposition:
         return CliCommandResult(
             CliExitCode.SUCCESS, render_project(state, verbose=verbose, terminal=TerminalDashboard.for_stream(self._stdout))
         )
+
+    def _runtime_handoff(self) -> RuntimeHandoffService:
+        return RuntimeHandoffService(
+            store=self._store,
+            clock=lambda: datetime.now(UTC),
+            session_id_factory=lambda: _id("runtime"),
+            event_id_factory=lambda: _id("event"),
+            environment=self._environment,
+        )
+
+    def deliverable(self, verbose: bool = False) -> CliCommandResult:
+        manifest = self._runtime_handoff().deliverable()
+        if manifest is None:
+            state = self._load()
+            message = (
+                "This historical project has no verified delivery manifest."
+                if not state.delivery_manifest_required
+                else "The current completed revision has no verified delivery manifest."
+            )
+            return CliCommandResult(CliExitCode.SUCCESS, ("DELIVERABLE", message))
+        lines = (
+            "DELIVERABLE",
+            f"Type           {manifest.deliverable_type.value.replace('_', ' ').title()}",
+            f"Entry          {manifest.entry_point}",
+            f"Runnable       {'Yes' if manifest.runnable else 'No'}",
+            "Verification   Passed",
+            f"Usage          {manifest.usage}",
+        )
+        if verbose:
+            lines += (
+                f"manifest_id: {manifest.id}",
+                f"revision_number: {manifest.revision_number}",
+                f"plan_version: {manifest.plan_version}",
+            )
+        return CliCommandResult(CliExitCode.SUCCESS, lines)
+
+    def launch(self, verbose: bool = False) -> CliCommandResult:
+        try:
+            outcome = self._runtime_handoff().launch()
+        except RuntimeHandoffError as error:
+            raise InvalidCliProjectState(str(error)) from error
+        manifest = outcome.manifest
+        if outcome.disposition is LaunchDisposition.NOT_RUNNABLE:
+            return CliCommandResult(
+                CliExitCode.SUCCESS,
+                ("DELIVERABLE READY", "This deliverable is not a runnable application.", f"Usage          {manifest.usage}"),
+            )
+        if outcome.disposition is LaunchDisposition.REQUIRES_ARGUMENTS:
+            return CliCommandResult(
+                CliExitCode.SUCCESS,
+                ("LAUNCH REQUIRES ARGUMENTS", f"Usage          {manifest.usage}", "No process was started."),
+            )
+        if outcome.disposition is LaunchDisposition.COMPLETED:
+            assert outcome.session is not None
+            return CliCommandResult(
+                CliExitCode.SUCCESS,
+                ("APPLICATION COMPLETED", f"Exit code      {outcome.session.exit_code}"),
+            )
+        assert outcome.session is not None
+        lines = (
+            "APP STARTED",
+            f"Health         {outcome.session.health_status.value.title()}",
+            f"Access         {outcome.session.access_url or 'Local process'}",
+            "Stop           code-mule stop-app",
+        )
+        if verbose:
+            lines += (f"session_id: {outcome.session.id}", f"pid: {outcome.session.pid}")
+        return CliCommandResult(CliExitCode.SUCCESS, lines)
+
+    def app_status(self, verbose: bool = False) -> CliCommandResult:
+        try:
+            session = self._runtime_handoff().app_status()
+        except RuntimeHandoffError as error:
+            raise InvalidCliProjectState(str(error)) from error
+        if session is None:
+            return CliCommandResult(CliExitCode.SUCCESS, ("APP STATUS", "No runtime session has been recorded."))
+        state = self._load()
+        manifest = next((item for item in state.delivery_manifests if item.id == session.manifest_id), None)
+        lines = (
+            "APP STATUS",
+            f"Project        {state.project.name}",
+            f"Revision       {session.revision_number}",
+            f"Type           {manifest.deliverable_type.value.replace('_', ' ').title() if manifest else 'Unknown'}",
+            f"Status         {session.status.value.replace('_', ' ').title()}",
+            f"Health         {session.health_status.value.replace('_', ' ').title()}",
+            f"Access         {session.access_url or 'Not available'}",
+        )
+        if verbose:
+            lines += (f"session_id: {session.id}", f"pid: {session.pid or '-'}")
+        return CliCommandResult(CliExitCode.SUCCESS, lines)
+
+    def stop_app(self, verbose: bool = False) -> CliCommandResult:
+        try:
+            session = self._runtime_handoff().stop_app()
+        except RuntimeHandoffError as error:
+            raise InvalidCliProjectState(str(error)) from error
+        lines = (
+            "APP STOPPED",
+            f"Status         {session.status.value.replace('_', ' ').title()}",
+            "No unrelated process was touched.",
+        )
+        if verbose:
+            lines += (f"session_id: {session.id}",)
+        return CliCommandResult(CliExitCode.SUCCESS, lines)
 
     def diagnose(self, verbose: bool = False) -> CliCommandResult:
         diagnosis = self._diagnosis_service.diagnose(self._load())

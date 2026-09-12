@@ -55,6 +55,18 @@ def build_parser() -> argparse.ArgumentParser:
     status = commands.add_parser("status", help="show project status")
     _state_file(status)
 
+    deliverable = commands.add_parser("deliverable", help="show the verified delivery handoff")
+    _state_file(deliverable)
+
+    launch = commands.add_parser("launch", help="launch the completed local deliverable")
+    _state_file(launch)
+
+    app_status = commands.add_parser("app-status", help="show local runtime session status")
+    _state_file(app_status)
+
+    stop_app = commands.add_parser("stop-app", help="gracefully stop the owned local runtime")
+    _state_file(stop_app)
+
     diagnose = commands.add_parser(
         "diagnose", help="explain blockers, recoverability, and the next Boss action"
     )
