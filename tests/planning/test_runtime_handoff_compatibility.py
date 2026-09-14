@@ -192,6 +192,11 @@ class RuntimeHandoffPlanningCompatibilityTests(unittest.TestCase):
                 supervisor=_FinalSupervisor(),
                 clock=lambda: NOW,
                 event_id_factory=lambda: next(ids),
+                runtime_smoke=type(
+                    "Smoke",
+                    (),
+                    {"verify": lambda self, manifest, workspace: None},
+                )(),
             )
             final = finalizer.finalize(executable)
             self.assertIs(final.project.status, ProjectStatus.DONE)

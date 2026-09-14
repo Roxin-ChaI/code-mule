@@ -30,6 +30,7 @@ from .contracts import (
     RuntimePortConflict,
     RuntimeSession,
     RuntimeSessionStatus,
+    InvalidDeliveryManifest,
 )
 from .validation import validate_manifest
 
@@ -413,4 +414,207 @@ class RuntimeHandoffService:
         )
 
 
-__all__ = ["ProcessObservation", "RuntimeHandoffService", "observe_process"]
+class RuntimeSmokeVerifier:
+    """Run one bounded, local-only launch/health/stop verification.
+
+    This verifier owns its direct child process and never persists a reusable
+    runtime session.  It is used before project completion; normal runtime
+    handoff remains available only after the revision is DONE.
+    """
+
+    def __init__(
+        self,
+        *,
+        environment: Mapping[str, str] | None = None,
+        popen: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
+        http_status: Callable[[str, float], int | None] = _http_status,
+        dynamic_port_factory: Callable[[], int] = _dynamic_local_port,
+        port_available: Callable[[int], bool] = _local_port_available,
+        sleeper: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._environment = dict(os.environ if environment is None else environment)
+        self._popen = popen
+        self._http_status = http_status
+        self._dynamic_port = dynamic_port_factory
+        self._port_available = port_available
+        self._sleep = sleeper
+        self._monotonic = monotonic
+
+    def verify(self, manifest: DeliveryManifest, workspace: Path) -> None:
+        validate_manifest(manifest, workspace)
+        if not manifest.runnable:
+            return
+        if not manifest.verification_spec.launch_smoke_test_supported:
+            raise InvalidDeliveryManifest(
+                "runnable delivery does not support deterministic launch smoke verification"
+            )
+        launch = manifest.launch_spec
+        if launch is None or launch.requires_args:
+            raise InvalidDeliveryManifest(
+                "runnable delivery cannot be smoke verified without launch arguments"
+            )
+        missing = tuple(
+            key
+            for key in set(manifest.required_environment) | set(launch.environment_keys)
+            if not self._environment.get(key)
+        )
+        if missing:
+            raise InvalidDeliveryManifest(
+                "runtime smoke verification environment is unavailable"
+            )
+        for generated in manifest.runtime_generated_paths:
+            ignored = subprocess.run(
+                ("git", "check-ignore", "--quiet", "--", generated),
+                cwd=workspace,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            ).returncode == 0
+            if not ignored:
+                raise InvalidDeliveryManifest(
+                    "runtime-generated path is not Git ignored"
+                )
+        port = self._select_port(manifest)
+        argv = RuntimeHandoffService._command_argv(
+            launch.command.executable,
+            launch.command.args,
+            workspace,
+            launch.working_directory,
+            port,
+        )
+        cwd = (
+            workspace
+            if launch.working_directory == "."
+            else workspace / launch.working_directory
+        )
+        safe_environment = {
+            key: value
+            for key, value in self._environment.items()
+            if key in _BASE_ENVIRONMENT or key in launch.environment_keys
+        }
+        try:
+            process = self._popen(
+                argv,
+                cwd=cwd,
+                env=safe_environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                shell=False,
+                start_new_session=True,
+            )
+        except OSError as error:
+            raise InvalidDeliveryManifest(
+                "runtime smoke launch could not start"
+            ) from error
+        try:
+            if not launch.expected_long_running:
+                try:
+                    exit_code = process.wait(timeout=launch.startup_timeout_seconds)
+                except subprocess.TimeoutExpired as error:
+                    raise InvalidDeliveryManifest(
+                        "finite runtime smoke exceeded its bounded runtime"
+                    ) from error
+                if exit_code != 0:
+                    raise InvalidDeliveryManifest("finite runtime smoke failed")
+                return
+            self._wait_for_health(manifest, process, workspace, port)
+        finally:
+            if process.poll() is None:
+                try:
+                    process.terminate()
+                except OSError as error:
+                    raise InvalidDeliveryManifest(
+                        "runtime smoke child could not be stopped safely"
+                    ) from error
+                grace = 5.0 if manifest.stop_spec is None else manifest.stop_spec.grace_seconds
+                try:
+                    process.wait(timeout=grace)
+                except subprocess.TimeoutExpired:
+                    try:
+                        process.kill()
+                    except OSError as error:
+                        raise InvalidDeliveryManifest(
+                            "runtime smoke child could not be stopped safely"
+                        ) from error
+                    try:
+                        process.wait(timeout=1.0)
+                    except subprocess.TimeoutExpired as error:
+                        raise InvalidDeliveryManifest(
+                            "runtime smoke child did not stop within its bounded boundary"
+                        ) from error
+
+    def _select_port(self, manifest: DeliveryManifest) -> int | None:
+        if manifest.access_spec is None:
+            return None
+        port = manifest.access_spec.port
+        if manifest.launch_spec and manifest.launch_spec.supports_dynamic_port:
+            return self._dynamic_port()
+        if port is not None and not self._port_available(port):
+            raise InvalidDeliveryManifest("runtime smoke local port is already in use")
+        return port
+
+    def _wait_for_health(
+        self,
+        manifest: DeliveryManifest,
+        process: subprocess.Popen[bytes],
+        workspace: Path,
+        port: int | None,
+    ) -> None:
+        spec = manifest.health_check_spec
+        launch = manifest.launch_spec
+        assert launch is not None
+        deadline = self._monotonic() + launch.startup_timeout_seconds
+        while self._monotonic() < deadline:
+            if process.poll() is not None:
+                raise InvalidDeliveryManifest("runtime exited during smoke verification")
+            if spec.type is HealthCheckType.NONE:
+                return
+            if spec.type is HealthCheckType.PROCESS:
+                return
+            if spec.type is HealthCheckType.HTTP:
+                url = (spec.url or "").replace(
+                    "{port}", "" if port is None else str(port)
+                )
+                if self._http_status(url, spec.timeout_seconds) == spec.expected_status:
+                    return
+            elif spec.type is HealthCheckType.COMMAND and spec.command is not None:
+                argv = RuntimeHandoffService._command_argv(
+                    spec.command.executable,
+                    spec.command.args,
+                    workspace,
+                    ".",
+                    port,
+                )
+                environment = {
+                    key: value
+                    for key, value in self._environment.items()
+                    if key in _BASE_ENVIRONMENT or key in launch.environment_keys
+                }
+                try:
+                    healthy = subprocess.run(
+                        argv,
+                        cwd=workspace,
+                        env=environment,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        shell=False,
+                        check=False,
+                        timeout=spec.timeout_seconds,
+                    ).returncode == 0
+                except (OSError, subprocess.TimeoutExpired):
+                    healthy = False
+                if healthy:
+                    return
+            self._sleep(0.1)
+        raise InvalidDeliveryManifest("runtime smoke health check failed")
+
+
+__all__ = [
+    "ProcessObservation",
+    "RuntimeHandoffService",
+    "RuntimeSmokeVerifier",
+    "observe_process",
+]

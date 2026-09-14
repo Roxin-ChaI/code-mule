@@ -73,6 +73,14 @@ class FakeFinalSupervisor:
         )
 
 
+class FakeRuntimeSmoke:
+    def __init__(self):
+        self.calls = []
+
+    def verify(self, manifest, workspace):
+        self.calls.append((manifest, workspace))
+
+
 class InvalidFinalReviewClient:
     def __init__(self):
         self.calls = 0
@@ -138,6 +146,7 @@ class FinalVerificationCase(unittest.TestCase):
             runner=runner or (lambda command, **kwargs: (0, False)),
             environment={"PATH": "/usr/bin:/bin"},
         )
+        smoke = FakeRuntimeSmoke()
         service = ProjectFinalizationService(
             store=store,
             verification=verification,
@@ -145,7 +154,9 @@ class FinalVerificationCase(unittest.TestCase):
             clock=lambda: NOW,
             event_id_factory=iter((f"event-{index}" for index in range(30))).__next__,
             progress_sink=progress,
+            runtime_smoke=smoke,
         )
+        service.test_runtime_smoke = smoke
         return service, store
 
 
@@ -219,6 +230,7 @@ class ProjectFinalizationTests(FinalVerificationCase):
         self.assertIs(final.project.status, ProjectStatus.DONE)
         self.assertEqual(len(final.delivery_manifests), 1)
         self.assertEqual(len(supervisor.requests[0].project_state.delivery_manifests), 1)
+        self.assertEqual(len(service.test_runtime_smoke.calls), 1)
         check = next(item for item in final.project_verification_results[0].checks if item.category is ProjectVerificationCategory.DELIVERY_MANIFEST)
         self.assertIs(check.status, ProjectVerificationStatus.PASS)
 

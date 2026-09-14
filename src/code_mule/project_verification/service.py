@@ -41,6 +41,7 @@ from code_mule.revision import (
     latest_revision,
 )
 from code_mule.runtime_handoff import InvalidDeliveryManifest
+from code_mule.runtime_handoff.service import RuntimeSmokeVerifier
 from code_mule.runtime_handoff.validation import (
     load_and_validate_manifest,
     validate_manifest,
@@ -352,6 +353,7 @@ class ProjectFinalizationService:
         clock: Callable[[], datetime],
         event_id_factory: Callable[[], str],
         progress_sink: ProgressSink | None = None,
+        runtime_smoke: RuntimeSmokeVerifier | None = None,
     ) -> None:
         self._store = store
         self._verification = verification
@@ -359,6 +361,7 @@ class ProjectFinalizationService:
         self._clock = clock
         self._event_id_factory = event_id_factory
         self._progress = resilient_progress_sink(progress_sink)
+        self._runtime_smoke = runtime_smoke or RuntimeSmokeVerifier()
 
     @property
     def progress_errors(self) -> tuple[BaseException, ...]:
@@ -494,7 +497,39 @@ class ProjectFinalizationService:
         if len(matching) > 1:
             raise InvalidDeliveryManifest("delivery manifest identity is ambiguous")
         if matching:
-            validate_manifest(matching[0], Path(state.project.workspace))
+            manifest = matching[0]
+            validate_manifest(manifest, Path(state.project.workspace))
+            smoke_recorded = any(
+                event.event_type == "delivery.manifest_verified"
+                and event.entity_id == manifest.id
+                and event.metadata.get("runtime_smoke")
+                in {"passed", "not_applicable"}
+                for event in state.events
+            )
+            if manifest.runnable and not smoke_recorded:
+                self._runtime_smoke.verify(manifest, Path(state.project.workspace))
+                now = self._clock()
+                updated = replace(
+                    state,
+                    project=replace(state.project, updated_at=now),
+                    events=state.events
+                    + (
+                        self._event(
+                            state,
+                            "delivery.manifest_verified",
+                            manifest.id,
+                            now,
+                            {
+                                "revision_number": str(revision_number),
+                                "plan_version": str(plan.version),
+                                "deliverable_type": manifest.deliverable_type.value,
+                                "runtime_smoke": "passed",
+                            },
+                        ),
+                    ),
+                )
+                self._store.save(updated)
+                return updated
             return state
         manifest = load_and_validate_manifest(
             Path(state.project.workspace),
@@ -503,6 +538,7 @@ class ProjectFinalizationService:
             plan_version=plan.version,
             generated_at=self._clock(),
         )
+        self._runtime_smoke.verify(manifest, Path(state.project.workspace))
         now = self._clock()
         updated = replace(
             state,
@@ -518,6 +554,9 @@ class ProjectFinalizationService:
                         "revision_number": str(revision_number),
                         "plan_version": str(plan.version),
                         "deliverable_type": manifest.deliverable_type.value,
+                        "runtime_smoke": (
+                            "passed" if manifest.runnable else "not_applicable"
+                        ),
                     },
                 ),
             ),
