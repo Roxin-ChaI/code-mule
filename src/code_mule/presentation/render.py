@@ -668,6 +668,8 @@ def _render_planning_failure(
         code = None
     if code is not None:
         lines += (f"Validation   {humanize_identifier(code.value)}",)
+    elif category is SupervisorFailureCategory.DETERMINISTIC_VALIDATION_FAILURE:
+        lines += ("Validation   Unavailable in legacy evidence",)
     field_path = metadata.get("field_path")
     if (
         field_path is not None
@@ -678,6 +680,8 @@ def _render_planning_failure(
         )
     ):
         lines += (f"Field        {field_path}",)
+    elif category is SupervisorFailureCategory.DETERMINISTIC_VALIDATION_FAILURE:
+        lines += ("Field        Unavailable in legacy evidence",)
     summary = metadata.get("safe_summary")
     if (
         summary is not None

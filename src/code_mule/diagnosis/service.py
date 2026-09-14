@@ -258,6 +258,17 @@ class ProjectDiagnosisService:
                     }.items()
                     if value is not None
                 }
+                if (
+                    not planning_metadata
+                    and candidate.get("failure_category")
+                    == "deterministic_validation_failure"
+                ):
+                    planning_metadata = {
+                        "safe_summary": (
+                            "Legacy planning evidence does not contain the "
+                            "rejected invariant or field path."
+                        )
+                    }
         if worker_uncertainty is not None:
             classification = _Classification(
                 DiagnosisBlockerCategory.RECOVERY_UNCERTAIN,

@@ -181,6 +181,20 @@ class ProjectDiagnosisServiceTests(unittest.TestCase):
         )
         self.assertNotEqual(diagnosis.recommended_next_action.value, "")
 
+        legacy_events = tuple(
+            replace(
+                event,
+                metadata={"failure_category": "deterministic_validation_failure"},
+            )
+            if event.event_type == "planning.failed"
+            else event
+            for event in state.events
+        )
+        legacy = self.service.diagnose(replace(state, events=legacy_events))
+        self.assertIn("Legacy planning evidence", legacy.blocker_summary)
+        self.assertIsNone(legacy.failure_code)
+        self.assertIsNone(legacy.failure_field_path)
+
     def test_task_supervisor_failure_remains_task_review(self):
         diagnosis = self.service.diagnose(
             self.human_state(HumanActionCategory.SUPERVISOR_FAILURE)
