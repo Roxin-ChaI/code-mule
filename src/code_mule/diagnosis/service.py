@@ -203,6 +203,61 @@ class ProjectDiagnosisService:
             if action is None
             else no_change_delivery_recovery_evidence(state, action)
         )
+        planning_metadata: dict[str, str] = {}
+        if action is not None and planning_failure_is_persisted(state, action):
+            matching = tuple(
+                event
+                for event in state.events
+                if event.event_type
+                in {"planning.failed", "planning.proposal_rejected"}
+                and event.entity_id == state.project.id
+                and event.timestamp == action.created_at
+            )
+            if len(matching) == 1:
+                candidate = matching[0].metadata
+                from code_mule.planning import PlanningValidationCode
+
+                raw_code = candidate.get("validation_code")
+                try:
+                    code = PlanningValidationCode(raw_code).value
+                except (TypeError, ValueError):
+                    code = None
+                raw_path = candidate.get("field_path")
+                field_path = (
+                    raw_path
+                    if raw_path is not None
+                    and len(raw_path) <= 160
+                    and all(
+                        character.isalnum() or character in "_.[]"
+                        for character in raw_path
+                    )
+                    else None
+                )
+                raw_summary = candidate.get("safe_summary")
+                summary = (
+                    raw_summary
+                    if raw_summary is not None
+                    and 1 <= len(raw_summary) <= 200
+                    and not any(
+                        marker in raw_summary.casefold()
+                        for marker in (
+                            "api_key",
+                            "password",
+                            "credential",
+                            "token=",
+                        )
+                    )
+                    else None
+                )
+                planning_metadata = {
+                    key: value
+                    for key, value in {
+                        "validation_code": code,
+                        "field_path": field_path,
+                        "safe_summary": summary,
+                    }.items()
+                    if value is not None
+                }
         if worker_uncertainty is not None:
             classification = _Classification(
                 DiagnosisBlockerCategory.RECOVERY_UNCERTAIN,
@@ -247,6 +302,17 @@ class ProjectDiagnosisService:
                 True,
                 DiagnosisNextAction.INSPECT,
             )
+        elif planning_metadata:
+            summary = planning_metadata.get("safe_summary")
+            if summary is not None and 1 <= len(summary) <= 200:
+                classification = _Classification(
+                    DiagnosisBlockerCategory.SUPERVISOR_FAILURE,
+                    DiagnosisStage.PLANNING,
+                    self._safe(summary, 200),
+                    DiagnosisRecoverability.RECOVERABLE,
+                    True,
+                    DiagnosisNextAction.INSPECT,
+                )
         revision = latest_revision(state)
         open_change = (
             replanning_failure.change_request
@@ -351,10 +417,16 @@ class ProjectDiagnosisService:
                 else replanning_failure.failure_category
             ),
             failure_code=(
-                None
+                planning_metadata.get("validation_code")
                 if replanning_failure is None
                 else replanning_failure.failure_code
             ),
+            failure_field_path=(
+                planning_metadata.get("field_path")
+                if replanning_failure is None
+                else replanning_failure.field_path
+            ),
+            failure_summary=planning_metadata.get("safe_summary") or None,
             change_summary=(
                 None if open_change is None else open_change.description
             ),

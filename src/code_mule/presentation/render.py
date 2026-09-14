@@ -84,6 +84,14 @@ def render_project_diagnosis(
                 "Validation     "
                 + humanize_identifier(diagnosis.failure_code),
             )
+    elif diagnosis.failure_code is not None:
+        lines += (
+            "Validation     " + humanize_identifier(diagnosis.failure_code),
+        )
+    if diagnosis.failure_field_path is not None:
+        lines += (f"Field          {diagnosis.failure_field_path}",)
+    if diagnosis.failure_summary is not None:
+        lines += (f"Detail         {diagnosis.failure_summary}",)
     if diagnosis.verification is not None:
         verification = diagnosis.verification
         lines += (
@@ -610,6 +618,8 @@ def _render_planning_failure(
     if len(events) != 1 or not planning_failure_is_persisted(state, action):
         return ()
     metadata = events[0].metadata
+    from code_mule.planning import PlanningValidationCode
+
     try:
         category = SupervisorFailureCategory(metadata["failure_category"])
     except (KeyError, ValueError):
@@ -624,25 +634,62 @@ def _render_planning_failure(
         parsed_attempts = int(attempt_count)
         if 1 <= parsed_attempts <= 100:
             attempts_text = str(parsed_attempts)
+    retryable = metadata.get("retryable")
     retryable = (
-        "Unknown"
+        "Yes"
+        if retryable == "true"
+        else "No"
+        if retryable == "false"
+        else "Unknown"
         if category is None
-        else "Yes" if supervisor_failure_is_retryable(category) else "No"
+        else "Yes"
+        if supervisor_failure_is_retryable(category)
+        else "No"
     )
     failure = (
         "Unavailable"
         if category is None
         else humanize_identifier(category.value)
     )
-    return (
+    lines = (
         "",
         "SUPERVISOR PLANNING FAILURE",
         "Stage        Planning",
+        "Boundary     " + humanize_identifier(metadata.get("stage", "planning")),
         f"Failure      {failure}",
         f"Attempts     {attempts_text}",
-        f"Retryable    {retryable}",
         f"Plan created {'Yes' if state.plans else 'No'}",
         f"Worker started {'Yes' if boundary.worker_started else 'No'}",
+    )
+    raw_code = metadata.get("validation_code")
+    try:
+        code = PlanningValidationCode(raw_code)
+    except (TypeError, ValueError):
+        code = None
+    if code is not None:
+        lines += (f"Validation   {humanize_identifier(code.value)}",)
+    field_path = metadata.get("field_path")
+    if (
+        field_path is not None
+        and len(field_path) <= 160
+        and all(
+            character.isalnum() or character in "_.[]"
+            for character in field_path
+        )
+    ):
+        lines += (f"Field        {field_path}",)
+    summary = metadata.get("safe_summary")
+    if (
+        summary is not None
+        and 1 <= len(summary) <= 200
+        and not any(
+            marker in summary.casefold()
+            for marker in ("api_key", "password", "credential", "token=")
+        )
+    ):
+        lines += (f"Reason       {summary}",)
+    return lines + (
+        f"Retryable    {retryable}",
         "Fresh planning "
         + (
             "Safe after explicit resolution"

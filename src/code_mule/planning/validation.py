@@ -8,6 +8,7 @@ from .errors import (
     DuplicateProposalId,
     InvalidPlanProposal,
     InvalidProposalDependency,
+    PlanningValidationCode,
     ProposalDependencyCycle,
     UnknownProposalReference,
 )
@@ -21,86 +22,129 @@ class PlanProposalValidator:
         milestone_ids = tuple(item.id for item in proposal.milestones)
         task_ids = tuple(item.id for item in proposal.tasks)
 
-        self._unique(requirement_ids, "Requirement")
-        self._unique(milestone_ids, "Milestone")
-        self._unique(task_ids, "Task")
+        self._unique(requirement_ids, "requirements")
+        self._unique(milestone_ids, "milestones")
+        self._unique(task_ids, "tasks")
         all_proposed = requirement_ids + milestone_ids + task_ids
-        self._unique(all_proposed, "proposal entity")
+        self._unique(all_proposed, "proposal")
         self._reject_existing_collisions(state, all_proposed)
 
         existing_requirements = {item.id: item for item in state.requirements}
-        self._unique(proposal.requirements_considered, "considered Requirement")
-        for requirement_id in proposal.requirements_considered:
+        self._unique(proposal.requirements_considered, "requirements_considered")
+        for index, requirement_id in enumerate(proposal.requirements_considered):
             requirement = existing_requirements.get(requirement_id)
             if requirement is None:
                 raise UnknownProposalReference(
-                    f"unknown considered Requirement: {requirement_id}"
+                    "A considered Requirement ID is not present in ProjectState",
+                    code=PlanningValidationCode.UNKNOWN_REQUIREMENT_REFERENCE,
+                    field_path=f"requirements_considered[{index}]",
                 )
             if (
                 requirement.project_id != state.project.id
                 or requirement.status is not RequirementStatus.ACTIVE
             ):
                 raise InvalidPlanProposal(
-                    f"considered Requirement is not active for this Project: {requirement_id}"
+                    "A considered Requirement is not active for this Project",
+                    code=PlanningValidationCode.INACTIVE_REQUIREMENT_REFERENCE,
+                    field_path=f"requirements_considered[{index}]",
                 )
 
         plan_requirement_ids = proposal.requirements_considered + requirement_ids
         if not plan_requirement_ids:
-            raise InvalidPlanProposal("a Plan must contain at least one Requirement")
+            raise InvalidPlanProposal(
+                "A Plan must contain at least one Requirement",
+                code=PlanningValidationCode.EMPTY_REQUIREMENTS,
+                field_path="requirements",
+            )
         if not proposal.milestones:
-            raise InvalidPlanProposal("a Plan must contain at least one Milestone")
+            raise InvalidPlanProposal(
+                "A Plan must contain at least one Milestone",
+                code=PlanningValidationCode.EMPTY_MILESTONES,
+                field_path="milestones",
+            )
         if not proposal.tasks:
-            raise InvalidPlanProposal("a Plan must contain at least one Task")
+            raise InvalidPlanProposal(
+                "A Plan must contain at least one Task",
+                code=PlanningValidationCode.EMPTY_TASKS,
+                field_path="tasks",
+            )
 
         proposed_task_ids = set(task_ids)
         membership: dict[str, int] = {task_id: 0 for task_id in task_ids}
-        for milestone in proposal.milestones:
+        for milestone_index, milestone in enumerate(proposal.milestones):
             if not milestone.task_ids:
                 raise InvalidPlanProposal(
-                    f"Milestone must contain at least one Task: {milestone.id}"
+                    "A Milestone must contain at least one Task",
+                    code=PlanningValidationCode.EMPTY_MILESTONE,
+                    field_path=f"milestones[{milestone_index}].task_ids",
                 )
-            self._unique(milestone.task_ids, f"Milestone {milestone.id} Task reference")
-            for task_id in milestone.task_ids:
+            self._unique(
+                milestone.task_ids, f"milestones[{milestone_index}].task_ids"
+            )
+            for task_index, task_id in enumerate(milestone.task_ids):
                 if task_id not in proposed_task_ids:
                     raise UnknownProposalReference(
-                        f"Milestone {milestone.id} references unknown Task: {task_id}"
+                        "A Milestone references a Task absent from the proposal",
+                        code=PlanningValidationCode.UNKNOWN_TASK_REFERENCE,
+                        field_path=(
+                            f"milestones[{milestone_index}].task_ids[{task_index}]"
+                        ),
                     )
                 membership[task_id] += 1
-        for task_id, count in membership.items():
+        for task_index, task_id in enumerate(task_ids):
+            count = membership[task_id]
             if count != 1:
                 raise InvalidPlanProposal(
-                    f"Task must belong to exactly one Milestone: {task_id}"
+                    "Each Task must belong to exactly one Milestone",
+                    code=PlanningValidationCode.TASK_MILESTONE_MEMBERSHIP,
+                    field_path=f"tasks[{task_index}].id",
                 )
 
         allowed_requirements = set(plan_requirement_ids)
         covered_requirements: set[str] = set()
         dependencies: dict[str, tuple[str, ...]] = {}
-        for task in proposal.tasks:
+        for task_index, task in enumerate(proposal.tasks):
             if not task.acceptance_criteria:
                 raise InvalidPlanProposal(
-                    f"Task must have acceptance criteria: {task.id}"
+                    "A Task must have acceptance criteria",
+                    code=PlanningValidationCode.MISSING_ACCEPTANCE_CRITERIA,
+                    field_path=f"tasks[{task_index}].acceptance_criteria",
                 )
             if not task.requirement_ids:
                 raise InvalidPlanProposal(
-                    f"Task must reference at least one Requirement: {task.id}"
+                    "A Task must reference at least one Requirement",
+                    code=PlanningValidationCode.MISSING_REQUIREMENT_REFERENCE,
+                    field_path=f"tasks[{task_index}].requirement_ids",
                 )
-            self._unique(task.requirement_ids, f"Task {task.id} Requirement reference")
-            for requirement_id in task.requirement_ids:
+            self._unique(
+                task.requirement_ids, f"tasks[{task_index}].requirement_ids"
+            )
+            for requirement_index, requirement_id in enumerate(task.requirement_ids):
                 if requirement_id not in allowed_requirements:
                     raise UnknownProposalReference(
-                        f"Task {task.id} references unknown Requirement: {requirement_id}"
+                        "A Task references a Requirement absent from the Plan",
+                        code=PlanningValidationCode.UNKNOWN_REQUIREMENT_REFERENCE,
+                        field_path=(
+                            f"tasks[{task_index}].requirement_ids[{requirement_index}]"
+                        ),
                     )
                 covered_requirements.add(requirement_id)
 
-            self._unique(task.dependencies, f"Task {task.id} dependency")
+            self._unique(task.dependencies, f"tasks[{task_index}].dependencies")
             if task.id in task.dependencies:
                 raise InvalidProposalDependency(
-                    f"Task cannot depend on itself: {task.id}"
+                    "A Task cannot depend on itself",
+                    code=PlanningValidationCode.INVALID_DEPENDENCY,
+                    field_path=f"tasks[{task_index}].dependencies",
                 )
-            for dependency_id in task.dependencies:
+            for dependency_index, dependency_id in enumerate(task.dependencies):
                 if dependency_id not in proposed_task_ids:
                     raise InvalidProposalDependency(
-                        f"Task {task.id} has unknown dependency: {dependency_id}"
+                        "A Task dependency is absent from the proposal",
+                        code=PlanningValidationCode.INVALID_DEPENDENCY,
+                        field_path=(
+                            f"tasks[{task_index}].dependencies[{dependency_index}]"
+                        ),
                     )
             dependencies[task.id] = task.dependencies
 
@@ -111,16 +155,22 @@ class PlanProposalValidator:
         )
         if uncovered:
             raise InvalidPlanProposal(
-                "Plan Requirements without a Task: " + ", ".join(uncovered)
+                "Every Plan Requirement must be covered by at least one Task",
+                code=PlanningValidationCode.UNCOVERED_REQUIREMENT,
+                field_path="requirements",
             )
         self._reject_cycles(task_ids, dependencies)
 
     @staticmethod
-    def _unique(values: tuple[str, ...], context: str) -> None:
+    def _unique(values: tuple[str, ...], field_path: str) -> None:
         seen: set[str] = set()
-        for value in values:
+        for index, value in enumerate(values):
             if value in seen:
-                raise DuplicateProposalId(f"duplicate {context} ID/reference: {value}")
+                raise DuplicateProposalId(
+                    "Proposal identifiers and references must be unique",
+                    code=PlanningValidationCode.DUPLICATE_ID,
+                    field_path=f"{field_path}[{index}]",
+                )
             seen.add(value)
 
     @staticmethod
@@ -134,10 +184,12 @@ class PlanProposalValidator:
             *(item.id for item in state.tasks),
             *(item.id for item in state.change_requests),
         }
-        for proposed_id in proposed_ids:
+        for index, proposed_id in enumerate(proposed_ids):
             if proposed_id in existing_ids:
                 raise InvalidPlanProposal(
-                    f"proposal ID collides with existing state: {proposed_id}"
+                    "A proposed entity ID collides with persisted ProjectState",
+                    code=PlanningValidationCode.EXISTING_ID_COLLISION,
+                    field_path=f"proposal[{index}]",
                 )
 
     @staticmethod
@@ -147,10 +199,14 @@ class PlanProposalValidator:
         visiting: set[str] = set()
         visited: set[str] = set()
 
+        task_indexes = {task_id: index for index, task_id in enumerate(task_ids)}
+
         def visit(task_id: str) -> None:
             if task_id in visiting:
                 raise ProposalDependencyCycle(
-                    f"proposed Task dependency cycle includes: {task_id}"
+                    "The proposed Task dependency graph contains a cycle",
+                    code=PlanningValidationCode.DEPENDENCY_CYCLE,
+                    field_path=f"tasks[{task_indexes[task_id]}].dependencies",
                 )
             if task_id in visited:
                 return

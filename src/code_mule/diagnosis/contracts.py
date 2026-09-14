@@ -113,6 +113,8 @@ class ProjectDiagnosis:
     requested_revision_materialized: bool | None = None
     failure_category: str | None = None
     failure_code: str | None = None
+    failure_field_path: str | None = None
+    failure_summary: str | None = None
     change_summary: str | None = None
     final_review_outcome: str | None = None
     project_verification_status: str | None = None
@@ -135,6 +137,8 @@ class ProjectDiagnosis:
             "worker_input_question": (self.worker_input_question, 2_000),
             "failure_category": (self.failure_category, 64),
             "failure_code": (self.failure_code, 64),
+            "failure_field_path": (self.failure_field_path, 160),
+            "failure_summary": (self.failure_summary, 200),
             "final_review_outcome": (self.final_review_outcome, 64),
             "project_verification_status": (self.project_verification_status, 64),
             "completion_head_candidate": (self.completion_head_candidate, 128),

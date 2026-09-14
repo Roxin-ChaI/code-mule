@@ -12,10 +12,13 @@ from .errors import (
     InvalidProposalDependency,
     PlanMaterializationError,
     PlanningError,
+    PlanningValidationCode,
+    PlanningValidationError,
     ProjectPlanningStateError,
     ProposalDependencyCycle,
     SupervisorPlanningError,
     UnknownProposalReference,
+    planning_validation_metadata,
 )
 from .materialization import PlanMaterializer
 from .service import ProjectPlanningService
@@ -31,6 +34,8 @@ __all__ = [
     "PlanMaterializer",
     "PlanProposalValidator",
     "PlanningError",
+    "PlanningValidationCode",
+    "PlanningValidationError",
     "ProjectPlanningOutcome",
     "ProjectPlanningRequest",
     "ProjectPlanningService",
@@ -38,4 +43,5 @@ __all__ = [
     "ProposalDependencyCycle",
     "SupervisorPlanningError",
     "UnknownProposalReference",
+    "planning_validation_metadata",
 ]

@@ -6,6 +6,21 @@ become `DONE`. The manifest says what was delivered, where its entry point is, h
 it can be used, and—only when applicable—how a local process can be started,
 checked, and stopped.
 
+## Lifecycle ownership
+
+Initial planning records only a semantic delivery expectation through normal
+Requirements, Milestones, and Tasks. It may say that an existing service must be
+preserved, tested, and handed off as a local `SERVICE`, but it does not create a
+manifest ID, claim verified status, or create a runtime session. A minimal Plan is
+valid when the repository already contains the implementation and only deterministic
+verification and delivery metadata remain.
+
+Execution produces code, tests, and the untrusted manifest candidate. Final
+verification validates the actual entry point, structured argv, repository-relative
+paths, localhost access and health behavior, environment declarations, and Git
+completion evidence. Only then does Code Mule materialize the revision-scoped
+verified `DeliveryManifest`; runtime launch creates a separate `RuntimeSession`.
+
 ## Boss workflow
 
 ```bash

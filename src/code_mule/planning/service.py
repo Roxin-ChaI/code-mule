@@ -22,6 +22,7 @@ from code_mule.supervisor.contracts import PlanProposal, PlanRequest
 from code_mule.supervisor import (
     SupervisorFailureCategory,
     supervisor_failure_metadata,
+    supervisor_failure_is_retryable,
 )
 
 from .contracts import ProjectPlanningOutcome, ProjectPlanningRequest
@@ -31,6 +32,7 @@ from .errors import (
     ProjectPlanningStateError,
     SupervisorPlanningError,
     UnknownProposalReference,
+    planning_validation_metadata,
 )
 from .materialization import PlanMaterializer
 from .validation import PlanProposalValidator
@@ -98,10 +100,20 @@ class ProjectPlanningService:
                 raise ProjectPlanningStateError(
                     "planning was cancelled by the Boss"
                 ) from error
+            metadata = supervisor_failure_metadata(error)
+            metadata.update(
+                {
+                    "operation": "plan",
+                    "stage": "supervisor_call",
+                    "retryable": self._retryable(metadata),
+                    "plan_created": "false",
+                    "worker_started": "false",
+                }
+            )
             self._fail_planning(
                 planning,
                 event_type="planning.failed",
-                failure_metadata=supervisor_failure_metadata(error),
+                failure_metadata=metadata,
             )
             raise SupervisorPlanningError("Supervisor PLAN failed") from error
 
@@ -119,12 +131,15 @@ class ProjectPlanningService:
             self._fail_planning(
                 planning,
                 event_type="planning.proposal_rejected",
-                failure_metadata=supervisor_failure_metadata(
+                failure_metadata=planning_validation_metadata(
                     error,
-                    category=(
-                        SupervisorFailureCategory.INVALID_BUSINESS_REFERENCE
+                    stage="proposal_validation",
+                    failure_category=(
+                        SupervisorFailureCategory.INVALID_BUSINESS_REFERENCE.value
                         if isinstance(error, UnknownProposalReference)
-                        else SupervisorFailureCategory.DETERMINISTIC_VALIDATION_FAILURE
+                        else (
+                            SupervisorFailureCategory.DETERMINISTIC_VALIDATION_FAILURE.value
+                        )
                     ),
                 ),
             )
@@ -148,11 +163,9 @@ class ProjectPlanningService:
             self._fail_planning(
                 planning,
                 event_type="planning.failed",
-                failure_metadata=supervisor_failure_metadata(
+                failure_metadata=planning_validation_metadata(
                     error,
-                    category=(
-                        SupervisorFailureCategory.DETERMINISTIC_VALIDATION_FAILURE
-                    ),
+                    stage="materialization",
                 ),
             )
             raise
@@ -208,6 +221,15 @@ class ProjectPlanningService:
             project_status=final_state.project.status,
             ready_for_execution=True,
         )
+
+    @staticmethod
+    def _retryable(metadata: dict[str, str]) -> str:
+        raw = metadata.get("failure_category")
+        try:
+            category = SupervisorFailureCategory(raw)
+        except (TypeError, ValueError):
+            return "false"
+        return str(supervisor_failure_is_retryable(category)).lower()
 
     def _validate_initial_state(
         self, state: ProjectState, request: ProjectPlanningRequest
