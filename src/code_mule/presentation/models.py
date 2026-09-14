@@ -49,6 +49,8 @@ class HumanActionView:
     application: str | None = None
     approval_scopes: tuple[str, ...] = ()
     native_request_active: bool | None = None
+    approval_type: str | None = None
+    continuation: str | None = None
 
 
 def project_view(state: ProjectState) -> ProjectView:
@@ -120,8 +122,10 @@ def human_action_view(action: HumanAction) -> HumanActionView:
         raw_status=action.status.value,
         project_id=action.project_id,
         task_id=action.task_id,
-        approvable=action.category.value
-        in {"worker_approval", "external_side_effect"},
+        approvable=(
+            action.category.value in {"worker_approval", "external_side_effect"}
+            and not (capability is not None and not capability.native_request_active)
+        ),
         question=None if worker_input is None else worker_input.question,
         choices=() if worker_input is None else worker_input.choices,
         worker_request_method=(
@@ -143,6 +147,24 @@ def human_action_view(action: HumanAction) -> HumanActionView:
         ),
         native_request_active=(
             None if capability is None else capability.native_request_active
+        ),
+        approval_type=(
+            None
+            if action.category.value not in {"worker_approval", "external_side_effect"}
+            else "Product / report approval"
+            if capability is None
+            else "Native capability approval"
+            if capability.request_method == "mcpServer/elicitation/request"
+            else "Native sandbox approval"
+        ),
+        continuation=(
+            None
+            if action.category.value not in {"worker_approval", "external_side_effect"}
+            else "Fresh Worker continuation is not automatic"
+            if capability is None
+            else "Same session required; original request expired"
+            if not capability.native_request_active
+            else "Same live session required"
         ),
     )
 

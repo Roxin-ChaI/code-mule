@@ -325,6 +325,11 @@ class WorkerInputContinuationE2ETests(unittest.TestCase):
                 inspected = "\n".join(composition.inspect().output)
                 self.assertIn(action.requested_action, inspected)
                 self.assertIn(action.risk, inspected)
+                self.assertIn("Approval type Product / report approval", inspected)
+                self.assertIn(
+                    "Protocol event Worker structured report (not a native request)",
+                    inspected,
+                )
                 with self.assertRaises(InvalidCliProjectState):
                     composition.answer(action.id, "yes")
                 self.assertEqual(store.load(), gated)

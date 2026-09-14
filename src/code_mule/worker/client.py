@@ -25,7 +25,6 @@ from code_mule.progress import (
 from .contracts import (
     CapabilityApprovalDecision,
     CodexAppServerStartError,
-    CodexApprovalRequired,
     CodexCapabilityApprovalRequired,
     CodexProtocolError,
     CodexTurnFailed,
@@ -54,6 +53,7 @@ from .protocol import (
     is_capability_approval_request,
     notification_message,
     parse_capability_approval_request,
+    parse_native_approval_request,
     parse_worker_input_request,
     request_message,
     response_result,
@@ -652,9 +652,19 @@ class CodexAppServerClient:
 
         method = cast(str, message["method"])
         if method in APPROVAL_REQUEST_METHODS:
-            raise CodexApprovalRequired(
-                f"Codex app-server requested approval via {method}"
-            )
+            request = parse_native_approval_request(message)
+            if expected_thread_id is not None and request.thread_id != expected_thread_id:
+                raise CodexProtocolError(
+                    "native approval does not belong to the current thread"
+                )
+            if expected_turn_id is not None and request.turn_id != expected_turn_id:
+                raise CodexProtocolError(
+                    "native approval does not belong to the current turn"
+                )
+            # This server request can be answered only on its original live
+            # JSON-RPC connection.  The one-shot CLI persists the typed gate
+            # and closes the Worker; a later approve must therefore fail closed.
+            raise CodexCapabilityApprovalRequired(request)
         if is_capability_approval_request(message):
             request = parse_capability_approval_request(message)
             if expected_thread_id is not None and request.thread_id != expected_thread_id:

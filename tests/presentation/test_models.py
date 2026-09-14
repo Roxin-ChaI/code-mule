@@ -109,14 +109,18 @@ class PresentationModelTests(unittest.TestCase):
         self.assertIn("Capability  Computer Use", default)
         self.assertIn("Application Google Chrome", default)
         self.assertIn("Scope       once, session", default)
-        self.assertIn("code-mule approve action-capability", default)
-        self.assertIn("code-mule reject action-capability", default)
+        self.assertIn("Approval type Native capability approval", default)
+        self.assertIn("Native request Expired", default)
+        self.assertIn("Same session required", default)
+        self.assertNotIn("code-mule approve action-capability", default)
+        self.assertNotIn("code-mule reject action-capability", default)
         self.assertNotIn("code-mule answer", default)
         self.assertNotIn("thread-1", default)
 
         verbose = "\n".join(render_human_action(action, verbose=True))
         self.assertIn("worker_thread_id: thread-1", verbose)
         self.assertIn("native_request_active: false", verbose)
+        self.assertIn("worker_request_id: 88", verbose)
         self.assertNotIn("raw_payload", verbose)
 
     def test_final_verification_is_boss_readable_and_keeps_details_bounded(self):

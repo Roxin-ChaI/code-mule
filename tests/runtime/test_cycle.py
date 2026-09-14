@@ -348,6 +348,40 @@ class TaskCycleGitDeliveryTests(unittest.TestCase):
         self.assertEqual(delivery.commit_calls, [])
         self.assertEqual(session.closed, 1)
 
+    def test_native_sandbox_request_persists_connection_bound_identity(self):
+        request = WorkerCapabilityApprovalRequest(
+            method="item/commandExecution/requestApproval",
+            protocol_request_id="sandbox-1",
+            thread_id="thread-1",
+            turn_id="turn-1",
+            server_name="codex-app-server",
+            request="Approve the exact native Codex operation",
+            capability="Sandbox escalation",
+            application="Local runtime verification",
+            capability_id="workspace-write",
+            tool_name="python3 server.py",
+            available_scopes=(CapabilityApprovalScope.ONCE,),
+        )
+        session = FakeWorkerSession([CodexCapabilityApprovalRequired(request)])
+        service, cycle_request, store, _, supervisor, _ = build_cycle(
+            session=session,
+            supervisor=FakeSupervisor([]),
+            git_delivery=FakeGitDelivery(),
+        )
+
+        outcome = service.execute(cycle_request)
+
+        self.assertTrue(outcome.human_action_required)
+        action = store.current.human_actions[-1]
+        details = action.capability_approval
+        self.assertEqual(details.request_method, request.method)
+        self.assertEqual(details.request_id, "sandbox-1")
+        self.assertEqual((details.thread_id, details.turn_id), ("thread-1", "turn-1"))
+        self.assertEqual(details.tool_name, "python3 server.py")
+        self.assertFalse(details.native_request_active)
+        self.assertIsNone(action.worker_input)
+        self.assertEqual(supervisor.requests, [])
+
     def test_repeated_structured_permission_fails_closed_without_unbounded_actions(self):
         delivery = FakeGitDelivery()
         store = FakeStore(cycle_state())

@@ -480,11 +480,17 @@ class ProjectDiagnosisService:
                 ),
             )
             if action.capability_approval is not None:
+                native_kind = (
+                    "native capability"
+                    if action.capability_approval.request_method
+                    == "mcpServer/elicitation/request"
+                    else "native sandbox"
+                )
                 if action.category is HumanActionCategory.RECOVERY_UNCERTAIN:
                     return _Classification(
                         DiagnosisBlockerCategory.RECOVERY_UNCERTAIN,
                         DiagnosisStage.WORKER_APPROVAL,
-                        "A native capability approval repeated after its original session closed.",
+                        f"A {native_kind} approval repeated after its original session closed.",
                         DiagnosisRecoverability.UNCERTAIN,
                         True,
                         DiagnosisNextAction.INSPECT,
@@ -492,8 +498,20 @@ class ProjectDiagnosisService:
                 return _Classification(
                     DiagnosisBlockerCategory.WORKER_APPROVAL,
                     DiagnosisStage.WORKER_APPROVAL,
-                    "A native capability request cannot be answered after its original app-server connection closed.",
+                    f"A {native_kind} request cannot be answered after its original app-server connection closed.",
                     DiagnosisRecoverability.UNCERTAIN,
+                    True,
+                    DiagnosisNextAction.INSPECT,
+                )
+            if (
+                action.category is HumanActionCategory.WORKER_APPROVAL
+                and action.capability_approval is None
+            ):
+                return _Classification(
+                    DiagnosisBlockerCategory.WORKER_APPROVAL,
+                    DiagnosisStage.WORKER_APPROVAL,
+                    "A product/report approval was requested; it is not a live Codex sandbox grant.",
+                    DiagnosisRecoverability.RECOVERABLE,
                     True,
                     DiagnosisNextAction.INSPECT,
                 )

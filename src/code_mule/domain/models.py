@@ -360,7 +360,13 @@ class WorkerInputDetails:
 
 @dataclass
 class WorkerCapabilityApprovalDetails:
-    """Safe persisted projection of one native Codex capability request."""
+    """Safe persisted projection of one native Codex approval request.
+
+    ``request_method`` distinguishes sandbox/tool requests from MCP capability
+    requests.  For native sandbox requests, ``tool_name`` is the bounded command
+    identity, ``application`` is the structured purpose when supplied, and
+    ``capability_id`` is the structured target/policy when supplied.
+    """
 
     request_method: str
     request_id: str

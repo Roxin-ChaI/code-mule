@@ -142,6 +142,14 @@ class ProjectDiagnosisServiceTests(unittest.TestCase):
         self.assertIs(loop.blocker_stage, DiagnosisStage.WORKER_APPROVAL)
         self.assertIn("repeated", loop.blocker_summary)
 
+    def test_report_approval_is_not_diagnosed_as_native_sandbox_grant(self):
+        diagnosis = self.service.diagnose(
+            self.human_state(HumanActionCategory.WORKER_APPROVAL)
+        )
+        self.assertIs(diagnosis.blocker_stage, DiagnosisStage.WORKER_APPROVAL)
+        self.assertIn("product/report approval", diagnosis.blocker_summary)
+        self.assertNotIn("native", diagnosis.blocker_summary)
+
     def test_planning_supervisor_failure_has_planning_stage_and_next_action(self):
         base = make_project_state()
         planning = replace(

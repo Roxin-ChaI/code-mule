@@ -385,15 +385,35 @@ def render_human_action(
         )
     if view.capability is not None:
         lines += (
+            f"Approval type {view.approval_type}",
             f"Capability  {view.capability}",
-            f"Application {view.application or 'Not provided by protocol'}",
-            "Scope       " + ", ".join(view.approval_scopes),
-            "Session     "
-            + (
-                "Original request is active"
-                if view.native_request_active
-                else "Original request is closed; fresh-session approval is unsafe"
+            f"{'Purpose' if view.approval_type == 'Native sandbox approval' else 'Application'} "
+            f"{view.application or 'Not provided by protocol'}",
+            *(
+                (f"Command     {action.capability_approval.tool_name or 'Not provided by protocol'}",)
+                if view.approval_type == "Native sandbox approval"
+                else ()
             ),
+            *(
+                (f"Target      {action.capability_approval.capability_id or 'Not provided by protocol'}",)
+                if view.approval_type == "Native sandbox approval"
+                else ()
+            ),
+            "Scope       " + ", ".join(view.approval_scopes),
+            "Native request "
+            + (
+                "Active"
+                if view.native_request_active
+                else "Expired"
+            ),
+            f"Continuation {view.continuation}",
+        )
+    elif view.approval_type is not None:
+        lines += (
+            f"Approval type {view.approval_type}",
+            "Protocol event Worker structured report (not a native request)",
+            "Native request Not applicable",
+            f"Continuation {view.continuation}",
         )
     if view.question is not None:
         lines += (f"Question    {view.question}",)
@@ -451,6 +471,12 @@ def render_human_action(
             "",
             "Reject:",
             f"  code-mule reject {view.action_id}",
+        )
+    elif action.capability_approval is not None:
+        lines += (
+            "",
+            "The original native request has expired. A later approve command cannot",
+            "deliver a response to it or start a fresh Worker safely.",
         )
     elif action.category is HumanActionCategory.WORKER_VERIFICATION:
         lines += (
@@ -520,7 +546,7 @@ def render_human_action(
             lines += (
                 f"worker_thread_id: {details.thread_id}",
                 f"worker_turn_id: {details.turn_id}",
-                f"mcp_server: {details.server_name}",
+                f"approval_server: {details.server_name}",
                 "approval_scopes: "
                 + ",".join(scope.value for scope in details.approval_scopes),
                 "native_request_active: "

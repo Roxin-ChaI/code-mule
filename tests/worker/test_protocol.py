@@ -16,7 +16,6 @@ from code_mule.worker.client import CodexAppServerClient
 from code_mule.worker.contracts import (
     CapabilityApprovalAction,
     CapabilityApprovalDecision,
-    CodexApprovalRequired,
     CodexCapabilityApprovalRequired,
     CodexProtocolError,
     CodexTurnFailed,
@@ -32,6 +31,7 @@ from code_mule.worker.protocol import (
     classify_message,
     notification_message,
     parse_capability_approval_request,
+    parse_native_approval_request,
     parse_worker_input_request,
     request_message,
     response_result,
@@ -862,8 +862,16 @@ class CodexAppServerClientTests(unittest.TestCase):
 
     def test_approval_and_user_input_requests_are_not_answered(self):
         cases = (
-            ("item/commandExecution/requestApproval", CodexApprovalRequired, {}),
-            ("item/fileChange/requestApproval", CodexApprovalRequired, {}),
+            (
+                "item/commandExecution/requestApproval",
+                CodexCapabilityApprovalRequired,
+                {"command": ["python3", "server.py"], "reason": "Local verification"},
+            ),
+            (
+                "item/fileChange/requestApproval",
+                CodexCapabilityApprovalRequired,
+                {},
+            ),
             (
                 "item/tool/requestUserInput",
                 CodexUserInputRequired,
@@ -885,7 +893,11 @@ class CodexAppServerClientTests(unittest.TestCase):
                     {
                         "id": 88,
                         "method": method,
-                        "params": {"threadId": thread_id, **params},
+                        "params": {
+                            "threadId": thread_id,
+                            "turnId": turn_id,
+                            **params,
+                        },
                     }
                 )
                 with self.assertRaises(expected_error) as raised:
@@ -893,6 +905,14 @@ class CodexAppServerClientTests(unittest.TestCase):
                 if isinstance(raised.exception, CodexUserInputRequired):
                     self.assertEqual(raised.exception.request.method, method)
                     self.assertEqual(raised.exception.request.request_id, "88")
+                if isinstance(raised.exception, CodexCapabilityApprovalRequired):
+                    self.assertEqual(raised.exception.request.thread_id, thread_id)
+                    self.assertEqual(raised.exception.request.turn_id, turn_id)
+                    self.assertEqual(raised.exception.request.request_id, "88")
+                    self.assertEqual(
+                        raised.exception.request.available_scopes,
+                        (CapabilityApprovalScope.ONCE,),
+                    )
                 client.close()
 
     def test_capability_request_without_live_handler_is_typed_approval(self):
@@ -921,6 +941,43 @@ class CodexAppServerClientTests(unittest.TestCase):
             client.wait_for_turn(thread_id, turn_id)
         self.assertEqual(raised.exception.request.request_id, "approval-1")
         client.close()
+
+    def test_native_sandbox_approval_is_typed_without_raw_payload(self):
+        request = parse_native_approval_request(
+            {
+                "id": "sandbox-7",
+                "method": "item/commandExecution/requestApproval",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "command": ["python3", "server.py"],
+                    "reason": "Local runtime verification",
+                    "cwd": "/tmp/target",
+                    "raw": "API_KEY=must-not-survive",
+                },
+            }
+        )
+        self.assertEqual(request.request_id, "sandbox-7")
+        self.assertEqual(request.capability, "Sandbox escalation")
+        self.assertEqual(request.tool_name, "python3 server.py")
+        self.assertEqual(request.application, "Local runtime verification")
+        self.assertEqual(request.capability_id, "/tmp/target")
+        self.assertNotIn("must-not-survive", repr(request))
+
+        redacted = parse_native_approval_request(
+            {
+                "id": "sandbox-8",
+                "method": "item/commandExecution/requestApproval",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "command": "python3 server.py --token=must-not-survive",
+                    "reason": "authorization=must-not-survive",
+                },
+            }
+        )
+        self.assertNotIn("must-not-survive", repr(redacted))
+        self.assertIn("[REDACTED]", repr(redacted))
 
     def test_live_capability_accept_and_reject_use_same_native_request(self):
         for action in (

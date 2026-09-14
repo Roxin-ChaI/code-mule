@@ -1,6 +1,7 @@
 """Pure helpers for the Codex app-server JSONL protocol."""
 
 from enum import StrEnum
+import re
 from typing import cast
 
 from code_mule.domain.enums import CapabilityApprovalScope
@@ -29,6 +30,9 @@ APPROVAL_REQUEST_METHODS = frozenset(
         "applyPatchApproval",
         "execCommandApproval",
     }
+)
+_SENSITIVE_APPROVAL_VALUE = re.compile(
+    r"(?i)(?:(?:api[_ -]?key|token|password|authorization|credential)\s*[:=]\s*|bearer\s+|sk-)[^\s,;]+"
 )
 USER_INPUT_REQUEST_METHODS = frozenset(
     {"item/tool/requestUserInput", "mcpServer/elicitation/request"}
@@ -214,6 +218,88 @@ def parse_capability_approval_request(
         raise CodexProtocolError("capability approval exceeds safe bounds") from error
 
 
+def parse_native_approval_request(
+    message: object,
+) -> WorkerCapabilityApprovalRequest:
+    """Project a native Codex sandbox/tool approval into bounded typed fields.
+
+    These JSON-RPC server requests are connection-bound.  Code Mule retains
+    only the request identity and a small structured operation fingerprint; it
+    never persists the raw request payload or free-form command output.
+    """
+
+    if classify_message(message) is not MessageKind.SERVER_REQUEST:
+        raise CodexProtocolError("expected an app-server server request")
+    payload = cast(dict[str, object], message)
+    method = cast(str, payload.get("method"))
+    if method not in APPROVAL_REQUEST_METHODS:
+        raise CodexProtocolError("server request is not a native approval method")
+    protocol_request_id = payload.get("id")
+    _safe_request_id(protocol_request_id)
+    params = payload.get("params")
+    if not isinstance(params, dict) or not all(isinstance(key, str) for key in params):
+        raise CodexProtocolError(f"{method} params must be an object")
+    typed_params = cast(dict[str, object], params)
+    thread_id = _bounded_field(typed_params, "threadId", 128, required=True)
+    turn_id = _bounded_field(typed_params, "turnId", 128, required=True)
+
+    command = _safe_command_identity(typed_params.get("command"))
+    purpose = _optional_safe_text(typed_params.get("reason"), 200)
+    target = _optional_safe_text(
+        typed_params.get("cwd", typed_params.get("sandboxPolicy")), 200
+    )
+    sandbox = method in {
+        "item/commandExecution/requestApproval",
+        "item/permissions/requestApproval",
+        "execCommandApproval",
+    }
+    capability = "Sandbox escalation" if sandbox else "File change approval"
+    try:
+        return WorkerCapabilityApprovalRequest(
+            method=method,
+            protocol_request_id=cast(int | str, protocol_request_id),
+            thread_id=cast(str, thread_id),
+            turn_id=cast(str, turn_id),
+            server_name="codex-app-server",
+            request="Approve the exact native Codex operation",
+            capability=capability,
+            application=purpose,
+            capability_id=target,
+            tool_name=command,
+            available_scopes=(CapabilityApprovalScope.ONCE,),
+        )
+    except ValueError as error:
+        raise CodexProtocolError("native approval exceeds safe bounds") from error
+
+
+def _optional_safe_text(value: object, limit: int) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or value == "" or len(value) > limit:
+        raise CodexProtocolError("native approval field exceeds safe bounds")
+    return _sanitize_approval_text(value)
+
+
+def _safe_command_identity(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        command = value
+    elif isinstance(value, list) and value and all(
+        isinstance(item, str) and item for item in value
+    ):
+        command = " ".join(cast(list[str], value))
+    else:
+        raise CodexProtocolError("native approval command identity is invalid")
+    if len(command) > 200:
+        raise CodexProtocolError("native approval command identity exceeds safe bounds")
+    return _sanitize_approval_text(command)
+
+
+def _sanitize_approval_text(value: str) -> str:
+    return _SENSITIVE_APPROVAL_VALUE.sub("[REDACTED]", _sanitize_text(value))
+
+
 def _approval_meta(params: dict[str, object]) -> dict[str, object] | None:
     value = params.get("_meta")
     if value is None:
@@ -357,6 +443,7 @@ __all__ = [
     "is_capability_approval_request",
     "notification_message",
     "parse_capability_approval_request",
+    "parse_native_approval_request",
     "parse_worker_input_request",
     "request_message",
     "response_result",
