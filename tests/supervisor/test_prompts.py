@@ -108,6 +108,15 @@ class SupervisorPromptTests(unittest.TestCase):
             PlanRequest(state, "Implement Phase 4")
         )
 
+        self.assertIn(
+            "existing repository implementation may be preserved", user_prompt
+        )
+        self.assertIn("one-Milestone, one-Task Plan is valid", user_prompt)
+        self.assertIn("Do not emit a DeliveryManifest", user_prompt)
+        self.assertIn(
+            "Code Mule materializes a verified DeliveryManifest", user_prompt
+        )
+
         self.assertIn("You are the Supervisor for Code Mule.", system_prompt)
         self.assertIn("Current operation: plan.", system_prompt)
         self.assertIn('id="project-1"', user_prompt)

@@ -150,6 +150,20 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaises(InvalidSupervisorResponse):
             parse_plan_response(payload)
 
+        for forbidden in (
+            "delivery_manifest",
+            "manifest_id",
+            "verified",
+            "verified_at",
+            "runtime_session_id",
+            "launch_command",
+        ):
+            payload = plan_payload()
+            payload[forbidden] = "model-owned claim"
+            with self.subTest(forbidden=forbidden):
+                with self.assertRaises(InvalidSupervisorResponse):
+                    parse_plan_response(payload)
+
     def test_every_plan_object_schema_rejects_additional_properties(self):
         def assert_strict_objects(node):
             if isinstance(node, dict):

@@ -4,14 +4,17 @@ import unittest
 
 from code_mule.domain.enums import PlanStatus, ProjectStatus
 from code_mule.domain.models import Plan
+from code_mule.diagnosis import ProjectDiagnosisService
 from code_mule.planning import (
     InvalidPlanProposal,
+    PlanningValidationCode,
     ProjectPlanningRequest,
     ProjectPlanningService,
     ProjectPlanningStateError,
     SupervisorPlanningError,
 )
 from code_mule.progress import ProgressEventType, RecordingProgressSink
+from code_mule.presentation import render_human_action
 from code_mule.recovery import ExecutionPhase, ExecutionStopReason
 from code_mule.supervisor import (
     SupervisorCallFailure,
@@ -235,6 +238,59 @@ class ProjectPlanningServiceTests(unittest.TestCase):
             store.state.events[-1].event_type, "planning.proposal_rejected"
         )
         self.assertEqual(store.state.plans, ())
+
+    def test_invalid_proposal_persists_safe_typed_diagnostics(self):
+        secret = "sk-not-persisted"
+        proposal = replace(
+            valid_proposal(),
+            tasks=(
+                replace(
+                    valid_proposal().tasks[0],
+                    requirement_ids=(secret,),
+                ),
+                valid_proposal().tasks[1],
+            ),
+        )
+        store = FakeStore(empty_state())
+
+        with self.assertRaises(InvalidPlanProposal):
+            make_service(store, FakeSupervisor(proposal=proposal)).plan(
+                ProjectPlanningRequest("project-1", "Verify existing service")
+            )
+
+        event = store.state.events[-1]
+        self.assertEqual(
+            event.metadata["validation_code"],
+            PlanningValidationCode.UNKNOWN_REQUIREMENT_REFERENCE.value,
+        )
+        self.assertEqual(
+            event.metadata["field_path"], "tasks[0].requirement_ids[0]"
+        )
+        self.assertEqual(event.metadata["stage"], "proposal_validation")
+        self.assertEqual(event.metadata["retryable"], "false")
+        self.assertEqual(event.metadata["plan_created"], "false")
+        self.assertEqual(event.metadata["worker_started"], "false")
+        self.assertNotIn(secret, str(event.metadata))
+        self.assertNotIn(secret, str(store.state.human_actions))
+
+        diagnosis = ProjectDiagnosisService().diagnose(store.state)
+        self.assertEqual(
+            diagnosis.failure_code,
+            PlanningValidationCode.UNKNOWN_REQUIREMENT_REFERENCE.value,
+        )
+        self.assertEqual(
+            diagnosis.failure_field_path, "tasks[0].requirement_ids[0]"
+        )
+        self.assertIn("Requirement", diagnosis.blocker_summary)
+
+        rendered = "\n".join(
+            render_human_action(
+                store.state.human_actions[-1], state=store.state, verbose=True
+            )
+        )
+        self.assertIn("Validation   Unknown requirement reference", rendered)
+        self.assertIn("Field        tasks[0].requirement_ids[0]", rendered)
+        self.assertNotIn(secret, rendered)
 
     def test_start_save_failure_prevents_supervisor_call(self):
         store = FakeStore(empty_state(), fail_on_save=1)

@@ -20,6 +20,7 @@ from code_mule.planning import (
     InvalidPlanProposal,
     InvalidProposalDependency,
     PlanProposalValidator,
+    PlanningValidationCode,
     ProposalDependencyCycle,
     UnknownProposalReference,
 )
@@ -169,8 +170,16 @@ class PlanProposalValidatorTests(unittest.TestCase):
                 "No existing requirements are recorded in the project snapshot.",
             ),
         )
-        with self.assertRaises(UnknownProposalReference):
+        with self.assertRaises(UnknownProposalReference) as caught:
             self.validator.validate(self.state, explanatory)
+        self.assertIs(
+            caught.exception.validation_code,
+            PlanningValidationCode.UNKNOWN_REQUIREMENT_REFERENCE,
+        )
+        self.assertEqual(
+            caught.exception.field_path, "requirements_considered[0]"
+        )
+        self.assertFalse(caught.exception.retryable)
 
     def test_existing_requirement_accepts_only_its_id_not_title(self):
         requirement = existing_requirement()
@@ -315,6 +324,82 @@ class PlanProposalValidatorTests(unittest.TestCase):
             with self.subTest(error=error):
                 with self.assertRaises(error):
                     self.validator.validate(self.state, invalid)
+
+    def test_expected_validation_paths_are_typed_and_bounded(self):
+        proposal = valid_proposal()
+        cases = (
+            (
+                replace(proposal, requirements=()),
+                PlanningValidationCode.EMPTY_REQUIREMENTS,
+                "requirements",
+            ),
+            (
+                replace(
+                    proposal,
+                    milestones=(MilestoneProposal("M1", "Empty", ()),),
+                ),
+                PlanningValidationCode.EMPTY_MILESTONE,
+                "milestones[0].task_ids",
+            ),
+            (
+                replace(
+                    proposal,
+                    tasks=(
+                        proposal.tasks[0],
+                        replace(proposal.tasks[1], dependencies=("UNKNOWN",)),
+                    ),
+                ),
+                PlanningValidationCode.INVALID_DEPENDENCY,
+                "tasks[1].dependencies[0]",
+            ),
+        )
+        for invalid, code, path in cases:
+            with self.subTest(code=code):
+                with self.assertRaises(InvalidPlanProposal) as caught:
+                    self.validator.validate(self.state, invalid)
+                self.assertIs(caught.exception.validation_code, code)
+                self.assertEqual(caught.exception.field_path, path)
+                self.assertLessEqual(len(caught.exception.safe_summary), 200)
+
+    def test_minimal_existing_code_verification_plan_is_valid(self):
+        proposal = PlanProposal(
+            summary="Verify existing service and produce runtime handoff metadata",
+            requirements=(
+                RequirementProposal(
+                    "REQ-RUNTIME",
+                    "Verified local service",
+                    "Preserve and verify the existing standard-library server.",
+                    "high",
+                    ("The service and local health endpoint are verified",),
+                ),
+            ),
+            requirements_considered=(),
+            milestones=(
+                MilestoneProposal("M-RUNTIME", "Runtime handoff", ("T-VERIFY",)),
+            ),
+            tasks=(
+                TaskProposal(
+                    "T-VERIFY",
+                    "Verify existing service",
+                    (
+                        "Add deterministic tests and actual delivery metadata "
+                        "without rewriting server.py."
+                    ),
+                    (),
+                    (
+                        "Tests pass and code-mule-delivery.json describes "
+                        "verified evidence",
+                    ),
+                    ("REQ-RUNTIME",),
+                ),
+            ),
+            risks=(),
+            rationale=(
+                "The implementation already exists, so one verification Task "
+                "is sufficient."
+            ),
+        )
+        self.validator.validate(self.state, proposal)
 
 
 if __name__ == "__main__":

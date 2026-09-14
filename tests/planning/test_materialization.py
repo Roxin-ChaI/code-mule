@@ -7,6 +7,7 @@ from code_mule.planning import (
     PlanMaterializationError,
     PlanMaterializer,
     PlanProposalValidator,
+    PlanningValidationCode,
 )
 
 from planning.test_validation import NOW, empty_state, valid_proposal
@@ -75,6 +76,20 @@ class PlanMaterializerTests(unittest.TestCase):
                         plan_id=plan_id,
                         operation_time=NOW,
                     )
+
+    def test_materialization_failures_have_typed_code_and_field(self):
+        with self.assertRaises(PlanMaterializationError) as caught:
+            self.materializer.materialize(
+                self.state,
+                valid_proposal(),
+                plan_id="T1",
+                operation_time=NOW,
+            )
+        self.assertIs(
+            caught.exception.validation_code,
+            PlanningValidationCode.PLAN_ID_COLLISION,
+        )
+        self.assertEqual(caught.exception.field_path, "plan_id")
 
 
 if __name__ == "__main__":
