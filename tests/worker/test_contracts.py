@@ -119,6 +119,8 @@ class WorkerContractTests(unittest.TestCase):
             worker_failure_metadata(error),
             {
                 "error_type": "CodexTurnHardTimeout",
+                "transport_failure_kind": "hard_timeout",
+                "failure_class": "timeout",
                 "timeout_kind": "hard",
                 "inactivity_timeout_seconds": "120",
                 "max_turn_seconds": "900",

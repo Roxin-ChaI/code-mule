@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import datetime
 
 from code_mule.state.models import ProjectState
+from code_mule.transport import TransportDiagnostics
 
 from .contracts import (
     BoundaryRecoverability,
@@ -73,6 +74,7 @@ def start_attempt(
     attempt: int,
     recorded_at: datetime,
     baseline_head: str | None = None,
+    transport: TransportDiagnostics | None = None,
 ) -> ProjectState:
     if any(item.task_id == task_id and item.attempt == attempt for item in state.execution_attempts):
         raise ValueError("execution attempt already exists")
@@ -82,6 +84,7 @@ def start_attempt(
         ExecutionAttemptStatus.PREPARED,
         recorded_at,
         baseline_head=baseline_head,
+        transport=transport,
     )
     return replace(state, execution_attempts=state.execution_attempts + (item,))
 
@@ -98,6 +101,7 @@ def update_attempt(
     terminal_at: datetime | None = None,
     failure_kind: str | None = None,
     partial_paths_exist: bool | None = None,
+    transport: TransportDiagnostics | None = None,
 ) -> ProjectState:
     matches = tuple(
         item
@@ -122,6 +126,7 @@ def update_attempt(
             if partial_paths_exist is None
             else partial_paths_exist
         ),
+        transport=current.transport if transport is None else transport,
     )
     return replace(
         state,

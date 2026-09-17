@@ -479,7 +479,7 @@ class ReplanningFailureEvidenceTests(PostCompletionFailureFixture):
             RecoveryMode.FRESH_REPLANNING,
         )
         restored = deserialize_project_state(serialize_project_state(resolved))
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 15)
+        self.assertEqual(CURRENT_SCHEMA_VERSION, 16)
         self.assertEqual(restored, resolved)
 
     def test_recover_reuses_request_and_materializes_only_one_v2(self):

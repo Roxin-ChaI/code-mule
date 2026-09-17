@@ -78,9 +78,19 @@ from code_mule.runtime_handoff.contracts import (
 
 from .models import ProjectState
 from code_mule.domain.worker_verification import WorkerCheckStatus, WorkerCheckType, WorkerVerificationCheck
+from code_mule.transport import (
+    ChannelState,
+    TransportDiagnostics,
+    TransportDirection,
+    TransportEventRecord,
+    TransportFailureKind,
+    WorkerFailureClass,
+    failure_class_for,
+    legacy_transport_diagnostics,
+)
 
 
-CURRENT_SCHEMA_VERSION = 15
+CURRENT_SCHEMA_VERSION = 16
 
 
 class UnsupportedStateSchema(ValueError):
@@ -562,6 +572,72 @@ def _execution_attempt_to_payload(attempt: ExecutionAttempt) -> dict[str, object
         ),
         "failure_kind": attempt.failure_kind,
         "partial_paths_exist": attempt.partial_paths_exist,
+        "transport": (
+            None
+            if attempt.transport is None
+            else _transport_diagnostics_to_payload(attempt.transport)
+        ),
+    }
+
+
+def _transport_event_to_payload(event: TransportEventRecord) -> dict[str, object]:
+    return {
+        "at": event.at.isoformat(),
+        "event_type": event.event_type,
+        "direction": event.direction.value,
+        "correlation_id": event.correlation_id,
+        "payload_category": event.payload_category,
+    }
+
+
+def _transport_diagnostics_to_payload(
+    diagnostics: TransportDiagnostics,
+) -> dict[str, object]:
+    return {
+        "stdout_state": diagnostics.stdout_state.value,
+        "stderr_state": diagnostics.stderr_state.value,
+        "stdin_state": diagnostics.stdin_state.value,
+        "terminal_event_received": diagnostics.terminal_event_received,
+        "activity_count": diagnostics.activity_count,
+        "app_server_pid": diagnostics.app_server_pid,
+        "app_server_started_at": (
+            None
+            if diagnostics.app_server_started_at is None
+            else diagnostics.app_server_started_at.isoformat()
+        ),
+        "app_server_command": diagnostics.app_server_command,
+        "app_server_exit_code": diagnostics.app_server_exit_code,
+        "app_server_exit_signal": diagnostics.app_server_exit_signal,
+        "transport_failure_kind": (
+            None
+            if diagnostics.transport_failure_kind is None
+            else diagnostics.transport_failure_kind.value
+        ),
+        "failure_class": (
+            None if diagnostics.failure_class is None else diagnostics.failure_class.value
+        ),
+        "last_protocol_event_type": diagnostics.last_protocol_event_type,
+        "last_protocol_event_at": (
+            None
+            if diagnostics.last_protocol_event_at is None
+            else diagnostics.last_protocol_event_at.isoformat()
+        ),
+        "terminal_event_type": diagnostics.terminal_event_type,
+        "thread_id": diagnostics.thread_id,
+        "turn_id": diagnostics.turn_id,
+        "request_id": diagnostics.request_id,
+        "last_activity_at": (
+            None
+            if diagnostics.last_activity_at is None
+            else diagnostics.last_activity_at.isoformat()
+        ),
+        "reader_failure_kind": diagnostics.reader_failure_kind,
+        "process_alive_at_failure": diagnostics.process_alive_at_failure,
+        "cleanup_reason": diagnostics.cleanup_reason,
+        "events": [_transport_event_to_payload(item) for item in diagnostics.events],
+        "legacy_transport_evidence_incomplete": (
+            diagnostics.legacy_transport_evidence_incomplete
+        ),
     }
 
 
@@ -1236,6 +1312,33 @@ def _migrate_v14_to_v15(root: dict[str, object]) -> dict[str, object]:
     migrated["delivery_manifest_required"] = False
     migrated["delivery_manifests"] = []
     migrated["runtime_sessions"] = []
+    return migrated
+
+
+def _migrate_v15_to_v16(root: dict[str, object]) -> dict[str, object]:
+    """Add bounded Codex Worker transport diagnostics.
+
+    Earlier schema versions never captured transport facts, so a migrated
+    attempt that may have dispatched a Worker is marked
+    ``legacy_transport_evidence_incomplete`` rather than given a fabricated
+    stop cause, process status, or terminal result.  An attempt that never
+    dispatched keeps ``None``.
+    """
+
+    attempts: list[dict[str, object]] = []
+    for item in _expect_list(
+        _field(root, "execution_attempts", "project state"), "execution_attempts"
+    ):
+        attempt = dict(_expect_object(item, "execution_attempt"))
+        attempt["transport"] = (
+            None
+            if attempt.get("status") == ExecutionAttemptStatus.PREPARED.value
+            else _transport_diagnostics_to_payload(legacy_transport_diagnostics())
+        )
+        attempts.append(attempt)
+    migrated = dict(root)
+    migrated["schema_version"] = 16
+    migrated["execution_attempts"] = attempts
     return migrated
 
 
@@ -2112,6 +2215,184 @@ def _execution_attempt_from_payload(value: object) -> ExecutionAttempt:
         terminal_at=None if terminal is None else _datetime(terminal, "execution_attempt.terminal_at"),
         failure_kind=_expect_optional_str(_field(payload, "failure_kind", "execution_attempt"), "execution_attempt.failure_kind"),
         partial_paths_exist=_expect_bool(_field(payload, "partial_paths_exist", "execution_attempt"), "execution_attempt.partial_paths_exist"),
+        transport=_optional_transport_diagnostics(payload),
+    )
+
+
+def _optional_transport_diagnostics(
+    payload: dict[str, object],
+) -> TransportDiagnostics | None:
+    value = _field(payload, "transport", "execution_attempt")
+    if value is None:
+        return None
+    return _transport_diagnostics_from_payload(value)
+
+
+def _optional_bool(value: object, context: str) -> bool | None:
+    if value is None:
+        return None
+    return _expect_bool(value, context)
+
+
+def _transport_event_from_payload(value: object) -> TransportEventRecord:
+    payload = _expect_object(value, "transport_event")
+    return TransportEventRecord(
+        at=_datetime(_field(payload, "at", "transport_event"), "transport_event.at"),
+        event_type=_expect_str(
+            _field(payload, "event_type", "transport_event"), "transport_event.event_type"
+        ),
+        direction=TransportDirection(
+            _expect_str(
+                _field(payload, "direction", "transport_event"),
+                "transport_event.direction",
+            )
+        ),
+        correlation_id=_expect_optional_str(
+            _field(payload, "correlation_id", "transport_event"),
+            "transport_event.correlation_id",
+        ),
+        payload_category=_expect_optional_str(
+            _field(payload, "payload_category", "transport_event"),
+            "transport_event.payload_category",
+        ),
+    )
+
+
+def _transport_diagnostics_from_payload(value: object) -> TransportDiagnostics:
+    payload = _expect_object(value, "transport_diagnostics")
+    legacy = _expect_bool(
+        _field(payload, "legacy_transport_evidence_incomplete", "transport_diagnostics"),
+        "transport_diagnostics.legacy_transport_evidence_incomplete",
+    )
+    started_at = _field(payload, "app_server_started_at", "transport_diagnostics")
+    last_event_at = _field(payload, "last_protocol_event_at", "transport_diagnostics")
+    last_activity_at = _field(payload, "last_activity_at", "transport_diagnostics")
+    raw_kind = _expect_optional_str(
+        _field(payload, "transport_failure_kind", "transport_diagnostics"),
+        "transport_diagnostics.transport_failure_kind",
+    )
+    try:
+        kind: TransportFailureKind | None = (
+            None if raw_kind is None else TransportFailureKind(raw_kind)
+        )
+    except ValueError:
+        # Never let one unknown provider-side kind make a project unreadable.
+        kind = TransportFailureKind.UNCLASSIFIED_PROTOCOL_FAILURE
+    expected_class = failure_class_for(kind)
+    raw_class = _expect_optional_str(
+        _field(payload, "failure_class", "transport_diagnostics"),
+        "transport_diagnostics.failure_class",
+    )
+    try:
+        failure_class = (
+            None if raw_class is None else WorkerFailureClass(raw_class)
+        )
+    except ValueError:
+        failure_class = expected_class
+    if failure_class is not expected_class:
+        failure_class = expected_class
+    return TransportDiagnostics(
+        stdout_state=ChannelState(
+            _expect_str(
+                _field(payload, "stdout_state", "transport_diagnostics"),
+                "transport_diagnostics.stdout_state",
+            )
+        ),
+        stderr_state=ChannelState(
+            _expect_str(
+                _field(payload, "stderr_state", "transport_diagnostics"),
+                "transport_diagnostics.stderr_state",
+            )
+        ),
+        stdin_state=ChannelState(
+            _expect_str(
+                _field(payload, "stdin_state", "transport_diagnostics"),
+                "transport_diagnostics.stdin_state",
+            )
+        ),
+        terminal_event_received=_expect_bool(
+            _field(payload, "terminal_event_received", "transport_diagnostics"),
+            "transport_diagnostics.terminal_event_received",
+        ),
+        activity_count=_expect_int(
+            _field(payload, "activity_count", "transport_diagnostics"),
+            "transport_diagnostics.activity_count",
+        ),
+        app_server_pid=_expect_optional_int(
+            _field(payload, "app_server_pid", "transport_diagnostics"),
+            "transport_diagnostics.app_server_pid",
+        ),
+        app_server_started_at=(
+            None
+            if started_at is None
+            else _datetime(started_at, "transport_diagnostics.app_server_started_at")
+        ),
+        app_server_command=_expect_optional_str(
+            _field(payload, "app_server_command", "transport_diagnostics"),
+            "transport_diagnostics.app_server_command",
+        ),
+        app_server_exit_code=_expect_optional_int(
+            _field(payload, "app_server_exit_code", "transport_diagnostics"),
+            "transport_diagnostics.app_server_exit_code",
+        ),
+        app_server_exit_signal=_expect_optional_int(
+            _field(payload, "app_server_exit_signal", "transport_diagnostics"),
+            "transport_diagnostics.app_server_exit_signal",
+        ),
+        transport_failure_kind=kind,
+        failure_class=failure_class,
+        last_protocol_event_type=_expect_optional_str(
+            _field(payload, "last_protocol_event_type", "transport_diagnostics"),
+            "transport_diagnostics.last_protocol_event_type",
+        ),
+        last_protocol_event_at=(
+            None
+            if last_event_at is None
+            else _datetime(
+                last_event_at, "transport_diagnostics.last_protocol_event_at"
+            )
+        ),
+        terminal_event_type=_expect_optional_str(
+            _field(payload, "terminal_event_type", "transport_diagnostics"),
+            "transport_diagnostics.terminal_event_type",
+        ),
+        thread_id=_expect_optional_str(
+            _field(payload, "thread_id", "transport_diagnostics"),
+            "transport_diagnostics.thread_id",
+        ),
+        turn_id=_expect_optional_str(
+            _field(payload, "turn_id", "transport_diagnostics"),
+            "transport_diagnostics.turn_id",
+        ),
+        request_id=_expect_optional_int(
+            _field(payload, "request_id", "transport_diagnostics"),
+            "transport_diagnostics.request_id",
+        ),
+        last_activity_at=(
+            None
+            if last_activity_at is None
+            else _datetime(last_activity_at, "transport_diagnostics.last_activity_at")
+        ),
+        reader_failure_kind=_expect_optional_str(
+            _field(payload, "reader_failure_kind", "transport_diagnostics"),
+            "transport_diagnostics.reader_failure_kind",
+        ),
+        process_alive_at_failure=_optional_bool(
+            _field(payload, "process_alive_at_failure", "transport_diagnostics"),
+            "transport_diagnostics.process_alive_at_failure",
+        ),
+        cleanup_reason=_expect_optional_str(
+            _field(payload, "cleanup_reason", "transport_diagnostics"),
+            "transport_diagnostics.cleanup_reason",
+        ),
+        events=tuple(
+            _transport_event_from_payload(item)
+            for item in _expect_list(
+                _field(payload, "events", "transport_diagnostics"),
+                "transport_diagnostics.events",
+            )
+        ),
+        legacy_transport_evidence_incomplete=legacy,
     )
 
 
@@ -2305,6 +2586,7 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
         12,
         13,
         14,
+        15,
         CURRENT_SCHEMA_VERSION,
     }:
         raise UnsupportedStateSchema(
@@ -2351,6 +2633,9 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
         schema_version = 14
     if schema_version == 14:
         root = _migrate_v14_to_v15(root)
+        schema_version = 15
+    if schema_version == 15:
+        root = _migrate_v15_to_v16(root)
 
     try:
         quality_value = _field(root, "quality_status", "project state")

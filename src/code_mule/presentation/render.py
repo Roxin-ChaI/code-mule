@@ -102,7 +102,16 @@ def render_project_diagnosis(
         )
     if diagnosis.worker_uncertainty is not None:
         evidence = diagnosis.worker_uncertainty
+        lines += (
+            "Failure class     "
+            + humanize_identifier(diagnosis.worker_failure_class or "not recorded"),
+        )
         lines += _worker_uncertainty_lines(evidence, include_context=False)
+        if verbose:
+            lines += (
+                "transport_evidence_present: "
+                + str(diagnosis.worker_transport_evidence_available).lower(),
+            )
     if diagnosis.no_change_delivery is not None:
         lines += _no_change_delivery_lines(diagnosis.no_change_delivery)
     lines += (
@@ -334,7 +343,7 @@ def render_change_applied(
 
 def render_human_action(
     action: HumanAction, *, verbose: bool = False, state: ProjectState | None = None,
-    terminal: TerminalDashboard | None = None,
+    terminal: TerminalDashboard | None = None, codex_version: str | None = None,
 ) -> tuple[str, ...]:
     view = human_action_view(action)
     final_review = (
@@ -554,6 +563,18 @@ def render_human_action(
             )
         if state is not None:
             lines += _render_worker_failure(state, action)
+            from code_mule.recovery.uncertainty import worker_uncertainty_evidence
+
+            evidence = worker_uncertainty_evidence(state, action)
+            if evidence is not None:
+                lines += _worker_transport_lines(
+                    state,
+                    action.task_id,
+                    stop_cause=evidence.stop_cause.value,
+                    report_persisted=evidence.report_persisted,
+                    retry_safe=evidence.retry_safe,
+                    codex_version=codex_version,
+                )
     if terminal is not None and terminal.interactive:
         return human_dashboard(action, state, terminal, lines, verbose=verbose)
     return lines if terminal is None else terminal.legacy(lines)
@@ -590,9 +611,128 @@ def _worker_uncertainty_lines(evidence, *, include_context: bool) -> tuple[str, 
         + (evidence.commit_sha if evidence.commit_created else "No"),
         "Ownership status  "
         + humanize_identifier(evidence.ownership_status.value),
-        "Stop cause        " + humanize_identifier(evidence.stop_cause.value),
+        "Stop cause        " + _stop_cause_label(evidence),
         f"Retry safe        {'Yes' if evidence.retry_safe else 'No'}",
     )
+    return lines
+
+
+_LEGACY_INSUFFICIENT = "Legacy evidence insufficient"
+
+
+def _stop_cause_label(evidence) -> str:
+    """Name a typed stop cause; never present legacy absence as Unknown."""
+
+    from code_mule.recovery.contracts import WorkerStopCause
+    from .labels import humanize_identifier
+
+    if evidence.stop_cause is WorkerStopCause.UNKNOWN:
+        return _LEGACY_INSUFFICIENT
+    if (
+        evidence.stop_cause is WorkerStopCause.UNCLASSIFIED_PROTOCOL_FAILURE
+        and not evidence.transport_evidence_available
+    ):
+        return _LEGACY_INSUFFICIENT
+    return humanize_identifier(evidence.stop_cause.value)
+
+
+def _worker_transport_lines(
+    state: ProjectState,
+    task_id: str | None,
+    *,
+    stop_cause: str | None,
+    report_persisted: bool,
+    retry_safe: bool,
+    codex_version: str | None = None,
+) -> tuple[str, ...]:
+    """Render bounded Worker transport supervision facts for --verbose."""
+
+    from .labels import humanize_identifier
+
+    if task_id is None:
+        return ()
+    attempts = tuple(
+        item for item in state.execution_attempts if item.task_id == task_id
+    )
+    lines: tuple[str, ...] = ("", "TRANSPORT", "")
+    if not attempts:
+        return lines + ("No Worker attempt was recorded for this Task.",)
+    attempt = max(attempts, key=lambda item: item.attempt)
+    diagnostics = attempt.transport
+    if diagnostics is None or diagnostics.is_legacy_incomplete:
+        lines += (
+            "Codex binary      " + (
+                "codex app-server"
+            ),
+            f"Codex version     {codex_version or 'unavailable'}",
+            f"Attempt           {attempt.attempt}",
+            _LEGACY_INSUFFICIENT,
+        )
+    else:
+        exit_text = (
+            "still running"
+            if diagnostics.app_server_exit_code is None
+            and diagnostics.app_server_exit_signal is None
+            else (
+                f"signal {diagnostics.app_server_exit_signal}"
+                if diagnostics.app_server_exit_signal is not None
+                else str(diagnostics.app_server_exit_code)
+            )
+        )
+        last_event = diagnostics.last_protocol_event_type or "none"
+        last_event_at = (
+            ""
+            if diagnostics.last_protocol_event_at is None
+            else f" at {diagnostics.last_protocol_event_at.isoformat()}"
+        )
+        lines += (
+            "Codex binary      "
+            + (diagnostics.app_server_command or "codex app-server"),
+            f"Codex version     {codex_version or 'unavailable (see doctor --verbose)'}",
+            f"Process started   {'Yes' if diagnostics.app_server_pid else 'No'}"
+            + (
+                ""
+                if diagnostics.app_server_pid is None
+                else f" (pid {diagnostics.app_server_pid})"
+            ),
+            f"Process exit      {exit_text}",
+            f"Stdout            {humanize_identifier(diagnostics.stdout_state.value)}",
+            f"Stderr            {humanize_identifier(diagnostics.stderr_state.value)}",
+            f"Stdin             {humanize_identifier(diagnostics.stdin_state.value)}",
+            f"Last protocol event {last_event}{last_event_at}",
+            f"Thread            {diagnostics.thread_id or attempt.thread_id or '-'}",
+            f"Turn              {diagnostics.turn_id or attempt.turn_id or '-'}",
+            f"Activity count    {diagnostics.activity_count}",
+            "Terminal result   "
+            + ("Received" if diagnostics.terminal_event_received else "Missing"),
+            f"Report persisted  {'Yes' if report_persisted else 'No'}",
+            "Failure class     "
+            + humanize_identifier(
+                diagnostics.failure_class.value
+                if diagnostics.failure_class is not None
+                else "none"
+            ),
+            "Failure cause     "
+            + humanize_identifier(
+                diagnostics.transport_failure_kind.value
+                if diagnostics.transport_failure_kind is not None
+                else (stop_cause or "none")
+            ),
+            "Cleanup           "
+            + humanize_identifier(diagnostics.cleanup_reason or "not recorded"),
+            f"Retry safe        {'Yes' if retry_safe else 'No'}",
+        )
+        if diagnostics.events:
+            lines += ("", "Recent protocol lifecycle")
+            lines += tuple(
+                f"  {event.at.isoformat()} {event.event_type}"
+                + (
+                    ""
+                    if event.payload_category is None
+                    else f" [{event.payload_category}]"
+                )
+                for event in diagnostics.events
+            )
     return lines
 
 

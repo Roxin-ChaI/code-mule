@@ -66,6 +66,7 @@ from code_mule.worker.contracts import (
     WorkerTaskRequest,
     worker_failure_metadata,
 )
+from code_mule.transport import TransportDiagnostics
 
 from .contracts import (
     InvalidTaskCycleState,
@@ -85,6 +86,9 @@ class WorkerSession(Protocol):
     @property
     def thread_id(self) -> str | None: ...
 
+    @property
+    def turn_id(self) -> str | None: ...
+
     def start(self) -> None: ...
 
     def execute(
@@ -94,6 +98,8 @@ class WorkerSession(Protocol):
         report_id: str,
         created_at: datetime,
     ) -> ExecutionReport: ...
+
+    def transport_diagnostics(self) -> TransportDiagnostics | None: ...
 
     def close(self) -> None: ...
 
@@ -228,7 +234,9 @@ class TaskCycleService:
                     "Codex Worker started",
                 )
             except CodexWorkerError as error:
-                self._record_worker_failure(state, task, error)
+                self._record_worker_failure(
+                    state, task, error, transport=self._session_transport(session)
+                )
                 self._emit_worker_failure(state, task, error)
                 return self._human_outcome(
                     task.id, reports, decisions, final_prompt=None
@@ -238,7 +246,14 @@ class TaskCycleService:
                 task = self._task(state, request.task.id)
                 if first_attempt:
                     first_attempt = False
-                    state = update_attempt(self._store.load(), task.id, attempt, ExecutionAttemptStatus.WORKER_STARTED, thread_id=getattr(session, "thread_id", None))
+                    state = update_attempt(
+                        self._store.load(),
+                        task.id,
+                        attempt,
+                        ExecutionAttemptStatus.WORKER_STARTED,
+                        thread_id=getattr(session, "thread_id", None),
+                        transport=self._session_transport(session),
+                    )
                     self._store.save(state)
                 else:
                     attempt = max((item.attempt for item in state.execution_attempts if item.task_id == task.id), default=0) + 1
@@ -273,7 +288,11 @@ class TaskCycleService:
                 except CodexWorkerError as error:
                     try:
                         state = self._record_worker_failure(
-                            state, task, error, baseline
+                            state,
+                            task,
+                            error,
+                            baseline,
+                            transport=self._session_transport(session),
                         )
                     except GitDeliveryError as git_error:
                         state = self._record_git_failure(
@@ -311,6 +330,7 @@ class TaskCycleService:
                     ExecutionAttemptStatus.WORKER_COMPLETED,
                     turn_id=getattr(session, "turn_id", None),
                     terminal_at=self._clock(),
+                    transport=self._session_transport(session),
                 )
                 self._store.save(state)
 
@@ -605,6 +625,60 @@ class TaskCycleService:
                     )
         finally:
             session.close()
+            # Cleanup ordering: the typed failure boundary is already persisted
+            # above, so refine only the bounded transport facts that cleanup
+            # itself produced (for example the child's real exit code).
+            self._refresh_attempt_transport(
+                request.task.id, self._session_transport(session)
+            )
+
+    @staticmethod
+    def _session_transport(session: WorkerSession) -> TransportDiagnostics | None:
+        """Read a session's bounded transport snapshot without ever raising."""
+
+        reader = getattr(session, "transport_diagnostics", None)
+        if not callable(reader):
+            return None
+        try:
+            snapshot = reader()
+        except Exception:
+            return None
+        return snapshot if isinstance(snapshot, TransportDiagnostics) else None
+
+    def _refresh_attempt_transport(
+        self, task_id: str, transport: TransportDiagnostics | None
+    ) -> None:
+        """Refine the latest attempt's transport evidence after cleanup."""
+
+        if transport is None:
+            return
+        try:
+            state = self._store.load()
+            attempts = tuple(
+                item for item in state.execution_attempts if item.task_id == task_id
+            )
+            if not attempts:
+                return
+            latest = max(attempts, key=lambda item: item.attempt)
+            if latest.transport is None or latest.transport == transport:
+                return
+            refreshed = update_attempt(
+                state,
+                task_id,
+                latest.attempt,
+                latest.status,
+                thread_id=latest.thread_id,
+                turn_id=latest.turn_id,
+                baseline_head=latest.baseline_head,
+                terminal_at=latest.terminal_at,
+                failure_kind=latest.failure_kind,
+                partial_paths_exist=latest.partial_paths_exist,
+                transport=transport,
+            )
+            self._store.save(refreshed)
+        except Exception:
+            # Evidence refinement must never mask the original Worker outcome.
+            return
 
     def resume_after_report(self, request: TaskCycleRequest) -> TaskCycleOutcome:
         """Continue a trusted persisted report without creating a Worker."""
@@ -1226,6 +1300,7 @@ class TaskCycleService:
         task: Task,
         error: CodexWorkerError,
         baseline: GitBaseline | None = None,
+        transport: TransportDiagnostics | None = None,
     ) -> ProjectState:
         category, summary, requested_action, risk = self._worker_failure_action(error)
         worker_input = None
@@ -1293,6 +1368,7 @@ class TaskCycleService:
                 terminal_at=self._clock(),
                 failure_kind=type(error).__name__.lower()[:64],
                 partial_paths_exist=bool(partial_paths),
+                transport=transport,
             )
             self._store.save(latest)
         safe_partial_paths = tuple(

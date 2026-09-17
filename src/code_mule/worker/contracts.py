@@ -9,6 +9,12 @@ import re
 from code_mule.domain.enums import CapabilityApprovalScope
 from code_mule.domain.models import Task
 
+from code_mule.transport import (
+    TransportFailureKind,
+    WorkerFailureClass,
+    failure_class_for,
+)
+
 
 def _require_non_empty(value: str, field_name: str) -> None:
     if value == "":
@@ -16,15 +22,67 @@ def _require_non_empty(value: str, field_name: str) -> None:
 
 
 class CodexWorkerError(RuntimeError):
-    """Base class for Codex Worker boundary failures."""
+    """Base class for Codex Worker boundary failures.
+
+    Every concrete boundary failure carries the exact typed transport reason
+    it represents, so no caller has to infer one (or fall back to Unknown).
+    """
+
+    transport_failure_kind: TransportFailureKind | None = None
+
+    @property
+    def failure_class(self) -> WorkerFailureClass | None:
+        return failure_class_for(self.transport_failure_kind)
 
 
 class CodexAppServerStartError(CodexWorkerError):
     """Raised when the local Codex app-server cannot be started."""
 
+    transport_failure_kind = TransportFailureKind.APP_SERVER_START_FAILED
+
 
 class CodexProtocolError(CodexWorkerError):
     """Raised when app-server violates the expected structured protocol."""
+
+    transport_failure_kind = TransportFailureKind.PROTOCOL_VIOLATION
+
+
+class CodexAppServerDisconnected(CodexProtocolError):
+    """Raised when the app-server stdio channel ends without a terminal turn."""
+
+
+class CodexStdoutReaderFailed(CodexProtocolError):
+    """Raised when the app-server stdout reader itself fails."""
+
+    transport_failure_kind = TransportFailureKind.STDOUT_READER_FAILED
+
+
+class CodexStdinWriteFailed(CodexProtocolError):
+    """Raised when a structured request cannot be written to the app-server."""
+
+    transport_failure_kind = TransportFailureKind.STDIN_WRITE_FAILED
+
+
+class CodexJsonRpcDecodeError(CodexProtocolError):
+    """Raised when one app-server line is not a valid JSON-RPC object."""
+
+    transport_failure_kind = TransportFailureKind.JSONRPC_DECODE_FAILED
+
+
+class CodexRequestRejected(CodexWorkerError):
+    """Raised when the app-server rejects a structured JSON-RPC request."""
+
+    transport_failure_kind = TransportFailureKind.REQUEST_REJECTED
+
+    def __init__(self, message: str, *, request_id: int | None = None) -> None:
+        self.request_id = request_id
+        super().__init__(message)
+
+
+class CodexParentInterrupted(CodexWorkerError):
+    """Raised when the parent CLI interrupt boundary stops a live Worker."""
+
+    transport_failure_kind = TransportFailureKind.PARENT_INTERRUPTED
 
 
 class CodexTurnFailureKind(StrEnum):
@@ -91,6 +149,15 @@ class CodexTurnFailed(CodexWorkerError):
 
     def __init__(self, message: str = "Codex turn failed", *, details: CodexTurnFailureDetails | None = None) -> None:
         self.details = details
+        self.transport_failure_kind = (
+            None
+            if details is None
+            else {
+                CodexTurnFailureKind.ERROR_NOTIFICATION: TransportFailureKind.ERROR_NOTIFICATION,
+                CodexTurnFailureKind.TURN_FAILED: TransportFailureKind.TURN_FAILED,
+                CodexTurnFailureKind.TURN_INTERRUPTED: TransportFailureKind.TURN_INTERRUPTED,
+            }[details.kind]
+        )
         # Preserve source compatibility without retaining arbitrary provider prose.
         super().__init__("Codex turn failed" if details is None else f"Codex turn failed ({details.kind.value})")
 
@@ -99,6 +166,7 @@ class CodexTurnTimeout(CodexWorkerError):
     """Raised when a Codex response or turn exceeds its configured deadline."""
 
     timeout_kind = "operation"
+    transport_failure_kind = TransportFailureKind.INACTIVITY_TIMEOUT
 
     def __init__(
         self,
@@ -116,18 +184,75 @@ class CodexTurnInactivityTimeout(CodexTurnTimeout):
     """Raised when a turn produces no trusted activity before its idle limit."""
 
     timeout_kind = "inactivity"
+    transport_failure_kind = TransportFailureKind.INACTIVITY_TIMEOUT
 
 
 class CodexTurnHardTimeout(CodexTurnTimeout):
     """Raised when a turn reaches its non-refreshable maximum duration."""
 
     timeout_kind = "hard"
+    transport_failure_kind = TransportFailureKind.HARD_TIMEOUT
+
+
+@dataclass(frozen=True)
+class WorkerTurnTerminal:
+    """Trusted terminal evidence captured before any report parsing.
+
+    Code Mule persists this the moment a terminal turn event is observed so a
+    later parser or persistence failure can never look like a missing
+    terminal result.
+    """
+
+    thread_id: str
+    turn_id: str
+    terminal_event_type: str
+    turn_status: str
+    activity_count: int
+    event_count: int
+    final_message_present: bool
+
+    def __post_init__(self) -> None:
+        for value in (self.thread_id, self.turn_id):
+            if not isinstance(value, str) or not re.fullmatch(
+                r"[A-Za-z0-9_-]{1,128}", value
+            ):
+                raise ValueError("terminal identity must be bounded")
+        if self.terminal_event_type not in {
+            "turn/completed",
+            "turn/failed",
+            "turn/interrupted",
+        }:
+            raise ValueError("terminal event type must be a known terminal event")
+        if self.turn_status not in {"completed", "failed", "interrupted"}:
+            raise ValueError("terminal turn status must be known")
+        if type(self.activity_count) is not int or not (
+            0 <= self.activity_count <= 1_000_000_000
+        ):
+            raise ValueError("terminal activity count must be bounded")
+        if type(self.event_count) is not int or not (
+            0 <= self.event_count <= 1_000_000_000
+        ):
+            raise ValueError("terminal event count must be bounded")
+        if type(self.final_message_present) is not bool:
+            raise ValueError("final message flag must be boolean")
+
+    @property
+    def report_parse_required(self) -> bool:
+        return self.turn_status == "completed"
 
 
 def worker_failure_metadata(error: CodexWorkerError) -> dict[str, str]:
     """Return bounded diagnostic metadata without model or environment content."""
 
     metadata = {"error_type": type(error).__name__}
+    kind = error.transport_failure_kind
+    if kind is not None:
+        metadata["transport_failure_kind"] = kind.value
+    failure_class = error.failure_class
+    if failure_class is not None:
+        metadata["failure_class"] = failure_class.value
+    if isinstance(error, CodexRequestRejected) and error.request_id is not None:
+        metadata["request_id"] = str(error.request_id)
     if isinstance(error, CodexTurnFailed) and error.details is not None:
         details = error.details
         metadata.update({
@@ -153,6 +278,20 @@ def worker_failure_metadata(error: CodexWorkerError) -> dict[str, str]:
             )
         if error.max_turn_seconds is not None:
             metadata["max_turn_seconds"] = format(error.max_turn_seconds, "g")
+    terminal = getattr(error, "terminal", None)
+    if not isinstance(terminal, WorkerTurnTerminal):
+        terminal = None
+    if terminal is not None:
+        metadata.update(
+            {
+                "terminal_event_received": "true",
+                "terminal_event_type": terminal.terminal_event_type,
+                "thread_id": terminal.thread_id,
+                "turn_id": terminal.turn_id,
+                "activity_count": str(terminal.activity_count),
+                "report_parse_failed": "true",
+            }
+        )
     return metadata
 
 
@@ -373,10 +512,16 @@ class WorkerTurnResult:
 __all__ = [
     "CapabilityApprovalAction",
     "CapabilityApprovalDecision",
+    "CodexAppServerDisconnected",
     "CodexAppServerStartError",
     "CodexApprovalRequired",
     "CodexCapabilityApprovalRequired",
+    "CodexJsonRpcDecodeError",
+    "CodexParentInterrupted",
     "CodexProtocolError",
+    "CodexRequestRejected",
+    "CodexStdinWriteFailed",
+    "CodexStdoutReaderFailed",
     "CodexTurnFailed",
     "CodexTurnFailureKind",
     "CodexTurnFailureDetails",
@@ -389,6 +534,7 @@ __all__ = [
     "WorkerInputRequest",
     "WorkerCapabilityApprovalRequest",
     "WorkerTaskRequest",
+    "WorkerTurnTerminal",
     "WorkerTurnResult",
     "worker_failure_metadata",
 ]

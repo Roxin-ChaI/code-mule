@@ -9,7 +9,8 @@ from code_mule.domain.enums import WorkerHumanActionKind
 from code_mule.domain.models import WorkerHumanAction
 from code_mule.domain.worker_verification import WorkerCheckStatus
 
-from .contracts import CodexWorkerError
+from .contracts import CodexWorkerError, WorkerTurnTerminal
+from code_mule.transport import TransportFailureKind
 
 
 class WorkerExecutionStatus(StrEnum):
@@ -20,6 +21,16 @@ class WorkerExecutionStatus(StrEnum):
 
 class InvalidWorkerReport(CodexWorkerError):
     """Raised when Codex final output violates the worker report schema."""
+
+    transport_failure_kind = TransportFailureKind.REPORT_PARSE_FAILED
+
+    def __init__(
+        self, message: str, *, terminal: WorkerTurnTerminal | None = None
+    ) -> None:
+        # A completed turn whose structured report was rejected is *not* a
+        # missing terminal result; retain the terminal evidence explicitly.
+        self.terminal = terminal
+        super().__init__(message)
 
 
 @dataclass(frozen=True)

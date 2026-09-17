@@ -121,6 +121,8 @@ class ProjectDiagnosis:
     completion_head_candidate: str | None = None
     worker_uncertainty: WorkerUncertaintyEvidence | None = None
     no_change_delivery: NoChangeDeliveryRecoveryEvidence | None = None
+    worker_failure_class: str | None = None
+    worker_transport_evidence_available: bool = False
 
     def __post_init__(self) -> None:
         bounded = {
@@ -142,6 +144,7 @@ class ProjectDiagnosis:
             "final_review_outcome": (self.final_review_outcome, 64),
             "project_verification_status": (self.project_verification_status, 64),
             "completion_head_candidate": (self.completion_head_candidate, 128),
+            "worker_failure_class": (self.worker_failure_class, 64),
         }
         for name, (value, limit) in bounded.items():
             if not isinstance(value, str) or not value or len(value) > limit:
@@ -151,6 +154,8 @@ class ProjectDiagnosis:
                 raise ValueError(f"{name} exceeds diagnosis bounds")
         if self.active_plan_version is not None and self.active_plan_version < 1:
             raise ValueError("active_plan_version must be positive")
+        if type(self.worker_transport_evidence_available) is not bool:
+            raise ValueError("worker_transport_evidence_available must be boolean")
         if self.target_plan_version is not None and self.target_plan_version < 1:
             raise ValueError("target_plan_version must be positive")
         if not 0 <= self.completed_tasks <= self.total_tasks:

@@ -10,7 +10,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Protocol, cast
 
@@ -24,9 +24,15 @@ from code_mule.progress import (
 
 from .contracts import (
     CapabilityApprovalDecision,
+    CodexAppServerDisconnected,
     CodexAppServerStartError,
     CodexCapabilityApprovalRequired,
+    CodexJsonRpcDecodeError,
+    CodexParentInterrupted,
     CodexProtocolError,
+    CodexRequestRejected,
+    CodexStdinWriteFailed,
+    CodexStdoutReaderFailed,
     CodexTurnFailed,
     CodexTurnFailureDetails,
     CodexTurnFailureKind,
@@ -36,7 +42,9 @@ from .contracts import (
     CodexTurnTimeout,
     CodexUserInputRequired,
     CodexWorkerConfig,
+    CodexWorkerError,
     WorkerCapabilityApprovalRequest,
+    WorkerTurnTerminal,
     WorkerTurnResult,
 )
 from .protocol import (
@@ -56,8 +64,18 @@ from .protocol import (
     parse_native_approval_request,
     parse_worker_input_request,
     request_message,
-    response_result,
     server_response_message,
+)
+from code_mule.transport import (
+    MAX_EVENT_RING,
+    ChannelState,
+    TransportDiagnostics,
+    TransportDirection,
+    TransportEventRecord,
+    TransportFailureKind,
+    TransportState,
+    WorkerFailureClass,
+    failure_class_for,
 )
 
 
@@ -80,6 +98,88 @@ _CapabilityApprovalHandler = Callable[
     [WorkerCapabilityApprovalRequest], CapabilityApprovalDecision
 ]
 _EOF = object()
+_STDERR_TAIL_LIMIT = 100
+_DEFAULT_EOF_GRACE_SECONDS = 0.5
+_EOF_GRACE_POLL_SECONDS = 0.02
+_SAFE_JSONRPC_ERROR_CODE = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_.-")
+
+
+def _safe_jsonrpc_error_code(value: object) -> str | None:
+    """Retain only a short, structured JSON-RPC error code."""
+
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return str(value) if 0 <= value <= 1_000_000 else None
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if 1 <= len(normalized) <= 64 and all(
+            character in _SAFE_JSONRPC_ERROR_CODE for character in normalized
+        ):
+            return normalized
+    return None
+
+
+def _safe_method_name(method: object) -> str | None:
+    """Normalize one protocol method name into a bounded event type."""
+
+    if not isinstance(method, str) or method == "":
+        return None
+    normalized = method.lower().replace("/", ".")[:120]
+    if not normalized[0].isascii() or not normalized[0].isalnum():
+        return None
+    if not all(
+        character.isascii()
+        and (character.isalnum() or character in "_./-")
+        for character in normalized
+    ):
+        return None
+    return normalized
+
+
+_HANDLED_TURN_METHODS = frozenset(
+    {
+        "turn/started",
+        "turn/completed",
+        "item/started",
+        "item/completed",
+        "error",
+    }
+)
+
+_ITEM_CATEGORY = {
+    "agentMessage": "item.agent_message",
+    "commandExecution": "item.command_execution",
+    "fileChange": "item.file_change",
+    "reasoning": "item.reasoning",
+}
+
+
+def _payload_category(params: dict[str, object]) -> str | None:
+    """Describe *what kind* of payload arrived, never the payload itself."""
+
+    if "error" in params:
+        return "error"
+    item = params.get("item")
+    if isinstance(item, dict):
+        item_type = item.get("type")
+        if isinstance(item_type, str):
+            return _ITEM_CATEGORY.get(item_type, "item.other")
+        return "item.other"
+    turn = params.get("turn")
+    if isinstance(turn, dict):
+        return "turn"
+    return None
+
+
+def _reader_failure_kind(error: BaseException) -> str:
+    name = type(error).__name__.lower()
+    normalized = "".join(
+        character for character in name if character.isascii() and (
+            character.isalnum() or character in "_."
+        )
+    )[:64]
+    return normalized or "reader_failed"
 
 
 def _worker_environment() -> dict[str, str]:
@@ -112,13 +212,14 @@ class CodexAppServerClient:
         clock: Callable[[], datetime] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         capability_approval_handler: _CapabilityApprovalHandler | None = None,
+        eof_grace_seconds: float = _DEFAULT_EOF_GRACE_SECONDS,
     ) -> None:
         self._config = config
         self._popen_factory = popen_factory
         self._process: _Process | None = None
         self._stdout_queue: queue.Queue[object] = queue.Queue()
         self._pending_messages: deque[dict[str, object]] = deque()
-        self._stderr_lines: deque[str] = deque(maxlen=100)
+        self._stderr_lines: deque[str] = deque(maxlen=_STDERR_TAIL_LIMIT)
         self._reader_threads: list[threading.Thread] = []
         self._next_request_id = 1
         self._initialized = False
@@ -126,6 +227,30 @@ class CodexAppServerClient:
         self._clock = clock
         self._monotonic = monotonic
         self._capability_approval_handler = capability_approval_handler
+        self._eof_grace_seconds = max(0.0, float(eof_grace_seconds))
+        self._closing = False
+        self._state = TransportState.PROCESS_STARTING
+        self._app_server_pid: int | None = None
+        self._app_server_started_at: datetime | None = None
+        self._app_server_command: str | None = None
+        self._app_server_exit_code: int | None = None
+        self._app_server_exit_signal: int | None = None
+        self._stdout_state = ChannelState.UNOPENED
+        self._stderr_state = ChannelState.UNOPENED
+        self._stdin_state = ChannelState.UNOPENED
+        self._events: deque[TransportEventRecord] = deque(maxlen=MAX_EVENT_RING)
+        self._failure_kind: TransportFailureKind | None = None
+        self._cleanup_reason: str | None = None
+        self._reader_failure_kind: str | None = None
+        self._process_alive_at_failure: bool | None = None
+        self._thread_id: str | None = None
+        self._turn_id: str | None = None
+        self._active_request_id: int | None = None
+        self._terminal: WorkerTurnTerminal | None = None
+        self._activity_count = 0
+        self._last_activity_at: datetime | None = None
+        self._last_protocol_event_type: str | None = None
+        self._last_protocol_event_at: datetime | None = None
 
     @property
     def stderr_tail(self) -> tuple[str, ...]:
@@ -135,9 +260,51 @@ class CodexAppServerClient:
     def progress_errors(self) -> tuple[BaseException, ...]:
         return self._progress.errors
 
+    @property
+    def transport_state(self) -> TransportState:
+        return self._state
+
+    @property
+    def terminal_evidence(self) -> WorkerTurnTerminal | None:
+        """Trusted terminal turn evidence captured before report parsing."""
+
+        return self._terminal
+
+    def transport_diagnostics(self) -> TransportDiagnostics:
+        """Bounded, secret-free supervision facts for this attempt."""
+
+        return TransportDiagnostics(
+            stdout_state=self._stdout_state,
+            stderr_state=self._stderr_state,
+            stdin_state=self._stdin_state,
+            terminal_event_received=self._terminal is not None,
+            activity_count=self._activity_count,
+            app_server_pid=self._app_server_pid,
+            app_server_started_at=self._app_server_started_at,
+            app_server_command=self._app_server_command,
+            app_server_exit_code=self._app_server_exit_code,
+            app_server_exit_signal=self._app_server_exit_signal,
+            transport_failure_kind=self._failure_kind,
+            failure_class=failure_class_for(self._failure_kind),
+            last_protocol_event_type=self._last_protocol_event_type,
+            last_protocol_event_at=self._last_protocol_event_at,
+            terminal_event_type=(
+                None if self._terminal is None else self._terminal.terminal_event_type
+            ),
+            thread_id=self._thread_id,
+            turn_id=self._turn_id,
+            request_id=self._active_request_id,
+            last_activity_at=self._last_activity_at,
+            reader_failure_kind=self._reader_failure_kind,
+            process_alive_at_failure=self._process_alive_at_failure,
+            cleanup_reason=self._cleanup_reason,
+            events=tuple(self._events),
+        )
+
     def start(self) -> None:
         if self._process is not None:
             return
+        self._state = TransportState.PROCESS_STARTING
         try:
             process = self._popen_factory(
                 self._config.command,
@@ -152,15 +319,25 @@ class CodexAppServerClient:
                 env=_worker_environment(),
             )
         except OSError as error:
-            raise CodexAppServerStartError(
-                "unable to start the local Codex app-server"
+            raise self._fail(
+                TransportFailureKind.APP_SERVER_START_FAILED,
+                "unable to start the local Codex app-server",
             ) from error
         if process.stdin is None or process.stdout is None or process.stderr is None:
             process.terminate()
-            raise CodexAppServerStartError(
-                "Codex app-server did not expose all required stdio pipes"
+            raise self._fail(
+                TransportFailureKind.APP_SERVER_START_FAILED,
+                "Codex app-server did not expose all required stdio pipes",
             )
         self._process = process
+        pid = getattr(process, "pid", None)
+        self._app_server_pid = pid if type(pid) is int and pid > 0 else None
+        self._app_server_started_at = self._now()
+        self._app_server_command = " ".join(self._config.command)[:240]
+        self._stdout_state = ChannelState.OPEN
+        self._stderr_state = ChannelState.OPEN
+        self._stdin_state = ChannelState.OPEN
+        self._state = TransportState.PROCESS_RUNNING
         stdout_thread = threading.Thread(
             target=self._read_stdout,
             args=(process.stdout,),
@@ -177,6 +354,72 @@ class CodexAppServerClient:
         stdout_thread.start()
         stderr_thread.start()
 
+    def _now(self) -> datetime:
+        return self._clock() if self._clock is not None else datetime.now(UTC)
+
+    def _record_event(
+        self,
+        event_type: str,
+        direction: TransportDirection,
+        *,
+        correlation_id: str | None = None,
+        payload_category: str | None = None,
+    ) -> None:
+        normalized = _safe_method_name(event_type)
+        if normalized is None:
+            return
+        safe_correlation = (
+            correlation_id
+            if isinstance(correlation_id, str)
+            and 0 < len(correlation_id) <= 128
+            and all(
+                character.isascii()
+                and (character.isalnum() or character in "_-")
+                for character in correlation_id
+            )
+            else None
+        )
+        now = self._now()
+        self._last_protocol_event_type = normalized
+        self._last_protocol_event_at = now
+        self._events.append(
+            TransportEventRecord(
+                at=now,
+                event_type=normalized,
+                direction=direction,
+                correlation_id=safe_correlation,
+                payload_category=payload_category,
+            )
+        )
+
+    def _fail(
+        self, kind: TransportFailureKind, message: str
+    ) -> CodexWorkerError:
+        self._failure_kind = kind
+        process = self._process
+        self._process_alive_at_failure = (
+            None if process is None else process.poll() is None
+        )
+        error: CodexWorkerError
+        if kind is TransportFailureKind.APP_SERVER_START_FAILED:
+            error = CodexAppServerStartError(message)
+        elif kind is TransportFailureKind.STDIN_WRITE_FAILED:
+            error = CodexStdinWriteFailed(message)
+        elif kind is TransportFailureKind.STDOUT_READER_FAILED:
+            error = CodexStdoutReaderFailed(message)
+        elif kind is TransportFailureKind.JSONRPC_DECODE_FAILED:
+            error = CodexJsonRpcDecodeError(message)
+        elif kind is TransportFailureKind.PARENT_INTERRUPTED:
+            error = CodexParentInterrupted(message)
+        elif kind is TransportFailureKind.REQUEST_REJECTED:
+            error = CodexRequestRejected(message)
+        elif kind is TransportFailureKind.PROTOCOL_VIOLATION:
+            error = CodexProtocolError(message)
+        else:
+            error = CodexAppServerDisconnected(message)
+        error.transport_failure_kind = kind
+        return error
+
     def initialize(self) -> None:
         self.start()
         result = self._request(
@@ -190,9 +433,13 @@ class CodexAppServerClient:
             },
         )
         if not isinstance(result, dict):
-            raise CodexProtocolError("initialize result must be an object")
+            raise self._fail(
+                TransportFailureKind.PROTOCOL_VIOLATION,
+                "initialize result must be an object",
+            )
         self._write_message(notification_message(INITIALIZED_METHOD))
         self._initialized = True
+        self._state = TransportState.CHANNEL_READY
 
     def start_thread(self) -> str:
         self._require_initialized()
@@ -206,10 +453,18 @@ class CodexAppServerClient:
         )
         thread = result.get("thread")
         if not isinstance(thread, dict):
-            raise CodexProtocolError("thread/start result is missing thread")
+            raise self._fail(
+                TransportFailureKind.PROTOCOL_VIOLATION,
+                "thread/start result is missing thread",
+            )
         thread_id = thread.get("id")
         if not isinstance(thread_id, str) or thread_id == "":
-            raise CodexProtocolError("thread/start result is missing thread.id")
+            raise self._fail(
+                TransportFailureKind.PROTOCOL_VIOLATION,
+                "thread/start result is missing thread.id",
+            )
+        self._thread_id = thread_id
+        self._state = TransportState.THREAD_CREATED
         return thread_id
 
     def start_turn(
@@ -233,10 +488,19 @@ class CodexAppServerClient:
         result = self._request(TURN_START_METHOD, params)
         turn = result.get("turn")
         if not isinstance(turn, dict):
-            raise CodexProtocolError("turn/start result is missing turn")
+            raise self._fail(
+                TransportFailureKind.PROTOCOL_VIOLATION,
+                "turn/start result is missing turn",
+            )
         turn_id = turn.get("id")
         if not isinstance(turn_id, str) or turn_id == "":
-            raise CodexProtocolError("turn/start result is missing turn.id")
+            raise self._fail(
+                TransportFailureKind.PROTOCOL_VIOLATION,
+                "turn/start result is missing turn.id",
+            )
+        self._thread_id = thread_id
+        self._turn_id = turn_id
+        self._state = TransportState.TURN_STARTED
         return turn_id
 
     def wait_for_turn(self, thread_id: str, turn_id: str) -> WorkerTurnResult:
@@ -257,11 +521,18 @@ class CodexAppServerClient:
                     hard_deadline, inactivity_deadline
                 )
             except CodexTurnTimeout:
-                self.close()
+                self.close(reason="timeout")
                 raise
+            except CodexParentInterrupted:
+                self.close(reason="parent_interrupted")
+                raise
+            self._check_reader_health()
             kind = classify_message(message)
             if kind is MessageKind.RESPONSE:
-                raise CodexProtocolError("unexpected response while waiting for turn")
+                raise self._fail(
+                    TransportFailureKind.PROTOCOL_VIOLATION,
+                    "unexpected response while waiting for turn",
+                )
             if kind is MessageKind.SERVER_REQUEST:
                 event_count += 1
                 if self._raise_server_request(
@@ -271,8 +542,29 @@ class CodexAppServerClient:
                 ):
                     continue
 
-            method = cast(str, message["method"])
-            params = self._params(message, method)
+            method = message.get("method")
+            if not isinstance(method, str) or method == "":
+                raise self._fail(
+                    TransportFailureKind.PROTOCOL_VIOLATION,
+                    "app-server notification is missing its method",
+                )
+            params = self._tolerant_params(message)
+            self._record_event(
+                method,
+                TransportDirection.FROM_WORKER,
+                correlation_id=self._event_correlation(params, thread_id, turn_id),
+                payload_category=_payload_category(params),
+            )
+            self._state = TransportState.TURN_ACTIVE
+            if params is None:
+                # An unrelated or malformed notification must not destroy the
+                # live transport; only handled methods are held to the schema.
+                if method in _HANDLED_TURN_METHODS:
+                    raise self._fail(
+                        TransportFailureKind.PROTOCOL_VIOLATION,
+                        f"{method} params must be an object",
+                    )
+                continue
             matches_thread = params.get("threadId") == thread_id
             matches_turn = params.get("turnId") == turn_id
             turn = params.get("turn")
@@ -284,34 +576,43 @@ class CodexAppServerClient:
             ):
                 last_activity = self._monotonic()
                 activity_count += 1
+                self._activity_count = activity_count
+                self._last_activity_at = self._now()
                 inactivity_deadline = last_activity + self._config.inactivity_timeout_seconds
 
             if matches_thread and matches_turn:
                 self._project_activity(method, params)
 
             if method == ITEM_COMPLETED_METHOD:
-                self._require_event_identity(params, method)
                 if matches_thread and matches_turn:
+                    self._require_event_identity(params, method)
                     event_count += 1
                     item = params.get("item")
                     if not isinstance(item, dict):
-                        raise CodexProtocolError("item/completed is missing item")
+                        raise self._fail(
+                            TransportFailureKind.PROTOCOL_VIOLATION,
+                            "item/completed is missing item",
+                        )
                     if item.get("type") == "agentMessage":
                         text = item.get("text")
                         if not isinstance(text, str):
-                            raise CodexProtocolError(
-                                "completed agentMessage is missing text"
+                            raise self._fail(
+                                TransportFailureKind.PROTOCOL_VIOLATION,
+                                "completed agentMessage is missing text",
                             )
                         final_message = text
                 continue
 
             if method == "error":
-                self._require_event_identity(params, method)
                 if matches_thread and matches_turn:
+                    self._require_event_identity(params, method)
                     event_count += 1
                     self._safe_failure_code(params.get("error"), allow_none=False)
                     if "willRetry" in params and type(params["willRetry"]) is not bool:
-                        raise CodexProtocolError("error notification has invalid willRetry")
+                        raise self._fail(
+                            TransportFailureKind.PROTOCOL_VIOLATION,
+                            "error notification has invalid willRetry",
+                        )
                     if params.get("willRetry") is not True:
                         raise self._turn_failure(
                             CodexTurnFailureKind.ERROR_NOTIFICATION, thread_id, turn_id,
@@ -322,14 +623,41 @@ class CodexAppServerClient:
                 continue
 
             if method == TURN_COMPLETED_METHOD:
-                if not isinstance(turn, dict) or not isinstance(turn.get("id"), str):
-                    raise CodexProtocolError("turn/completed is missing turn.id")
-                if not isinstance(params.get("threadId"), str):
-                    raise CodexProtocolError("turn/completed is missing threadId")
                 if matches_thread and matches_turn:
+                    if not isinstance(turn, dict) or not isinstance(
+                        turn.get("id"), str
+                    ):
+                        raise self._fail(
+                            TransportFailureKind.PROTOCOL_VIOLATION,
+                            "turn/completed is missing turn.id",
+                        )
+                    if not isinstance(params.get("threadId"), str):
+                        raise self._fail(
+                            TransportFailureKind.PROTOCOL_VIOLATION,
+                            "turn/completed is missing threadId",
+                        )
                     event_count += 1
                     status = turn.get("status")
                     if status == "completed":
+                        # Persist trusted terminal evidence *before* any report
+                        # parsing so a later parser failure can never look like
+                        # a missing terminal result.
+                        self._terminal = WorkerTurnTerminal(
+                            thread_id=thread_id,
+                            turn_id=turn_id,
+                            terminal_event_type="turn/completed",
+                            turn_status="completed",
+                            activity_count=activity_count,
+                            event_count=event_count,
+                            final_message_present=final_message is not None,
+                        )
+                        self._state = TransportState.TURN_TERMINAL
+                        self._record_event(
+                            "turn/completed",
+                            TransportDirection.FROM_WORKER,
+                            correlation_id=turn_id,
+                            payload_category="terminal.completed",
+                        )
                         return WorkerTurnResult(
                             thread_id=thread_id,
                             turn_id=turn_id,
@@ -339,14 +667,25 @@ class CodexAppServerClient:
                             issues=tuple(issues),
                         )
                     if status in {"failed", "interrupted"}:
+                        self._terminal = WorkerTurnTerminal(
+                            thread_id=thread_id,
+                            turn_id=turn_id,
+                            terminal_event_type=f"turn/{status}",
+                            turn_status=status,
+                            activity_count=activity_count,
+                            event_count=event_count,
+                            final_message_present=final_message is not None,
+                        )
+                        self._state = TransportState.TURN_TERMINAL
                         raise self._turn_failure(
                             CodexTurnFailureKind.TURN_FAILED if status == "failed"
                             else CodexTurnFailureKind.TURN_INTERRUPTED,
                             thread_id, turn_id, turn.get("error"), status, None,
                             activity_count, last_activity, started,
                         )
-                    raise CodexProtocolError(
-                        f"turn/completed has invalid status {status!r}"
+                    raise self._fail(
+                        TransportFailureKind.PROTOCOL_VIOLATION,
+                        f"turn/completed has invalid status {status!r}",
                     )
                 continue
 
@@ -364,6 +703,42 @@ class CodexAppServerClient:
         code = error.get("code")
         return code if isinstance(code, str) and code in SAFE_TURN_ERROR_CODES else None
 
+    @staticmethod
+    def _tolerant_params(message: dict[str, object]) -> dict[str, object] | None:
+        """Return params, or None when an unrelated notification is malformed."""
+
+        params = message.get("params")
+        if params is None:
+            return {}
+        if not isinstance(params, dict) or not all(
+            isinstance(key, str) for key in params
+        ):
+            return None
+        return cast(dict[str, object], params)
+
+    @staticmethod
+    def _event_correlation(
+        params: dict[str, object], thread_id: str, turn_id: str
+    ) -> str | None:
+        """Correlate one ring-buffer entry without retaining payload content."""
+
+        for value in (params.get("turnId"), params.get("threadId")):
+            if isinstance(value, str) and value in {thread_id, turn_id}:
+                return value
+        turn = params.get("turn")
+        if isinstance(turn, dict) and turn.get("id") in {thread_id, turn_id}:
+            return cast(str, turn["id"])
+        return None
+
+    def _check_reader_health(self) -> None:
+        """Propagate a reader-thread failure instead of losing it silently."""
+
+        if self._stderr_state is ChannelState.FAILED and self._failure_kind is None:
+            raise self._fail(
+                TransportFailureKind.STDERR_READER_FAILED,
+                "Codex app-server stderr reader failed",
+            )
+
     def _turn_failure(
         self, kind, thread_id, turn_id, error, status, will_retry,
         activity_count, last_activity, started,
@@ -380,6 +755,14 @@ class CodexAppServerClient:
             )
         except (TypeError, ValueError):
             raise CodexProtocolError("turn failure diagnostics are malformed") from None
+        self._failure_kind = {
+            CodexTurnFailureKind.ERROR_NOTIFICATION: TransportFailureKind.ERROR_NOTIFICATION,
+            CodexTurnFailureKind.TURN_FAILED: TransportFailureKind.TURN_FAILED,
+            CodexTurnFailureKind.TURN_INTERRUPTED: TransportFailureKind.TURN_INTERRUPTED,
+        }[kind]
+        self._process_alive_at_failure = (
+            None if self._process is None else self._process.poll() is None
+        )
         return CodexTurnFailed(details=details)
 
     def _project_activity(
@@ -471,16 +854,31 @@ class CodexAppServerClient:
         except (OSError, ValueError):
             return None
 
-    def close(self) -> None:
+    def close(self, *, reason: str = "closed") -> None:
+        """Release the app-server deterministically and keep bounded evidence.
+
+        Order matters: capture process status, stop owning the child, await its
+        exit, then join the readers.  Callers may persist transport diagnostics
+        before or after this call and will observe the same facts.
+        """
+
         process = self._process
+        self._closing = True
+        if self._cleanup_reason is None:
+            self._cleanup_reason = reason[:64]
         if process is None:
+            self._state = TransportState.CLOSED
             return
         self._process = None
+        self._state = TransportState.CLOSING
+        self._capture_process_status(process)
         if process.stdin is not None:
             try:
                 process.stdin.close()
-            except OSError:
-                pass
+            except (OSError, ValueError):
+                self._stdin_state = ChannelState.FAILED
+            else:
+                self._stdin_state = ChannelState.CLOSED
         if process.poll() is None:
             process.terminate()
             try:
@@ -491,6 +889,7 @@ class CodexAppServerClient:
                     process.wait(timeout=2)
                 except subprocess.TimeoutExpired:
                     pass
+        self._capture_process_status(process)
         for stream in (process.stdout, process.stderr):
             if stream is not None:
                 try:
@@ -501,6 +900,25 @@ class CodexAppServerClient:
             thread.join(timeout=1.0)
         self._reader_threads.clear()
         self._initialized = False
+        if self._stdout_state is ChannelState.OPEN:
+            self._stdout_state = ChannelState.CLOSED
+        if self._stderr_state is ChannelState.OPEN:
+            self._stderr_state = ChannelState.CLOSED
+        self._state = TransportState.CLOSED
+
+    def _capture_process_status(self, process: _Process) -> None:
+        """Record exit code / signal exactly once, without guessing."""
+
+        try:
+            exit_code = process.poll()
+        except (OSError, ValueError):
+            return
+        if exit_code is None:
+            return
+        self._app_server_exit_code = exit_code
+        # A negative POSIX exit code is the terminating signal.
+        if exit_code < 0:
+            self._app_server_exit_signal = -exit_code
 
     def __enter__(self) -> CodexAppServerClient:
         return self
@@ -511,21 +929,79 @@ class CodexAppServerClient:
     def _request(self, method: str, params: dict[str, object]) -> dict[str, object]:
         request_id = self._next_request_id
         self._next_request_id += 1
+        self._active_request_id = request_id
+        self._record_event(
+            method,
+            TransportDirection.TO_WORKER,
+            correlation_id=self._thread_id,
+            payload_category="request",
+        )
         self._write_message(request_message(request_id, method, params))
         deadline = self._monotonic() + self._config.inactivity_timeout_seconds
         while True:
             try:
                 message = self._read_new_message(deadline)
             except CodexTurnTimeout:
-                self.close()
+                self.close(reason="request_timeout")
                 raise
+            except CodexParentInterrupted:
+                self.close(reason="parent_interrupted")
+                raise
+            self._check_reader_health()
             kind = classify_message(message)
             if kind is MessageKind.RESPONSE:
-                return response_result(message, request_id)
+                self._record_event(
+                    "response",
+                    TransportDirection.FROM_WORKER,
+                    correlation_id=self._thread_id,
+                    payload_category=(
+                        "error" if "error" in message else "result"
+                    ),
+                )
+                if "error" in message:
+                    code = _safe_jsonrpc_error_code(
+                        message["error"].get("code")
+                        if isinstance(message["error"], dict)
+                        else None
+                    )
+                    rejection = self._fail(
+                        TransportFailureKind.REQUEST_REJECTED,
+                        "app-server returned a structured request error",
+                    )
+                    assert isinstance(rejection, CodexRequestRejected)
+                    rejection.request_id = request_id
+                    if code is not None:
+                        rejection.error_code = code
+                    raise rejection
+                return self._response_result(message, request_id)
             if kind is MessageKind.SERVER_REQUEST:
+                self._record_event(
+                    cast(str, message.get("method") or "server.request"),
+                    TransportDirection.FROM_WORKER,
+                    payload_category="server_request",
+                )
                 if self._raise_server_request(message):
                     continue
             self._pending_messages.append(message)
+
+    def _response_result(
+        self, message: dict[str, object], request_id: int
+    ) -> dict[str, object]:
+        response_id = message.get("id")
+        if response_id != request_id:
+            raise self._fail(
+                TransportFailureKind.PROTOCOL_VIOLATION,
+                f"response id {response_id!r} does not match request {request_id}",
+            )
+        result = message.get("result")
+        if not isinstance(result, dict) or not all(
+            isinstance(key, str) for key in result
+        ):
+            raise self._fail(
+                TransportFailureKind.PROTOCOL_VIOLATION,
+                "app-server response result must be an object",
+            )
+        return cast(dict[str, object], result)
 
     def _write_message(self, message: dict[str, object]) -> None:
         process = self._require_process()
@@ -534,7 +1010,15 @@ class CodexAppServerClient:
             process.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
             process.stdin.flush()
         except (BrokenPipeError, OSError) as error:
-            raise CodexProtocolError("Codex app-server stdin is unavailable") from error
+            raise self._fail(
+                TransportFailureKind.STDIN_WRITE_FAILED,
+                "Codex app-server stdin is unavailable",
+            ) from error
+        except ValueError as error:
+            raise self._fail(
+                TransportFailureKind.STDIN_WRITE_FAILED,
+                "Codex app-server stdin is unavailable",
+            ) from error
 
     def _next_message(self, deadline: float) -> dict[str, object]:
         if self._pending_messages:
@@ -572,22 +1056,89 @@ class CodexAppServerClient:
         except queue.Empty as error:
             raise CodexTurnTimeout("timed out waiting for Codex app-server") from error
         if item is _EOF:
-            process = self._process
-            exit_code = process.poll() if process is not None else None
-            raise CodexProtocolError(
-                f"Codex app-server stdout closed unexpectedly (exit {exit_code!r})"
+            self._stdout_state = ChannelState.EOF
+            self._record_event(
+                "stdout.eof", TransportDirection.FROM_WORKER
             )
+            raise self._disconnect_error()
         if isinstance(item, BaseException):
-            raise CodexProtocolError("unable to read Codex app-server stdout") from item
+            self._stdout_state = ChannelState.FAILED
+            self._reader_failure_kind = _reader_failure_kind(item)
+            self._record_event(
+                "stdout.reader_failed", TransportDirection.FROM_WORKER
+            )
+            kind = (
+                TransportFailureKind.PARENT_INTERRUPTED
+                if isinstance(item, KeyboardInterrupt)
+                else TransportFailureKind.STDOUT_READER_FAILED
+            )
+            raise self._fail(
+                kind, "unable to read Codex app-server stdout"
+            ) from item
         try:
             payload = json.loads(cast(str, item))
         except json.JSONDecodeError as error:
-            raise CodexProtocolError("Codex app-server emitted malformed JSON") from error
+            self._record_event(
+                "jsonrpc.decode_failed", TransportDirection.FROM_WORKER
+            )
+            raise self._fail(
+                TransportFailureKind.JSONRPC_DECODE_FAILED,
+                "Codex app-server emitted malformed JSON",
+            ) from error
         if not isinstance(payload, dict) or not all(
             isinstance(key, str) for key in payload
         ):
-            raise CodexProtocolError("Codex app-server JSON must be an object")
+            raise self._fail(
+                TransportFailureKind.JSONRPC_DECODE_FAILED,
+                "Codex app-server JSON must be an object",
+            )
         return cast(dict[str, object], payload)
+
+    def _disconnect_error(self) -> CodexWorkerError:
+        """Separate a real process exit from an EOF on a live channel."""
+
+        process = self._process
+        if process is None:
+            return self._fail(
+                TransportFailureKind.APP_SERVER_DISCONNECTED,
+                "Codex app-server stdout closed unexpectedly (exit None)",
+            )
+        exit_code = process.poll()
+        if exit_code is None and self._eof_grace_seconds > 0:
+            exit_code = self._await_exit_within_grace(process)
+        self._capture_process_status(process)
+        if exit_code is None:
+            message = "Codex app-server stdout closed unexpectedly (exit None)"
+            return self._fail(
+                TransportFailureKind.APP_SERVER_DISCONNECTED, message
+            )
+        message = (
+            f"Codex app-server stdout closed unexpectedly (exit {exit_code!r})"
+        )
+        kind = (
+            TransportFailureKind.PROCESS_EXITED
+            if exit_code != 0
+            else TransportFailureKind.STDOUT_EOF
+        )
+        return self._fail(kind, message)
+
+    def _await_exit_within_grace(self, process: _Process) -> int | None:
+        """Bounded wait so EOF on a live pipe is classified, never guessed."""
+
+        deadline = time.monotonic() + self._eof_grace_seconds
+        while True:
+            try:
+                process.wait(timeout=max(0.0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                pass
+            except (OSError, ValueError):
+                return None
+            exit_code = process.poll()
+            if exit_code is not None:
+                return exit_code
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(_EOF_GRACE_POLL_SECONDS)
 
     def _is_trusted_turn_activity(
         self,
@@ -632,13 +1183,25 @@ class CodexAppServerClient:
                     return
                 self._stdout_queue.put(line)
         except BaseException as error:
+            if self._closing:
+                # A closed pipe during deterministic cleanup is not a failure.
+                self._stdout_queue.put(_EOF)
+                return
             self._stdout_queue.put(error)
 
     def _read_stderr(self, stream: IO[str]) -> None:
+        """Always drain stderr so the app-server can never block on a full pipe."""
+
         try:
             for line in stream:
                 self._stderr_lines.append(line.rstrip("\r\n"))
+            self._stderr_state = ChannelState.EOF
         except (OSError, ValueError):
+            self._stderr_state = ChannelState.CLOSED
+        except BaseException:
+            self._stderr_state = ChannelState.FAILED
+            if self._reader_failure_kind is None:
+                self._reader_failure_kind = "stderr_reader_failed"
             return
 
     def _raise_server_request(

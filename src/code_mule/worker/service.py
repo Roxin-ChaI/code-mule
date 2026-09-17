@@ -13,9 +13,11 @@ from .client import CodexAppServerClient
 from .contracts import CodexWorkerConfig, WorkerTaskRequest, WorkerTurnResult
 from .parsing import build_execution_report
 from .structured_report import (
+    InvalidWorkerReport,
     parse_structured_worker_report,
     structured_worker_report_schema,
 )
+from code_mule.transport import TransportDiagnostics
 
 
 class _WorkerClient(Protocol):
@@ -34,6 +36,8 @@ class _WorkerClient(Protocol):
     def wait_for_turn(self, thread_id: str, turn_id: str) -> WorkerTurnResult: ...
 
     def close(self) -> None: ...
+
+    def transport_diagnostics(self) -> TransportDiagnostics: ...
 
 
 _ClientFactory = Callable[[CodexWorkerConfig], _WorkerClient]
@@ -59,7 +63,9 @@ class CodexWorkerSession:
         else:
             self._client = client_factory(config)
         self._thread_id: str | None = None
+        self._turn_id: str | None = None
         self._closed = False
+        self._diagnostics: TransportDiagnostics | None = None
 
     @property
     def thread_id(self) -> str | None:
@@ -70,6 +76,20 @@ class CodexWorkerSession:
         """Whether the local app-server boundary has been closed."""
 
         return self._closed
+
+    @property
+    def turn_id(self) -> str | None:
+        """The current Codex turn identity, persisted with the attempt."""
+
+        return self._turn_id
+
+    def transport_diagnostics(self) -> TransportDiagnostics | None:
+        """Bounded supervision facts captured for the last Worker boundary."""
+
+        snapshot = getattr(self._client, "transport_diagnostics", None)
+        if callable(snapshot):
+            self._diagnostics = snapshot()
+        return self._diagnostics
 
     def start(self) -> None:
         if self._thread_id is not None:
@@ -91,8 +111,15 @@ class CodexWorkerSession:
             request.prompt,
             output_schema=structured_worker_report_schema(),
         )
+        self._turn_id = turn_id
         result = self._client.wait_for_turn(self._thread_id, turn_id)
-        report = parse_structured_worker_report(result.final_message)
+        # Capture trusted terminal evidence before any report parsing so a
+        # parser failure can never masquerade as a missing terminal result.
+        terminal = getattr(self._client, "terminal_evidence", None)
+        try:
+            report = parse_structured_worker_report(result.final_message)
+        except InvalidWorkerReport as error:
+            raise InvalidWorkerReport(str(error), terminal=terminal) from None
         return build_execution_report(
             request=request,
             result=report,
@@ -102,6 +129,8 @@ class CodexWorkerSession:
         )
 
     def close(self) -> None:
+        if self._diagnostics is None:
+            self.transport_diagnostics()
         self._client.close()
         self._closed = True
 

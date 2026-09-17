@@ -29,6 +29,35 @@ class LocalCommandResult:
     stderr: str = ""
 
 
+@dataclass(frozen=True)
+class CodexTransportProbe:
+    """Read-only Codex CLI facts.  Never starts a model turn."""
+
+    binary: str | None
+    version: str | None
+    app_server_available: bool
+
+
+def probe_codex_transport(
+    environment: Mapping[str, str] | None = None,
+) -> CodexTransportProbe:
+    """Probe only the CLI binary, its version, and app-server availability."""
+
+    codex = _which("codex", environment)
+    if codex is None:
+        return CodexTransportProbe(None, None, False)
+    version: str | None = None
+    version_result = run_local_command(
+        (str(codex), "--version"), Path.cwd(), environment=environment
+    )
+    if version_result.returncode == 0:
+        version = safe_version(version_result.stdout)
+    server_result = run_local_command(
+        (str(codex), "app-server", "--help"), Path.cwd(), environment=environment
+    )
+    return CodexTransportProbe(str(codex), version, server_result.returncode == 0)
+
+
 _VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+(?:[-+._a-zA-Z0-9]+)?")
 _STATUS_ENTRY_LIMIT = 8
 
@@ -278,7 +307,12 @@ class DoctorService:
                     "No minimum-version claim is made; update to a CLI that provides it.",
                 ),
             )
-        return DoctorCheck("Codex", "PASS", True, details=details)
+        return DoctorCheck(
+            "Codex",
+            "PASS",
+            True,
+            details=details + ("app server  codex app-server (available)",),
+        )
 
     def _deepseek_check(self) -> DoctorCheck:
         if self._environment.get("DEEPSEEK_API_KEY"):
@@ -460,9 +494,11 @@ class StartPreflightService:
 
 
 __all__ = [
+    "CodexTransportProbe",
     "DoctorService",
     "LocalCommandResult",
     "StartPreflightService",
+    "probe_codex_transport",
     "run_local_command",
     "safe_version",
     "workspace_probe",

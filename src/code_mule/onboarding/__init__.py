@@ -9,8 +9,10 @@ from .contracts import (
 )
 from .render import render_doctor
 from .service import (
+    CodexTransportProbe,
     DoctorService,
     StartPreflightService,
+    probe_codex_transport,
     run_local_command,
     safe_version,
     workspace_probe,
@@ -18,6 +20,7 @@ from .service import (
 )
 
 __all__ = [
+    "CodexTransportProbe",
     "DoctorCheck",
     "DoctorReport",
     "DoctorService",
@@ -25,6 +28,7 @@ __all__ = [
     "StartPreflight",
     "StartPreflightService",
     "WorkspaceProbe",
+    "probe_codex_transport",
     "render_doctor",
     "run_local_command",
     "safe_version",

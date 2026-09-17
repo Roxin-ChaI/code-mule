@@ -22,7 +22,10 @@ from code_mule.human import (
 )
 from code_mule.state.models import ProjectState
 from code_mule.recovery.service import RecoveryClassifier
-from code_mule.recovery.uncertainty import worker_uncertainty_evidence
+from code_mule.recovery.uncertainty import (
+    failure_class_for_stop_cause,
+    worker_uncertainty_evidence,
+)
 from code_mule.git_delivery.recovery import no_change_delivery_recovery_evidence
 from code_mule.revision import latest_revision
 from code_mule.project_verification import final_review_human_judgment_evidence
@@ -454,6 +457,14 @@ class ProjectDiagnosisService:
             ),
             worker_uncertainty=worker_uncertainty,
             no_change_delivery=no_change_delivery,
+            worker_failure_class=_worker_failure_class(
+                state, action, worker_uncertainty
+            ),
+            worker_transport_evidence_available=(
+                False
+                if worker_uncertainty is None
+                else worker_uncertainty.transport_evidence_available
+            ),
         )
 
     def _classification(self, state, pending, inconsistent) -> _Classification:
@@ -661,6 +672,24 @@ class ProjectDiagnosisService:
             )
         except (KeyError, ValueError):
             return None
+
+
+def _worker_failure_class(state, action, worker_uncertainty) -> str | None:
+    """Typed owner of a stopped Worker, preferring persisted v16 evidence."""
+
+    if worker_uncertainty is None or action is None or action.task_id is None:
+        return None
+    attempts = tuple(
+        item for item in state.execution_attempts if item.task_id == action.task_id
+    )
+    if attempts:
+        latest = max(attempts, key=lambda item: item.attempt)
+        diagnostics = latest.transport
+        if diagnostics is not None and not diagnostics.is_legacy_incomplete:
+            if diagnostics.failure_class is not None:
+                return diagnostics.failure_class.value
+    derived = failure_class_for_stop_cause(worker_uncertainty.stop_cause)
+    return None if derived is None else derived.value
 
 
 __all__ = ["ProjectDiagnosisService"]

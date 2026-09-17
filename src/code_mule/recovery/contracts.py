@@ -5,6 +5,8 @@ from datetime import datetime
 from enum import StrEnum
 import re
 
+from code_mule.transport import TransportDiagnostics
+
 
 class ExecutionStopReason(StrEnum):
     BOSS_PAUSE = "boss_pause"
@@ -91,6 +93,13 @@ class RecoveryMode(StrEnum):
 
 
 class WorkerStopCause(StrEnum):
+    """Typed reason a Worker attempt stopped producing trusted evidence.
+
+    ``UNKNOWN`` survives only to read pre-v16 evidence that never captured a
+    typed cause.  No v16 code path produces it; an unrecognised protocol
+    event becomes ``UNCLASSIFIED_PROTOCOL_FAILURE`` with bounded facts.
+    """
+
     INACTIVITY_TIMEOUT = "inactivity_timeout"
     HARD_TIMEOUT = "hard_timeout"
     ERROR_NOTIFICATION = "error_notification"
@@ -98,6 +107,21 @@ class WorkerStopCause(StrEnum):
     TURN_INTERRUPTED = "turn_interrupted"
     APP_SERVER_START = "app_server_start"
     PROTOCOL_ERROR = "protocol_error"
+    PROCESS_EXITED = "process_exited"
+    STDOUT_EOF = "stdout_eof"
+    STDOUT_READER_FAILED = "stdout_reader_failed"
+    STDERR_READER_FAILED = "stderr_reader_failed"
+    STDIN_WRITE_FAILED = "stdin_write_failed"
+    JSONRPC_DECODE_FAILED = "jsonrpc_decode_failed"
+    REQUEST_REJECTED = "request_rejected"
+    APP_SERVER_DISCONNECTED = "app_server_disconnected"
+    TRANSPORT_CANCELLED = "transport_cancelled"
+    PARENT_INTERRUPTED = "parent_interrupted"
+    REPORT_PARSE_FAILED = "report_parse_failed"
+    TERMINAL_RECEIVED_REPORT_PARSE_FAILED = "terminal_received_report_parse_failed"
+    REPORT_PERSIST_FAILED = "report_persist_failed"
+    RUNTIME_FAILURE = "runtime_failure"
+    UNCLASSIFIED_PROTOCOL_FAILURE = "unclassified_protocol_failure"
     UNKNOWN = "unknown"
 
 
@@ -180,6 +204,7 @@ class ExecutionAttempt:
     terminal_at: datetime | None = None
     failure_kind: str | None = None
     partial_paths_exist: bool = False
+    transport: TransportDiagnostics | None = None
 
     def __post_init__(self) -> None:
         _optional_id(self.task_id, "task_id")
@@ -194,6 +219,10 @@ class ExecutionAttempt:
             r"[a-z0-9_.-]{1,64}", self.failure_kind
         ):
             raise ValueError("failure_kind must be normalized and bounded")
+        if self.transport is not None and not isinstance(
+            self.transport, TransportDiagnostics
+        ):
+            raise ValueError("transport diagnostics must be typed")
 
 
 @dataclass(frozen=True)
@@ -243,6 +272,7 @@ class WorkerUncertaintyEvidence:
     ownership_status: WorkerOwnershipStatus
     stop_cause: WorkerStopCause
     retry_safe: bool
+    transport_evidence_available: bool = False
 
     def __post_init__(self) -> None:
         _optional_id(self.task_id, "task_id")
@@ -272,6 +302,8 @@ class WorkerUncertaintyEvidence:
             or self.ownership_status is WorkerOwnershipStatus.ACTIVE_MATCHED
         ):
             raise ValueError("unsafe Worker evidence cannot permit retry")
+        if type(self.transport_evidence_available) is not bool:
+            raise ValueError("transport_evidence_available must be boolean")
 
 
 __all__ = [

@@ -39,6 +39,7 @@ from code_mule.onboarding import (
     DoctorService,
     StartDecision,
     StartPreflightService,
+    probe_codex_transport,
     render_doctor,
     workspace_slug,
 )
@@ -782,8 +783,19 @@ class ProductionCliComposition:
             raise InvalidCliProjectState("human action state is ambiguous") from error
         if action is None:
             raise InvalidCliProjectState("no pending HumanAction")
+        codex_version = None
+        if verbose:
+            probe = probe_codex_transport(self._environment)
+            codex_version = probe.version
         return CliCommandResult(
-            CliExitCode.SUCCESS, render_human_action(action, verbose=verbose, state=state, terminal=TerminalDashboard.for_stream(self._stdout))
+            CliExitCode.SUCCESS,
+            render_human_action(
+                action,
+                verbose=verbose,
+                state=state,
+                terminal=TerminalDashboard.for_stream(self._stdout),
+                codex_version=codex_version,
+            ),
         )
 
     def approve(self, action_id: str, verbose: bool = False) -> CliCommandResult:
