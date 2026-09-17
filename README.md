@@ -357,10 +357,10 @@ boundary and its manual real-soak release gate are documented in
 
 Current v0.1.1 release-preparation baseline:
 
-- **774 automated tests PASS**, including runtime-handoff, PID-reuse, real
+- **775 automated tests PASS**, including runtime-handoff, PID-reuse, real
   shell restart regressions that run the persistent launcher without the
   repository `.venv` on `PATH`, and a deterministic Codex Worker transport
-  suite covering 21 fake app-server scenarios, a repeated spawn/turn/close
+  suite covering 23 fake app-server scenarios, a repeated spawn/turn/close
   stress loop, and process/thread leak assertions;
 - `compileall`, `pip check`, and `git diff --check` PASS;
 - real DeepSeek + Codex E2E: Plan v1, 6/6 Tasks, Worker Input → Boss answer

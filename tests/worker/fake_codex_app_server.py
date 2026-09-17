@@ -63,6 +63,7 @@ SCENARIOS = (
     "no_terminal_activity",
     "oversized_line",
     "soak_edit",
+    "turn_failed_method",
 )
 
 
@@ -161,6 +162,18 @@ def _incomplete_after_activity(scenario: str) -> None:
                         "items": [],
                         "error": {"message": "fake failure", "code": "internal_error"},
                     },
+                },
+            }
+        )
+    elif scenario == "turn_failed_method":
+        _activity()
+        _send(
+            {
+                "method": "turn/failed",
+                "params": {
+                    "threadId": THREAD_ID,
+                    "turnId": TURN_ID,
+                    "turn": {"id": TURN_ID, "status": "failed"},
                 },
             }
         )

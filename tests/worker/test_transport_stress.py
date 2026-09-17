@@ -160,6 +160,21 @@ class TransportScenarioTests(unittest.TestCase):
             "codex_turn_failure",
         )
 
+    def test_alternate_terminal_method_is_classified_not_timed_out(self) -> None:
+        client = self.client("turn_failed_method")
+        client.initialize()
+        thread_id = client.start_thread()
+        turn_id = client.start_turn(thread_id, "prompt")
+        with self.assertRaises(CodexTurnFailed) as caught:
+            client.wait_for_turn(thread_id, turn_id)
+        self.assertIs(caught.exception.details.kind, CodexTurnFailureKind.TURN_FAILED)
+        diagnostics = client.transport_diagnostics()
+        self.assertIs(
+            diagnostics.transport_failure_kind, TransportFailureKind.TURN_FAILED
+        )
+        self.assertTrue(diagnostics.terminal_event_received)
+        self.assertEqual(diagnostics.terminal_event_type, "turn/failed")
+
     def test_request_rejection_is_never_an_unknown_stop(self) -> None:
         client = self.client("request_rejected")
         client.initialize()

@@ -58,6 +58,11 @@ These are different failures and are never conflated:
 | child killed by a signal | `process_exited` (signal kept) |
 | no events at all, deadlines reached | `inactivity_timeout` / `hard_timeout` |
 
+A terminal outcome is recognised whether Codex reports it as a status on
+`turn/completed` or as its own `turn/failed` / `turn/interrupted`
+notification; an unrecognised terminal shape is classified, never allowed to
+run into a timeout.
+
 ### Cleanup ordering
 
 Cleanup is deterministic and preserves evidence in this order:

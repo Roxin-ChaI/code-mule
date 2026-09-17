@@ -147,6 +147,10 @@ _HANDLED_TURN_METHODS = frozenset(
     }
 )
 
+# Codex may express the terminal outcome as its own method instead of a
+# status on ``turn/completed``.
+_ALTERNATE_TERMINAL_METHODS = ("turn/failed", "turn/interrupted")
+
 _ITEM_CATEGORY = {
     "agentMessage": "item.agent_message",
     "commandExecution": "item.command_execution",
@@ -700,6 +704,44 @@ class CodexAppServerClient:
                     raise self._fail(
                         TransportFailureKind.PROTOCOL_VIOLATION,
                         f"turn/completed has invalid status {status!r}",
+                    )
+                continue
+
+            if method in _ALTERNATE_TERMINAL_METHODS:
+                # Codex may name the terminal notification after its outcome.
+                # Treat it as terminal rather than letting a real failure run
+                # into an inactivity timeout.
+                if matches_thread and matches_turn:
+                    self._require_event_identity(params, method)
+                    status = (
+                        "failed"
+                        if method == _ALTERNATE_TERMINAL_METHODS[0]
+                        else "interrupted"
+                    )
+                    self._terminal = WorkerTurnTerminal(
+                        thread_id=thread_id,
+                        turn_id=turn_id,
+                        terminal_event_type=f"turn/{status}",
+                        turn_status=status,
+                        activity_count=activity_count,
+                        event_count=event_count + 1,
+                        final_message_present=final_message is not None,
+                    )
+                    self._state = TransportState.TURN_TERMINAL
+                    event_count += 1
+                    turn_error = turn.get("error") if isinstance(turn, dict) else None
+                    raise self._turn_failure(
+                        CodexTurnFailureKind.TURN_FAILED
+                        if status == "failed"
+                        else CodexTurnFailureKind.TURN_INTERRUPTED,
+                        thread_id,
+                        turn_id,
+                        turn_error,
+                        status,
+                        None,
+                        activity_count,
+                        last_activity,
+                        started,
                     )
                 continue
 
