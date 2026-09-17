@@ -985,10 +985,15 @@ def _render_post_completion_replanning_failure(
 
 
 def _render_verification_failure(state: ProjectState, action: HumanAction, *, verbose: bool) -> tuple[str, ...]:
-    from code_mule.domain.worker_verification import WorkerCheckStatus, WorkerCheckType, safe_check_name
+    from code_mule.domain.worker_verification import (
+        UNMET_CHECK_LIMIT,
+        WorkerCheckStatus,
+        WorkerCheckType,
+        safe_check_name,
+    )
 
     events = tuple(event for event in state.events
-                   if event.event_type == "git.delivery_failed"
+                   if event.event_type in {"task.verification_blocked", "git.delivery_failed"}
                    and event.entity_id == action.task_id
                    and event.timestamp == action.created_at
                    and event.metadata.get("error_type") == "WorkerVerificationError"
@@ -997,19 +1002,59 @@ def _render_verification_failure(state: ProjectState, action: HumanAction, *, ve
         return ()
     metadata = events[0].metadata
     lines = ("Failure     Worker verification evidence blocked delivery",)
-    if (metadata.get("check_status") in {item.value for item in WorkerCheckStatus}
-            and metadata.get("check_type") in {item.value for item in WorkerCheckType}
-            and metadata.get("check_required") in {"true", "false"}):
-        lines += (
-            f"Failed check {safe_check_name(metadata.get('check_name', ''))}",
-            f"Status       {metadata['check_status']}",
-            f"Required     {'yes' if metadata['check_required'] == 'true' else 'no'}",
-        )
-        if verbose:
-            lines += (f"Check type   {metadata['check_type']}",)
+    statuses = {item.value for item in WorkerCheckStatus}
+    types = {item.value for item in WorkerCheckType}
+    blocking = _blocking_check_rows(metadata, statuses, types)
+    if blocking:
+        if len(blocking) > 1:
+            lines += (f"Blocked by   {len(blocking)} checks",)
+        for index, row in enumerate(blocking, start=1):
+            prefix = "Failed check" if len(blocking) == 1 else f"Blocked check {index}"
+            lines += (
+                f"{prefix} {safe_check_name(row['name'])}",
+                f"Status       {row['status']}",
+                f"Required     {'yes' if row['required'] == 'true' else 'no'}",
+            )
+            if verbose:
+                lines += (f"Check type   {row['type']}",)
     if verbose:
         lines += ("Failure type WorkerVerificationError", "Failure stage verification")
     return lines
+
+
+def _blocking_check_rows(
+    metadata: dict[str, str], statuses: set[str], types: set[str]
+) -> list[dict[str, str]]:
+    """Read bounded blocking-check rows, tolerating the single-check form."""
+
+    rows: list[dict[str, str]] = []
+    try:
+        count = int(metadata.get("unmet_check_count", "1"))
+    except (TypeError, ValueError):
+        count = 1
+    from code_mule.domain.worker_verification import UNMET_CHECK_LIMIT as _LIMIT
+
+    for index in range(1, min(count, _LIMIT) + 1):
+        if index == 1 and "unmet_check_1_name" not in metadata:
+            name = metadata.get("check_name")
+            kind = metadata.get("check_type")
+            status = metadata.get("check_status")
+            required = metadata.get("check_required")
+        else:
+            name = metadata.get(f"unmet_check_{index}_name")
+            kind = metadata.get(f"unmet_check_{index}_type")
+            status = metadata.get(f"unmet_check_{index}_status")
+            required = metadata.get(f"unmet_check_{index}_required")
+        if (
+            isinstance(name, str)
+            and kind in types
+            and status in statuses
+            and required in {"true", "false"}
+        ):
+            rows.append(
+                {"name": name, "type": kind, "status": status, "required": required}
+            )
+    return rows
 
 
 def _render_worker_failure(state: ProjectState, action: HumanAction) -> tuple[str, ...]:

@@ -44,10 +44,29 @@ check IDs or a required-check specification. The Worker therefore declares
 and forbids relabeling it as optional merely to pass delivery. Only extra checks
 not demanded by acceptance criteria may be optional when unavailable.
 
+The prompt also fixes the **ownership boundary**. Required Worker verification
+must be sandbox-safe, deterministic, and local: it must not bind a socket,
+launch the service, use the network, or request escalation. Loopback launch,
+localhost health checking, and process stop belong to Code Mule Final
+Verification and must never be a required Worker check. The Worker must
+actually run every required check before it finishes; a required check that did
+not run or did not pass is not a successful delivery, so the Worker must report
+`status=blocked` with a `human_action` naming the missing evidence instead of
+claiming completion.
+
 This remains a reporting trust boundary: the deterministic gate enforces declared
 semantics but cannot prove that the Worker listed every necessary check or ran it.
 Supervisor REVIEW remains required after the gate; optional NOT_RUN does not
 itself approve delivery. This hotfix does not invent a new check execution system.
+
+## Enforcement point
+
+A completed report is checked the moment its evidence is persisted, before any
+Git delivery work, Supervisor REVIEW, staging, or commit can begin. A report
+that claims `status=completed` while any check forbids delivery stops at a typed
+`task.verification_blocked` boundary and a pending `WORKER_VERIFICATION`
+HumanAction. The persisted report and the dirty workspace stay intact as
+evidence, and the Git delivery gate keeps the same rule as defence in depth.
 
 ## Failure diagnostics and human action
 
@@ -56,10 +75,14 @@ itself approve delivery. This hotfix does not invent a new check execution syste
 FAIL/UNKNOWN stop before Supervisor REVIEW and before staging/committing. The
 completed Worker report and partial workspace remain intact; Task is not COMPLETED.
 
-`code-mule inspect --verbose` shows the first blocking check, its type, status and
+`code-mule inspect --verbose` shows the blocking check, its type, status and
 required flag, and the verification stage. Event metadata contains only these
 bounded fields, never detail or arbitrary exception messages. Check labels have
 a conservative character/length policy; suspicious labels are withheld entirely.
+When several checks block delivery, the bounded metadata names each one
+(`unmet_check_count`, `unmet_check_<n>_*`, capped at five) and `inspect` lists
+them all, so the unexecuted check stays identifiable even when its raw label
+was withheld.
 Malformed/inconsistent evidence has a generic verification diagnostic rather
 than an invented check identity. Git path/HEAD/index errors retain the existing
 ownership/recovery gate; this category does not weaken Git safety.

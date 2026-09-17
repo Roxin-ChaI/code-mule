@@ -96,7 +96,13 @@ class VerificationLifecycleTests(RepositoryCase):
         self.assertEqual(git(self.root, "diff", "--cached", "--name-only"), "")
         self.assertTrue((self.root / "js/render-target.js").exists())
         self.assertFalse(any(command[:2] in (("git", "add"), ("git", "commit")) for command in self.commands))
-        event = next(e for e in state.events if e.event_type == "git.delivery_failed")
+        # A delivery-blocking report is stopped at the Worker verification
+        # boundary before any Git delivery work begins.
+        event = next(
+            e
+            for e in state.events
+            if e.event_type in {"task.verification_blocked", "git.delivery_failed"}
+        )
         action = state.human_actions[-1]
         self.assertEqual(action.status.value, "pending")
         if mismatch:

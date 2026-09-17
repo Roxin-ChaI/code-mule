@@ -43,6 +43,7 @@ class ProgressEventType(StrEnum):
     WORKER_ACTIVITY = "worker.activity"
     WORKER_COMPLETED = "worker.completed"
     WORKER_FAILED = "worker.failed"
+    WORKER_VERIFICATION_BLOCKED = "worker.verification_blocked"
     SUPERVISOR_REVIEW_STARTED = "supervisor.review_started"
     SUPERVISOR_REVIEW_COMPLETED = "supervisor.review_completed"
     SUPERVISOR_FAILED = "supervisor.failed"

@@ -9,7 +9,11 @@ import subprocess
 from typing import Protocol
 
 from code_mule.domain.models import ExecutionReport, Task
-from code_mule.domain.worker_verification import evidence_matches_text, legacy_checks
+from code_mule.domain.worker_verification import (
+    blocking_checks,
+    evidence_matches_text,
+    legacy_checks,
+)
 
 from .contracts import (
     DirtyGitBaseline,
@@ -282,9 +286,13 @@ class GitDeliveryService:
             checks = legacy_checks(report.tests, report.static_checks)
         elif not evidence_matches_text(checks, report.tests, report.static_checks):
             raise WorkerVerificationError("Worker verification evidence is inconsistent")
-        for check in checks:
-            if not check.permits_delivery:
-                raise WorkerVerificationError("Worker verification evidence is not passing", check)
+        blocking = blocking_checks(checks)
+        if blocking:
+            raise WorkerVerificationError(
+                "Worker verification evidence is not passing",
+                blocking[0],
+                unmet_checks=blocking,
+            )
 
     @staticmethod
     def _nul_paths(raw: str) -> tuple[str, ...]:

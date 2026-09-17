@@ -159,9 +159,17 @@ class GitOwnershipError(GitDeliveryError):
 class WorkerVerificationError(GitDeliveryError):
     """Worker verification evidence does not meet delivery prerequisites."""
 
-    def __init__(self, message: str, check: WorkerVerificationCheck | None = None):
+    def __init__(
+        self,
+        message: str,
+        check: WorkerVerificationCheck | None = None,
+        *,
+        unmet_checks: tuple[WorkerVerificationCheck, ...] = (),
+    ):
         super().__init__(message)
         self.check = check
+        # Every check that blocked delivery, not only the first one.
+        self.unmet_checks = unmet_checks
 
 
 class UnexpectedGitHead(GitDeliveryError):

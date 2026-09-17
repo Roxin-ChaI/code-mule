@@ -22,6 +22,12 @@ from code_mule.domain.models import (
     WorkerInputDetails,
 )
 from code_mule.domain.state_machine import validate_transition
+from code_mule.domain.worker_verification import (
+    blocking_check_metadata,
+    blocking_checks,
+    report_verification_checks,
+    unmet_check_summary,
+)
 from code_mule.human import request_human_action
 from code_mule.human import pending_action
 from code_mule.git_delivery import (
@@ -352,6 +358,32 @@ class TaskCycleService:
                 state = self._persist_report(state, task, report)
                 reports += (report,)
                 self._mark_report_persisted(session)
+
+                # A report that claims completed delivery while a required
+                # check never actually passed is not a successful Worker
+                # outcome.  Stop at a typed Worker verification boundary
+                # before review, delivery, or commit can be entered.
+                if (
+                    report.status == "completed"
+                    and not report.human_action_required
+                ):
+                    unmet = blocking_checks(
+                        report_verification_checks(report)
+                    )
+                    if unmet:
+                        state = self._record_verification_block(
+                            state, self._task(state, task.id), unmet
+                        )
+                        self._clear_worker_identity(task.id)
+                        self._emit_verification_block(
+                            state,
+                            self._task(state, task.id),
+                            unmet,
+                            attempt=report.attempt,
+                        )
+                        return self._human_outcome(
+                            task.id, reports, decisions, final_prompt=None
+                        )
 
                 if report.human_action is not None:
                     try:
@@ -1133,6 +1165,52 @@ class TaskCycleService:
             risk=("Delivering without required verification would bypass Task quality gates" if verification
                   else "Committing may include unrelated work or duplicate an uncertain delivery"),
         )
+
+    def _record_verification_block(
+        self,
+        state: ProjectState,
+        task: Task,
+        unmet: tuple,
+    ) -> ProjectState:
+        """Stop a completed report whose required verification never passed."""
+
+        return self._transition_human_required(
+            state,
+            task,
+            event_types=("task.verification_blocked", "task.human_required"),
+            metadata={
+                "error_type": "WorkerVerificationError",
+                "stage": "verification",
+                **blocking_check_metadata(unmet),
+            },
+            category=HumanActionCategory.WORKER_VERIFICATION,
+            summary="Worker verification blocked delivery",
+            requested_action="Run the required verification, then dispatch a fresh Worker",
+            risk=(
+                "Delivering without required verification would bypass Task "
+                "quality gates"
+            ),
+        )
+
+    def _emit_verification_block(
+        self, state: ProjectState, task: Task, unmet: tuple, *, attempt: int
+    ) -> None:
+        # Same Boss-facing wording as the later Git delivery gate, so the
+        # earlier boundary is not a different experience.
+        self._emit_progress(
+            state,
+            task,
+            ProgressEventType.WORKER_VERIFICATION_BLOCKED,
+            "Worker verification requires human action",
+            attempt=attempt,
+            metadata={
+                "unmet_check_count": str(len(unmet)),
+                "check_status": unmet[0].status.value,
+                "check_type": unmet[0].check_type.value,
+                "summary": unmet_check_summary(unmet),
+            },
+        )
+        self._emit_human_gate(state, task, "worker_verification", attempt=attempt)
 
     def _record_workspace_block(
         self,
