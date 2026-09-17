@@ -181,19 +181,59 @@ class KeyObservabilityTests(unittest.TestCase):
         control.note_key(key_name(curses.KEY_NPAGE))
         self.assertEqual(control.key_debug, "KEY_NPAGE")
 
-    def test_key_debug_line_renders_in_the_boss_pane(self):
-        from code_mule.tui.snapshot import boss_lines
+    def test_initial_readout_is_an_em_dash_at_the_activity_status_line(self):
+        control = demo_controller()
+        self.assertEqual(control.key_display, "—")
+        lines = fallback_lines(control, rows=45, cols=80)
+        status_row = next(line for line in lines if line.startswith("Activity "))
+        self.assertIn("Key: —", status_row)
+        # The readout must never sit on, or displace, the Boss input row.
+        self.assertEqual(lines[-1].rstrip(), "boss>")
+
+    def test_readout_updates_through_the_real_key_handler(self):
+        import curses
+
+        from code_mule.tui.app import _handle_key
 
         control = demo_controller()
-        control.note_key("KEY_PPAGE")
-        lines = boss_lines(
-            demo_state(),
-            pending=True,
-            buffer="",
-            key_debug=control.key_debug,
-        )
-        self.assertIn("Key: KEY_PPAGE", lines)
-        self.assertEqual(lines[-1], "boss> ")
+        seen = []
+        for key, expected in (
+            (curses.KEY_UP, "KEY_UP"),
+            (curses.KEY_DOWN, "KEY_DOWN"),
+            (curses.KEY_PPAGE, "KEY_PPAGE"),
+            (curses.KEY_NPAGE, "KEY_NPAGE"),
+            (curses.KEY_END, "KEY_END"),
+            ("\x0c", "CTRL_L"),
+            ("\x1b[6~", "UNKNOWN"),
+        ):
+            _handle_key(control, key, rows=45, cols=80)
+            row = next(
+                line
+                for line in fallback_lines(control, rows=45, cols=80)
+                if line.startswith("Activity ")
+            )
+            self.assertIn(f"Key: {expected}", row)
+            seen.append(expected)
+        self.assertEqual(seen[-1], "UNKNOWN")
+        self.assertNotIn("\x1b", "".join(fallback_lines(control, rows=45, cols=80)))
+
+    def test_readout_survives_resize_and_stays_off_the_boss_row(self):
+        import curses
+
+        from code_mule.tui.app import _handle_key
+
+        control = demo_controller()
+        _handle_key(control, curses.KEY_PPAGE, rows=45, cols=80)
+        for rows, cols in ((45, 80), (24, 80), (40, 120)):
+            with self.subTest(rows=rows, cols=cols):
+                lines = fallback_lines(control, rows=rows, cols=cols)
+                self.assertEqual(len(lines), rows)
+                self.assertIn("Key: KEY_PPAGE", "\n".join(lines))
+                self.assertEqual(lines[-1].rstrip(), "boss>")
+        _handle_key(control, curses.KEY_RESIZE, rows=120, cols=200)
+        lines = fallback_lines(control, rows=40, cols=120)
+        self.assertIn("Key: KEY_RESIZE", "\n".join(lines))
+        self.assertEqual(lines[-1].rstrip(), "boss>")
 
     def test_key_name_is_recorded_by_the_key_handler(self):
         import curses
@@ -208,6 +248,42 @@ class KeyObservabilityTests(unittest.TestCase):
 
 
 class DemoFrameTests(unittest.TestCase):
+    def test_script_and_cli_demo_entry_points_both_enable_key_debug(self):
+        import importlib.util
+        from pathlib import Path
+        import sys
+
+        root = Path(__file__).resolve().parents[2]
+        spec = importlib.util.spec_from_file_location(
+            "tui_demo_script", root / "scripts" / "tui_demo.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules["tui_demo_script"] = module
+        spec.loader.exec_module(module)
+        self.assertTrue(hasattr(module, "main"))
+
+        from code_mule.cli.composition import ProductionCliComposition
+
+        composition = ProductionCliComposition(
+            Path("/tmp/nonexistent-state.json"),
+            environment={},
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+            stdin=io.StringIO(),
+        )
+        result = composition.ui(demo=True)
+        text = "\n".join(result.output)
+        # Both demo entries must show the readout, starting at the em dash.
+        self.assertIn("Key: —", text)
+        self.assertIn("Activity ", text)
+
+    def test_script_demo_renders_the_readout_before_any_key(self):
+        control = demo_controller()
+        text = "\n".join(fallback_lines(control, rows=45, cols=80))
+        self.assertIn("Key: —", text)
+        self.assertIn("Activity ", text)
+
     def test_demo_frame_is_bounded_for_the_documented_sizes(self):
         control = demo_controller()
         for rows, cols in ((45, 80), (24, 80), (40, 120)):
