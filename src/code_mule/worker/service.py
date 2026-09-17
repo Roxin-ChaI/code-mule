@@ -18,7 +18,7 @@ from .structured_report import (
     parse_structured_worker_report,
     structured_worker_report_schema,
 )
-from code_mule.transport import TransportDiagnostics
+from code_mule.transport import TransportDiagnostics, TransportState
 
 
 class _WorkerClient(Protocol):
@@ -120,6 +120,7 @@ class CodexWorkerSession:
         # Capture trusted terminal evidence before any report parsing so a
         # parser failure can never masquerade as a missing terminal result.
         terminal = getattr(self._client, "terminal_evidence", None)
+        self.mark_report_state(TransportState.REPORT_EXTRACTION)
         try:
             report = parse_structured_worker_report(result.final_message)
         except InvalidWorkerReport as error:
@@ -127,13 +128,23 @@ class CodexWorkerSession:
             # terminal evidence observed before parsing.
             error.terminal = terminal
             raise
-        return build_execution_report(
+        self.mark_report_state(TransportState.REPORT_PARSED)
+        execution_report = build_execution_report(
             request=request,
             result=report,
             report_id=report_id,
             created_at=created_at,
             transport_issues=result.issues,
         )
+        self.mark_report_state(TransportState.REPORT_VALIDATED)
+        return execution_report
+
+    def mark_report_state(self, state: TransportState) -> None:
+        """Advance the bounded report lifecycle without requiring a real client."""
+
+        advance = getattr(self._client, "mark_report_state", None)
+        if callable(advance):
+            advance(state)
 
     def close(self) -> None:
         if self._diagnostics is None:

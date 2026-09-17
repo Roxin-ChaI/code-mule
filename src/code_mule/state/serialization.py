@@ -84,6 +84,7 @@ from code_mule.transport import (
     TransportDirection,
     TransportEventRecord,
     TransportFailureKind,
+    TransportState,
     WorkerFailureClass,
     failure_class_for,
     legacy_transport_diagnostics,
@@ -599,6 +600,11 @@ def _transport_diagnostics_to_payload(
         "stdin_state": diagnostics.stdin_state.value,
         "terminal_event_received": diagnostics.terminal_event_received,
         "activity_count": diagnostics.activity_count,
+        "report_lifecycle": (
+            None
+            if diagnostics.report_lifecycle is None
+            else diagnostics.report_lifecycle.value
+        ),
         "app_server_pid": diagnostics.app_server_pid,
         "app_server_started_at": (
             None
@@ -2234,6 +2240,22 @@ def _optional_bool(value: object, context: str) -> bool | None:
     return _expect_bool(value, context)
 
 
+def _optional_report_lifecycle(
+    payload: dict[str, object],
+) -> TransportState | None:
+    value = _field(payload, "report_lifecycle", "transport_diagnostics")
+    if value is None:
+        return None
+    try:
+        return TransportState(
+            _expect_str(value, "transport_diagnostics.report_lifecycle")
+        )
+    except ValueError:
+        raise InvalidProjectState(
+            "transport_diagnostics.report_lifecycle is not a known lifecycle stage"
+        ) from None
+
+
 def _transport_event_from_payload(value: object) -> TransportEventRecord:
     payload = _expect_object(value, "transport_event")
     return TransportEventRecord(
@@ -2318,6 +2340,7 @@ def _transport_diagnostics_from_payload(value: object) -> TransportDiagnostics:
             _field(payload, "activity_count", "transport_diagnostics"),
             "transport_diagnostics.activity_count",
         ),
+        report_lifecycle=_optional_report_lifecycle(payload),
         app_server_pid=_expect_optional_int(
             _field(payload, "app_server_pid", "transport_diagnostics"),
             "transport_diagnostics.app_server_pid",

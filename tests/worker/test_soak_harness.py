@@ -109,6 +109,50 @@ class SoakHarnessUnitTests(unittest.TestCase):
                 if kind is TransportFailureKind.REPORT_PARSE_FAILED:
                     self.assertEqual(reported_kind, "report_parse_failed")
 
+    def test_report_contract_bucketing_splits_extraction_and_validation(self) -> None:
+        cases = {
+            ("envelope", None): "report_extraction",
+            ("extraction", None): "report_extraction",
+            ("json_decode", None): "report_extraction",
+            ("schema", None): "report_validation",
+            ("semantic_validation", None): "report_validation",
+            (None, "report_parse_failed"): "report_unstaged",
+            (None, None): None,
+            ("schema", "turn_failed"): "report_validation",
+        }
+        for (stage, kind), expected in cases.items():
+            with self.subTest(stage=stage, kind=kind):
+                self.assertEqual(
+                    self.soak.report_contract_bucket(stage, kind), expected
+                )
+
+    def test_first_real_soak_classifies_without_fabricating_a_stage(self) -> None:
+        """The first soak's artifacts predate typed stages; stay honest."""
+
+        # Exactly the shape persisted by artifacts/iteration-02.json.
+        recorded = [
+            {"failure_kind": "report_parse_failed", "report_stage": None},
+            {"failure_kind": "report_parse_failed", "report_stage": None},
+        ]
+        buckets = [
+            self.soak.report_contract_bucket(
+                item["report_stage"], item["failure_kind"]
+            )
+            for item in recorded
+        ]
+        self.assertEqual(buckets, ["report_unstaged", "report_unstaged"])
+        self.assertEqual(
+            sum(b == "report_extraction" for b in buckets), 0
+        )
+
+    def test_same_envelope_is_extraction_once_the_stage_is_recorded(self) -> None:
+        """With v16 diagnostics the same failure is provably an extraction one."""
+
+        self.assertEqual(
+            self.soak.report_contract_bucket("json_decode", "report_parse_failed"),
+            "report_extraction",
+        )
+
     @staticmethod
     def _persist_error(kind: TransportFailureKind) -> CodexWorkerError:
         error = CodexWorkerError("typed")
@@ -153,6 +197,174 @@ class SoakHarnessUnitTests(unittest.TestCase):
 
 class SoakHarnessEndToEndTests(unittest.TestCase):
     """Run the real harness end to end against the deterministic fake server."""
+
+    def _shim(self, root: Path, scenario: str) -> dict[str, str]:
+        shim_dir = root / "bin"
+        shim_dir.mkdir(parents=True, exist_ok=True)
+        shim = shim_dir / "codex"
+        shim.write_text(
+            "#!/bin/sh\n"
+            f'exec "{sys.executable}" "{_FAKE}" {scenario}\n',
+            encoding="utf-8",
+        )
+        shim.chmod(shim.stat().st_mode | stat.S_IEXEC)
+        environment = dict(os.environ)
+        environment["PATH"] = f"{shim_dir}{os.pathsep}{environment['PATH']}"
+        return environment
+
+    def _run(self, root: Path, scenario: str, *extra: str):
+        soak = load_soak()
+        artifacts = root / f"artifacts-{scenario}"
+        environment = self._shim(root, scenario)
+        buffer = io.StringIO()
+        with mock.patch.dict(os.environ, environment, clear=False):
+            with redirect_stdout(buffer):
+                code = soak.main(
+                    [
+                        "--iterations",
+                        "1",
+                        "--artifacts-dir",
+                        str(artifacts),
+                        *extra,
+                    ]
+                )
+        return code, buffer.getvalue(), artifacts
+
+    def _workspaces(self, root: Path) -> list[Path]:
+        return sorted(root.glob("**/iteration-*/workspace"))
+
+    def test_failing_iteration_preserves_its_workspace_and_artifact(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch(
+                "tempfile.mkdtemp", return_value=str(root / "run")
+            ):
+                (root / "run").mkdir(parents=True, exist_ok=True)
+                code, output, artifacts = self._run(root, "turn_failed")
+            self.assertEqual(code, 1, output)
+            self.assertEqual(
+                len(list(artifacts.glob("iteration-*.json"))), 1
+            )
+            workspaces = self._workspaces(root)
+            self.assertEqual(len(workspaces), 1, "failure evidence was deleted")
+            self.assertTrue((workspaces[0] / "value.txt").exists())
+
+    def test_passing_iteration_removes_only_its_workspace(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch("tempfile.mkdtemp", return_value=str(root / "run")):
+                (root / "run").mkdir(parents=True, exist_ok=True)
+                code, output, artifacts = self._run(root, "soak_edit")
+            self.assertEqual(code, 0, output)
+            self.assertEqual(self._workspaces(root), [])
+            self.assertEqual(len(list(artifacts.glob("iteration-*.json"))), 1)
+
+    def test_purge_failures_is_an_explicit_opt_in_that_keeps_artifacts(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch("tempfile.mkdtemp", return_value=str(root / "run")):
+                (root / "run").mkdir(parents=True, exist_ok=True)
+                code, output, artifacts = self._run(
+                    root, "turn_failed", "--purge-failures"
+                )
+            self.assertEqual(code, 1, output)
+            self.assertEqual(self._workspaces(root), [])
+            self.assertEqual(len(list(artifacts.glob("iteration-*.json"))), 1)
+
+    def test_interruption_preserves_every_workspace_and_artifact(self) -> None:
+        soak = load_soak()
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifacts = root / "artifacts"
+            environment = self._shim(root, "soak_edit")
+            real_run = soak.run_iteration
+            calls = {"count": 0}
+
+            def interrupted(index, run_root, artifacts_dir):
+                calls["count"] += 1
+                if calls["count"] == 2:
+                    raise KeyboardInterrupt
+                return real_run(index, run_root, artifacts_dir)
+
+            buffer = io.StringIO()
+            with mock.patch.dict(os.environ, environment, clear=False):
+                with mock.patch.object(soak, "run_iteration", interrupted):
+                    with mock.patch(
+                        "tempfile.mkdtemp", return_value=str(root / "run")
+                    ):
+                        (root / "run").mkdir(parents=True, exist_ok=True)
+                        with redirect_stdout(buffer):
+                            code = soak.main(
+                                [
+                                    "--iterations",
+                                    "3",
+                                    "--artifacts-dir",
+                                    str(artifacts),
+                                ]
+                            )
+            output = buffer.getvalue()
+            self.assertEqual(code, 130, output)
+            self.assertIn("SOAK INTERRUPTED", output)
+            # The interrupted iteration kept its workspace, and the artifact
+            # for the completed iteration was not removed.
+            self.assertEqual(self._workspaces(root), [])
+            self.assertEqual(
+                sorted(p.name for p in root.glob("run/iteration-*")),
+                ["iteration-01", "iteration-02"],
+            )
+            self.assertEqual(len(list(artifacts.glob("iteration-*.json"))), 1)
+
+    def test_aggregation_buckets_each_failure_mode_correctly(self) -> None:
+        cases = {
+            "turn_failed": (
+                (),
+                ("Codex turn failures  1", "Transport failures   0"),
+            ),
+            "stdout_eof_exit_nonzero": (
+                (),
+                ("Process failures     1", "Transport failures   0"),
+            ),
+            "malformed_jsonrpc": (
+                (),
+                ("Transport failures   1", "Unknown failures     0"),
+            ),
+            "inactivity_timeout": (
+                ("--inactivity-timeout", "1", "--max-turn-seconds", "2"),
+                ("Timeouts             1", "Unknown failures     0"),
+            ),
+            "prose_only_report": (
+                (),
+                (
+                    "Runtime failures     1",
+                    "Report extraction failures  1",
+                    "Report validation failures  0",
+                    "Transport failures   0",
+                    "Unknown failures     0",
+                ),
+            ),
+        }
+        for scenario, (extra, expected_lines) in cases.items():
+            with self.subTest(scenario=scenario), TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                with mock.patch(
+                    "tempfile.mkdtemp", return_value=str(root / "run")
+                ):
+                    (root / "run").mkdir(parents=True, exist_ok=True)
+                    _code, output, _artifacts = self._run(root, scenario, *extra)
+                for expected in expected_lines:
+                    self.assertIn(expected, output, output)
+
+    def test_schema_invalid_report_is_counted_as_report_validation(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch("tempfile.mkdtemp", return_value=str(root / "run")):
+                (root / "run").mkdir(parents=True, exist_ok=True)
+                _code, output, _artifacts = self._run(root, "schema_invalid_report")
+        self.assertIn("Runtime failures     1", output)
+        self.assertIn("Report extraction failures  0", output)
+        self.assertIn("Report validation failures  1", output)
+        self.assertIn("Transport failures   0", output)
+        self.assertIn("Unknown failures     0", output)
 
     def test_harness_reaches_pass_without_any_real_codex_turn(self) -> None:
         soak = load_soak()

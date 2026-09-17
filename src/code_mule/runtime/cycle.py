@@ -66,7 +66,7 @@ from code_mule.worker.contracts import (
     WorkerTaskRequest,
     worker_failure_metadata,
 )
-from code_mule.transport import TransportDiagnostics
+from code_mule.transport import TransportDiagnostics, TransportState
 
 from .contracts import (
     InvalidTaskCycleState,
@@ -351,6 +351,7 @@ class TaskCycleService:
                 task = self._task(state, task.id)
                 state = self._persist_report(state, task, report)
                 reports += (report,)
+                self._mark_report_persisted(session)
 
                 if report.human_action is not None:
                     try:
@@ -644,6 +645,19 @@ class TaskCycleService:
         except Exception:
             return None
         return snapshot if isinstance(snapshot, TransportDiagnostics) else None
+
+    @staticmethod
+    def _mark_report_persisted(session: WorkerSession) -> None:
+        """Record that the ExecutionReport reached durable project state."""
+
+        advance = getattr(session, "mark_report_state", None)
+        if not callable(advance):
+            return
+        try:
+            advance(TransportState.REPORT_PERSISTED)
+        except Exception:
+            # Lifecycle bookkeeping must never change the outcome it records.
+            return
 
     def _refresh_attempt_transport(
         self, task_id: str, transport: TransportDiagnostics | None

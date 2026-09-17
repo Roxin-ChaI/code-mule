@@ -217,12 +217,10 @@ class WorkerTurnTerminal:
                 r"[A-Za-z0-9_-]{1,128}", value
             ):
                 raise ValueError("terminal identity must be bounded")
-        if self.terminal_event_type not in {
-            "turn/completed",
-            "turn/failed",
-            "turn/interrupted",
-        }:
-            raise ValueError("terminal event type must be a known terminal event")
+        if self.terminal_event_type != "turn/completed":
+            # The app-server protocol defines exactly one terminal turn
+            # notification; the outcome lives in ``turn.status``.
+            raise ValueError("terminal event type must be turn/completed")
         if self.turn_status not in {"completed", "failed", "interrupted"}:
             raise ValueError("terminal turn status must be known")
         if type(self.activity_count) is not int or not (

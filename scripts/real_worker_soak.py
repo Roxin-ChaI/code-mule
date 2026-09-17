@@ -56,6 +56,48 @@ from code_mule.worker import (  # noqa: E402
 from code_mule.worker.service import CodexWorkerSession  # noqa: E402
 
 EXPECTED_VALUE = "value = 42"
+
+# Bounded Worker deadlines.  Overridable from the command line so a fixture or
+# an operator can bound a run without editing the harness.
+DEFAULT_INACTIVITY_TIMEOUT_SECONDS = 180.0
+DEFAULT_MAX_TURN_SECONDS = 900.0
+_TIMEOUTS = {
+    "inactivity": DEFAULT_INACTIVITY_TIMEOUT_SECONDS,
+    "max_turn": DEFAULT_MAX_TURN_SECONDS,
+}
+
+# Report-envelope stages that mean "no usable report candidate was obtained".
+REPORT_EXTRACTION_STAGES = frozenset({"envelope", "extraction", "json_decode"})
+# Report-envelope stages that mean "a candidate was decoded and rejected".
+REPORT_VALIDATION_STAGES = frozenset({"schema", "semantic_validation"})
+
+
+def report_failure_bucket(stage: str | None) -> str | None:
+    """Split a report rejection into extraction versus validation."""
+
+    if stage in REPORT_EXTRACTION_STAGES:
+        return "report_extraction"
+    if stage in REPORT_VALIDATION_STAGES:
+        return "report_validation"
+    return None
+
+
+def report_contract_bucket(
+    stage: str | None, failure_kind: str | None
+) -> str | None:
+    """Bucket a report rejection, keeping un-staged legacy evidence explicit.
+
+    Artifacts written before typed report diagnostics existed carry only
+    ``report_parse_failed`` and no stage.  Those are reported as
+    ``report_unstaged`` instead of being guessed into extraction or validation.
+    """
+
+    bucket = report_failure_bucket(stage)
+    if bucket is not None:
+        return bucket
+    if failure_kind == "report_parse_failed":
+        return "report_unstaged"
+    return None
 TASK_PROMPT = f"""\
 Work inside this isolated disposable Git repository.
 
@@ -126,8 +168,8 @@ def _worker_config(workspace: Path) -> CodexWorkerConfig:
         workspace=workspace.resolve(),
         approval_policy="never",
         sandbox="workspace-write",
-        inactivity_timeout_seconds=180,
-        max_turn_seconds=900,
+        inactivity_timeout_seconds=_TIMEOUTS["inactivity"],
+        max_turn_seconds=_TIMEOUTS["max_turn"],
     )
 
 
@@ -351,9 +393,27 @@ def main(argv: list[str] | None = None) -> int:
             "its workspace for forensics"
         ),
     )
+    parser.add_argument(
+        "--inactivity-timeout",
+        type=float,
+        default=DEFAULT_INACTIVITY_TIMEOUT_SECONDS,
+        help="per-turn inactivity deadline in seconds",
+    )
+    parser.add_argument(
+        "--max-turn-seconds",
+        type=float,
+        default=DEFAULT_MAX_TURN_SECONDS,
+        help="per-turn hard deadline in seconds",
+    )
     arguments = parser.parse_args(argv)
     if arguments.iterations < 1:
         raise SystemExit("--iterations must be at least 1")
+    if arguments.max_turn_seconds < arguments.inactivity_timeout:
+        raise SystemExit(
+            "--max-turn-seconds must be at least --inactivity-timeout"
+        )
+    _TIMEOUTS["inactivity"] = arguments.inactivity_timeout
+    _TIMEOUTS["max_turn"] = arguments.max_turn_seconds
     for tool in ("codex", "git"):
         if shutil.which(tool) is None:
             raise SystemExit(f"{tool} is required for the real soak")
@@ -370,34 +430,47 @@ def main(argv: list[str] | None = None) -> int:
     print("")
 
     results: list[IterationResult] = []
-    for index in range(1, arguments.iterations + 1):
-        root = run_root / f"iteration-{index:02d}"
-        root.mkdir(parents=True)
-        result = run_iteration(index, root, artifacts)
-        results.append(result)
-        status = "PASS" if result.passed else "FAIL"
-        suffix = "" if result.failure_kind is None else f" ({result.failure_kind})"
-        if result.report_code is not None:
-            suffix += (
-                f" [{result.report_stage}/{result.report_code}"
-                + (
-                    ""
-                    if result.report_field_path is None
-                    else f" @ {result.report_field_path}"
-                )
-                + "]"
+    try:
+        for index in range(1, arguments.iterations + 1):
+            root = run_root / f"iteration-{index:02d}"
+            root.mkdir(parents=True)
+            result = run_iteration(index, root, artifacts)
+            results.append(result)
+            status = "PASS" if result.passed else "FAIL"
+            suffix = (
+                "" if result.failure_kind is None else f" ({result.failure_kind})"
             )
-        print(
-            f"[{index:02d}/{arguments.iterations:02d}] {status} "
-            f"{result.duration_seconds:6.1f}s  {result.bucket}{suffix}  "
-            f"{result.detail}"
-        )
-        if result.passed:
-            # Cleanup policy: a successful iteration is disposable, a failing
-            # iteration keeps its workspace so evidence is never destroyed.
-            shutil.rmtree(result.workspace, ignore_errors=True)
-        elif arguments.purge_failures:
-            shutil.rmtree(result.workspace, ignore_errors=True)
+            if result.report_code is not None:
+                suffix += (
+                    f" [{result.report_stage}/{result.report_code}"
+                    + (
+                        ""
+                        if result.report_field_path is None
+                        else f" @ {result.report_field_path}"
+                    )
+                    + "]"
+                )
+            print(
+                f"[{index:02d}/{arguments.iterations:02d}] {status} "
+                f"{result.duration_seconds:6.1f}s  {result.bucket}{suffix}  "
+                f"{result.detail}"
+            )
+            if result.passed:
+                # Cleanup policy: a successful iteration is disposable, a
+                # failing iteration keeps its workspace so evidence is never
+                # destroyed by cleanup.
+                shutil.rmtree(result.workspace, ignore_errors=True)
+            elif arguments.purge_failures:
+                shutil.rmtree(result.workspace, ignore_errors=True)
+    except KeyboardInterrupt:
+        # An interruption preserves every workspace and every artifact; nothing
+        # is cleaned up on the way out.
+        print("")
+        print("SOAK INTERRUPTED — all workspaces and artifacts were preserved.")
+        print(f"run root   {run_root}")
+        print(f"artifacts  {artifacts}")
+        print(f"completed iterations {len(results)}")
+        return 130
 
     durations = [item.duration_seconds for item in results]
     counts: dict[str, int] = {}
@@ -409,6 +482,24 @@ def main(argv: list[str] | None = None) -> int:
     report_contract_failures = sum(
         1 for item in results if item.failure_kind == "report_parse_failed"
     )
+    extraction_failures = sum(
+        1
+        for item in results
+        if report_contract_bucket(item.report_stage, item.failure_kind)
+        == "report_extraction"
+    )
+    validation_failures = sum(
+        1
+        for item in results
+        if report_contract_bucket(item.report_stage, item.failure_kind)
+        == "report_validation"
+    )
+    unstaged_failures = sum(
+        1
+        for item in results
+        if report_contract_bucket(item.report_stage, item.failure_kind)
+        == "report_unstaged"
+    )
     print("")
     print("RELIABILITY SUMMARY")
     print(f"Iterations           {len(results)}")
@@ -418,7 +509,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Transport failures   {counts.get('transport_failure', 0)}")
     print(f"Timeouts             {counts.get('timeout', 0)}")
     print(f"Runtime failures     {counts.get('runtime_failure', 0)}")
-    print(f"  of which report contract failures  {report_contract_failures}")
+    print(f"  report contract failures          {report_contract_failures}")
+    print(f"Report extraction failures  {extraction_failures}")
+    print(f"Report validation failures  {validation_failures}")
+    if unstaged_failures:
+        print(f"Report stage unknown (legacy evidence)  {unstaged_failures}")
     print(f"User interrupts      {counts.get('user_interrupt', 0)}")
     print(f"Incomplete delivery  {counts.get('incomplete_delivery', 0)}")
     print(f"Unknown failures     {unknown}")

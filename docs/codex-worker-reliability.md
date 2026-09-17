@@ -28,6 +28,28 @@ scope.  This stage also does not change fail-closed retry policy.
 
 ## Transport supervision
 
+### App-server protocol facts
+
+Audited against `codex app-server generate-json-schema` on Codex CLI 0.153.4,
+not inferred from prose:
+
+- `turn/start` accepts `outputSchema`: *"Optional JSON Schema used to constrain
+  the final assistant message for this turn."* Native structured output is
+  therefore **SUPPORTED**, and Code Mule already sends it.
+- `TurnStatus` is `completed | interrupted | failed | inProgress`, and the only
+  terminal turn notification is `turn/completed`; its `turn.status` decides the
+  outcome. There is no `turn/failed` or `turn/interrupted` notification.
+- `agentMessage` items carry an optional `phase` of `commentary` or
+  `final_answer`, and the schema warns that providers do not emit it
+  consistently. Code Mule prefers a `final_answer`, falls back to the last
+  observed agent message, and never lets commentary text shadow a declared
+  final answer.
+
+A schema constraint is a constraint, not a guarantee: in the first real soak
+8/10 turns complied and 2/10 still wrapped a correct report in prose and a
+```json fence. The deterministic extractor therefore remains the enforcement
+point, and the prompt states the envelope explicitly.
+
 One attempt owns one app-server process.  There is no daemon, no shared
 process, and no reuse across attempts; the current scope was kept because no
 forensic evidence showed spawn/teardown churn as a cause.
@@ -188,13 +210,13 @@ never persisted.
 Ordering on a terminal event is fixed:
 
 ```text
-terminal event received
-  → terminal evidence recorded
-  → report parse
-  → report validation
-  → report persisted
-  → attempt lifecycle advanced
+TURN_TERMINAL → REPORT_EXTRACTION → REPORT_PARSED → REPORT_VALIDATED → REPORT_PERSISTED
 ```
+
+The furthest report stage reached is persisted per attempt, and the stage never
+regresses, so a failed extraction can never look like a persisted report.
+Terminal evidence is recorded before extraction, report parsing, and report
+persistence, and the attempt lifecycle advances only after each step succeeds.
 
 Terminal evidence is captured before parsing, so the two forensic states stay
 distinct:
@@ -205,6 +227,9 @@ distinct:
   evidence.
 
 A parser failure can therefore never be reported as “terminal result missing”.
+When a turn completed and the transport was healthy, a rejection reports
+`Worker turn: Completed`, `Transport: Healthy`, and `Report: Invalid` rather
+than any transport failure.
 
 ## Inspecting evidence
 
@@ -241,8 +266,29 @@ keeps its workspace** so evidence is never destroyed by cleanup; successful
 workspaces are removed. `--purge-failures` opts out of preserving failures.
 
 Failure buckets follow the Worker failure classes, so a rejected report is
-counted under runtime failures (with its own `report contract failures` line),
-never under transport failures.
+counted under runtime failures, never under transport failures. The summary
+also splits report rejections into:
+
+```text
+Report extraction failures   envelope, extraction, or JSON decode stages
+Report validation failures   schema or semantic-validation stages
+```
+
+Artifacts written before typed stages existed show a third line,
+`Report stage unknown (legacy evidence)`, rather than being guessed into a
+bucket.
+
+The first real soak reads: transport failures 0, runtime failures 2, unknown
+failures 0. Both of its failures were verified from the Codex session
+recordings to be whole-message JSON decode failures (`json_decode`), i.e.
+extraction failures; the new parser reports that stage explicitly, so the same
+envelope is provably an extraction failure on the next run.
+
+`--inactivity-timeout` and `--max-turn-seconds` bound each turn without editing
+the harness. Interrupting the run (Ctrl+C) preserves every workspace and every
+artifact; only a successful iteration's workspace is removed, and
+`--purge-failures` is the explicit opt-in that also removes failing ones.
+Artifacts are never deleted.
 
 ## Acceptance criteria
 
@@ -253,12 +299,15 @@ consecutive real iterations:
   command, a terminal result, and a persisted ExecutionReport;
 - 0 unexplained missing terminal results;
 - 0 `Unknown` / legacy-unknown failures;
+- 0 report extraction and 0 report validation failures;
+- 0 incomplete deliveries;
 - 0 orphaned app-server processes;
 - 0 transport reader crashes;
 - 0 `RECOVERY_UNCERTAIN` boundaries caused by transport loss.
 
 Genuine typed Codex turn failures are counted separately and never counted as
-passes.
+passes. A failing iteration must be retained as evidence; a gate is never
+satisfied by re-running rounds until ten happen to pass.
 
 ## Non-goals
 

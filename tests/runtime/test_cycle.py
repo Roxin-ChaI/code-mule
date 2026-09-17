@@ -1478,7 +1478,10 @@ class WorkerTransportEvidenceTests(unittest.TestCase):
         self.assertEqual(diagnosis.worker_failure_class, "code_mule_runtime_failure")
         text = "\n".join(render_project_diagnosis(diagnosis, verbose=True))
         self.assertIn("Terminal result   Received", text)
-        self.assertIn("Stop cause        Terminal received report parse failed", text)
+        self.assertIn("Stop cause        Report contract rejected the Worker report", text)
+        self.assertIn("Worker turn       Completed", text)
+        self.assertIn("Transport         Healthy", text)
+        self.assertIn("Report            Invalid", text)
         self.assertNotIn("Stop cause        Unknown", text)
 
 

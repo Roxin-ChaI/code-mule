@@ -64,11 +64,11 @@ SCENARIOS = (
     "no_terminal_activity",
     "oversized_line",
     "soak_edit",
-    "turn_failed_method",
     "wrapped_report",
     "embedded_report",
     "ambiguous_report",
     "prose_only_report",
+    "schema_invalid_report",
 )
 
 
@@ -180,18 +180,6 @@ def _incomplete_after_activity(scenario: str) -> None:
                 },
             }
         )
-    elif scenario == "turn_failed_method":
-        _activity()
-        _send(
-            {
-                "method": "turn/failed",
-                "params": {
-                    "threadId": THREAD_ID,
-                    "turnId": TURN_ID,
-                    "turn": {"id": TURN_ID, "status": "failed"},
-                },
-            }
-        )
     elif scenario == "wrapped_report":
         _activity()
         _report(WRAPPED_AGENT_MESSAGE)
@@ -213,6 +201,11 @@ def _incomplete_after_activity(scenario: str) -> None:
     elif scenario == "prose_only_report":
         _activity()
         _report("I updated value.txt and the verification passed.")
+        _terminal("completed")
+    elif scenario == "schema_invalid_report":
+        _activity()
+        # Complete, well-formed JSON that violates the report contract.
+        _report(VALID_REPORT.replace('"git_state": "dirty"', '"git_state": "cleanish"'))
         _terminal("completed")
     elif scenario == "error_notification":
         _activity()

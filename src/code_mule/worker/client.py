@@ -147,10 +147,6 @@ _HANDLED_TURN_METHODS = frozenset(
     }
 )
 
-# Codex may express the terminal outcome as its own method instead of a
-# status on ``turn/completed``.
-_ALTERNATE_TERMINAL_METHODS = ("turn/failed", "turn/interrupted")
-
 _ITEM_CATEGORY = {
     "agentMessage": "item.agent_message",
     "commandExecution": "item.command_execution",
@@ -274,6 +270,33 @@ class CodexAppServerClient:
 
         return self._terminal
 
+    def mark_report_state(self, state: TransportState) -> None:
+        """Advance the report half of the lifecycle after a trusted terminal.
+
+        Only the ordered report stages are accepted, and the stage never
+        regresses, so a failed extraction cannot look like a persisted report.
+        """
+
+        if state not in {
+            TransportState.REPORT_EXTRACTION,
+            TransportState.REPORT_PARSED,
+            TransportState.REPORT_VALIDATED,
+            TransportState.REPORT_PERSISTED,
+        }:
+            raise ValueError("report state must be a report lifecycle stage")
+        order = (
+            TransportState.REPORT_EXTRACTION,
+            TransportState.REPORT_PARSED,
+            TransportState.REPORT_VALIDATED,
+            TransportState.REPORT_PERSISTED,
+        )
+        if self._state in order and order.index(state) <= order.index(self._state):
+            return
+        if self._state not in order and self._state is not TransportState.TURN_TERMINAL:
+            # A report stage is only meaningful after a trusted terminal turn.
+            return
+        self._state = state
+
     def transport_diagnostics(self) -> TransportDiagnostics:
         """Bounded, secret-free supervision facts for this attempt."""
 
@@ -283,6 +306,17 @@ class CodexAppServerClient:
             stdin_state=self._stdin_state,
             terminal_event_received=self._terminal is not None,
             activity_count=self._activity_count,
+            report_lifecycle=(
+                self._state
+                if self._state
+                in {
+                    TransportState.REPORT_EXTRACTION,
+                    TransportState.REPORT_PARSED,
+                    TransportState.REPORT_VALIDATED,
+                    TransportState.REPORT_PERSISTED,
+                }
+                else None
+            ),
             app_server_pid=self._app_server_pid,
             app_server_started_at=self._app_server_started_at,
             app_server_command=self._app_server_command,
@@ -514,6 +548,13 @@ class CodexAppServerClient:
         hard_deadline = started + self._config.max_turn_seconds
         inactivity_deadline = started + self._config.inactivity_timeout_seconds
         event_count = 0
+        # The protocol classifies an assistant message as commentary or
+        # final_answer, but explicitly warns that providers do not emit the
+        # phase consistently.  Prefer the final answer, fall back to the last
+        # observed agent message, and never let commentary text shadow a
+        # declared final answer.
+        final_answer_text: str | None = None
+        last_agent_message_text: str | None = None
         final_message: str | None = None
         issues: list[str] = []
         activity_count = 0
@@ -618,7 +659,23 @@ class CodexAppServerClient:
                                 TransportFailureKind.PROTOCOL_VIOLATION,
                                 "completed agentMessage is missing text",
                             )
-                        final_message = text
+                        phase = item.get("phase")
+                        if phase is not None and phase not in {
+                            "commentary",
+                            "final_answer",
+                        }:
+                            raise self._fail(
+                                TransportFailureKind.PROTOCOL_VIOLATION,
+                                "completed agentMessage has an unknown phase",
+                            )
+                        if phase == "final_answer":
+                            final_answer_text = text
+                        elif phase == "commentary":
+                            # Mid-turn narration is never the report.
+                            pass
+                        else:
+                            last_agent_message_text = text
+                        final_message = final_answer_text or last_agent_message_text
                 continue
 
             if method == "error":
@@ -688,7 +745,7 @@ class CodexAppServerClient:
                         self._terminal = WorkerTurnTerminal(
                             thread_id=thread_id,
                             turn_id=turn_id,
-                            terminal_event_type=f"turn/{status}",
+                            terminal_event_type="turn/completed",
                             turn_status=status,
                             activity_count=activity_count,
                             event_count=event_count,
@@ -704,44 +761,6 @@ class CodexAppServerClient:
                     raise self._fail(
                         TransportFailureKind.PROTOCOL_VIOLATION,
                         f"turn/completed has invalid status {status!r}",
-                    )
-                continue
-
-            if method in _ALTERNATE_TERMINAL_METHODS:
-                # Codex may name the terminal notification after its outcome.
-                # Treat it as terminal rather than letting a real failure run
-                # into an inactivity timeout.
-                if matches_thread and matches_turn:
-                    self._require_event_identity(params, method)
-                    status = (
-                        "failed"
-                        if method == _ALTERNATE_TERMINAL_METHODS[0]
-                        else "interrupted"
-                    )
-                    self._terminal = WorkerTurnTerminal(
-                        thread_id=thread_id,
-                        turn_id=turn_id,
-                        terminal_event_type=f"turn/{status}",
-                        turn_status=status,
-                        activity_count=activity_count,
-                        event_count=event_count + 1,
-                        final_message_present=final_message is not None,
-                    )
-                    self._state = TransportState.TURN_TERMINAL
-                    event_count += 1
-                    turn_error = turn.get("error") if isinstance(turn, dict) else None
-                    raise self._turn_failure(
-                        CodexTurnFailureKind.TURN_FAILED
-                        if status == "failed"
-                        else CodexTurnFailureKind.TURN_INTERRUPTED,
-                        thread_id,
-                        turn_id,
-                        turn_error,
-                        status,
-                        None,
-                        activity_count,
-                        last_activity,
-                        started,
                     )
                 continue
 

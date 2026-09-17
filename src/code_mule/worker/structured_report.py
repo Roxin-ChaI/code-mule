@@ -211,9 +211,13 @@ def parse_structured_worker_report(raw_output: str) -> StructuredWorkerReport:
             "worker report",
         )
         human_action = _human_action(payload["human_action"])
-        status = WorkerExecutionStatus(
-            _string(payload["status"], "worker report.status")
-        )
+        status_text = _string(payload["status"], "worker report.status")
+        try:
+            status = WorkerExecutionStatus(status_text)
+        except ValueError:
+            raise _schema_error(
+                ReportValidationCode.INVALID_ENUM, "worker report.status"
+            ) from None
         git_state = _string(payload["git_state"], "worker report.git_state")
         if git_state not in {"clean", "dirty", "unknown"}:
             raise _schema_error(

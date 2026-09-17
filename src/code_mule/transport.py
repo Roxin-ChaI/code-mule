@@ -40,7 +40,9 @@ class TransportState(StrEnum):
     TURN_STARTED = "turn_started"
     TURN_ACTIVE = "turn_active"
     TURN_TERMINAL = "turn_terminal"
+    REPORT_EXTRACTION = "report_extraction"
     REPORT_PARSED = "report_parsed"
+    REPORT_VALIDATED = "report_validated"
     REPORT_PERSISTED = "report_persisted"
     CLOSING = "closing"
     CLOSED = "closed"
@@ -170,6 +172,7 @@ class TransportDiagnostics:
     stdin_state: ChannelState
     terminal_event_received: bool
     activity_count: int
+    report_lifecycle: TransportState | None = None
     app_server_pid: int | None = None
     app_server_started_at: datetime | None = None
     app_server_command: str | None = None
@@ -259,6 +262,10 @@ class TransportDiagnostics:
         _bounded_text(
             self.cleanup_reason, _CATEGORY, MAX_CLEANUP_REASON_LENGTH
         )
+        if self.report_lifecycle is not None and not isinstance(
+            self.report_lifecycle, TransportState
+        ):
+            raise ValueError("report_lifecycle must be typed")
         if self.process_alive_at_failure is not None and type(
             self.process_alive_at_failure
         ) is not bool:

@@ -12,6 +12,8 @@ from code_mule.project_verification import (
     final_review_human_judgment_evidence,
 )
 from code_mule.state.models import ProjectState
+from code_mule.recovery.contracts import WorkerStopCause
+from code_mule.transport import WorkerFailureClass
 
 from .models import human_action_view, project_view
 from .labels import humanize_identifier, status_label
@@ -106,6 +108,20 @@ def render_project_diagnosis(
             "Failure class     "
             + humanize_identifier(diagnosis.worker_failure_class or "not recorded"),
         )
+        if evidence.stop_cause in {
+            WorkerStopCause.REPORT_PARSE_FAILED,
+            WorkerStopCause.TERMINAL_RECEIVED_REPORT_PARSE_FAILED,
+        }:
+            lines += (
+                "Worker turn       "
+                + (
+                    "Completed"
+                    if evidence.trusted_terminal_result
+                    else "Not proven complete"
+                ),
+                "Transport         Healthy",
+                "Report            Invalid",
+            )
         lines += _worker_uncertainty_lines(evidence, include_context=False)
         if verbose:
             lines += (
@@ -626,6 +642,11 @@ def _stop_cause_label(evidence) -> str:
     from code_mule.recovery.contracts import WorkerStopCause
     from .labels import humanize_identifier
 
+    if evidence.stop_cause in {
+        WorkerStopCause.REPORT_PARSE_FAILED,
+        WorkerStopCause.TERMINAL_RECEIVED_REPORT_PARSE_FAILED,
+    }:
+        return "Report contract rejected the Worker report"
     if evidence.stop_cause is WorkerStopCause.UNKNOWN:
         return _LEGACY_INSUFFICIENT
     if (
@@ -736,6 +757,26 @@ def _worker_transport_lines(
     report_failure = _report_contract_failure(state, task_id)
     if report_failure is not None:
         lines += (
+            "",
+            "OUTCOME",
+            "Worker turn       "
+            + (
+                "Completed"
+                if report_failure.get("terminal_event_received") == "true"
+                else "Not proven complete"
+            ),
+            "Transport         "
+            + (
+                "Healthy"
+                if diagnostics is None
+                or diagnostics.failure_class
+                not in {
+                    WorkerFailureClass.TRANSPORT_FAILURE,
+                    WorkerFailureClass.CODEX_PROCESS_FAILURE,
+                }
+                else humanize_identifier(diagnostics.transport_failure_kind.value)
+            ),
+            "Report            Invalid",
             "Report stage      " + humanize_identifier(report_failure.get("report_stage", "unknown")),
             "Report code       " + humanize_identifier(report_failure.get("report_code", "unknown")),
         )
