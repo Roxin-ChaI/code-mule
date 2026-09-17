@@ -354,3 +354,35 @@ export CODE_MULE_DEEPSEEK_MODEL="deepseek-v4-flash"
 It makes real DeepSeek requests, uses the locally authenticated Codex
 app-server, and may incur charges. Automated verification and Codex do not run
 this authenticated script.
+
+## Worker transport diagnostics
+
+`code-mule inspect --verbose` prints a `TRANSPORT` section for a stopped Worker
+boundary: Codex binary and version, process start and exit (including the
+terminating signal), stdout/stderr/stdin channel states, the last protocol
+event, thread and turn identity, activity count, terminal and report status,
+failure class and cause, cleanup reason, retry safety, and a bounded
+metadata-only lifecycle ring.
+
+`code-mule diagnose --verbose` prints `Stage`, `Failure class`, `Cause`, last
+trusted event, terminal and report status, workspace state, ownership, and
+retry safety. Legacy state with no captured evidence prints `Legacy evidence
+insufficient` instead of `Unknown`.
+
+`code-mule doctor --verbose` additionally reports the Codex binary, its
+version, and whether `codex app-server` is available. It never starts a model
+turn. See [Codex Worker Transport Reliability](codex-worker-reliability.md).
+
+## Manual real Worker soak
+
+The transport reliability release gate is a Boss-only manual procedure:
+
+```bash
+.venv/bin/python scripts/real_worker_soak.py --iterations 10
+```
+
+It starts 10 real local Codex Worker turns in isolated disposable Git
+repositories, requires one file edit, one local command, and one persisted
+ExecutionReport per iteration, and reports a reliability summary whose
+`Unknown failures` count must be 0. It uses no DeepSeek planning or review and
+is never run by automated verification.

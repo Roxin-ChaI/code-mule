@@ -62,6 +62,7 @@ SCENARIOS = (
     "signal_termination",
     "no_terminal_activity",
     "oversized_line",
+    "soak_edit",
 )
 
 
@@ -130,6 +131,23 @@ def _close_stdout() -> None:
 def _incomplete_after_activity(scenario: str) -> None:
     if scenario == "normal_completion":
         _completed_turn()
+    elif scenario == "soak_edit":
+        # Deterministic stand-in for the manual real soak task: edit the one
+        # tracked file, then report it.  Used only to self-check the harness.
+        with open("value.txt", "w", encoding="utf-8") as handle:
+            handle.write("value = 42\n")
+        _note("turn/started", turn={"id": TURN_ID, "status": "inProgress"})
+        _note(
+            "item/started",
+            item={
+                "type": "fileChange",
+                "id": "file-1",
+                "changes": [{"path": "value.txt"}],
+            },
+        )
+        _note("item/completed", item={"type": "fileChange", "id": "file-1"})
+        _report()
+        _terminal("completed")
     elif scenario == "turn_failed":
         _activity()
         _send(

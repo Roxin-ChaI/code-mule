@@ -86,6 +86,9 @@ The Orchestrator detects a gated action before execution, records its exact scop
 6. **Versioned plans over mutable undocumented plans.** Replanning creates traceable versions.
 7. **Auditable changes over silent replanning.** Changes, analyses, decisions, and transitions are recorded.
 8. **One worker first, scale later.** The MVP favors predictable control and recovery over concurrency.
+9. **Typed transport evidence over unexplained loss.** Every Worker attempt
+   persists a bounded, secret-free supervision record; no new code path may
+   report a stopped Worker as an unknown cause.
 
 ## v0.1.0 execution chain
 
@@ -110,6 +113,11 @@ approve a Human Gate. The Orchestrator owns legal transitions. TaskCycle owns
 Task attempts and merges them into the latest persisted snapshot. Execution
 Ownership prevents a second Worker. Git delivery alone stages and commits exact
 Task paths. ProjectState is the sole durable source of project facts.
+
+The Codex Worker boundary is itself supervised: one app-server process per
+attempt, a dedicated drained stderr thread, explicitly typed channel and
+process states, and a bounded metadata-only lifecycle ring persisted with the
+attempt. See [Codex Worker Transport Reliability](codex-worker-reliability.md).
 
 STOP and PAUSE remain safe-point controls. If an in-flight Task fails after a
 PAUSE or CHANGE was persisted, the project enters typed `HUMAN_REQUIRED` rather

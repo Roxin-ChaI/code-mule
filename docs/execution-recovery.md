@@ -134,6 +134,29 @@ Use `code-mule inspect`, then resolve the action through the existing typed
 human-resolution flow. Code Mule does not retry a Worker or external side effect
 automatically.
 
+### Typed Worker stop causes
+
+Schema v16 persists bounded transport diagnostics per `ExecutionAttempt`, so a
+stopped Worker is attributed to a typed cause instead of an unexplained one:
+
+```text
+codex_turn_failure        Codex reported turn_failed / interrupted / a non-retryable error
+codex_process_failure     app-server failed to start or exited unexpectedly
+transport_failure         pipe, EOF, JSON-RPC, reader, writer, or report-parse failure
+timeout                   inactivity or hard turn deadline
+user_interrupt            the parent CLI was interrupted
+code_mule_runtime_failure Code Mule's own persistence boundary failed
+```
+
+An unrecognised protocol event becomes `unclassified_protocol_failure` with
+bounded method/process/channel facts, never `Unknown`. Legacy state that
+recorded no failure event renders as `Legacy evidence insufficient`.
+
+A completed turn whose ExecutionReport was rejected is reported as
+`terminal_received_report_parse_failed`, which is a different forensic state
+from a genuinely missing terminal result. See
+[Codex Worker Transport Reliability](codex-worker-reliability.md).
+
 ## Audit events
 
 The ownership lifecycle records minimal metadata in:

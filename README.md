@@ -343,17 +343,25 @@ Code Mule fits local software work that benefits from:
 - Delivery stages only exact Task-owned paths after verification and review.
 - Code Mule never automatically stashes, resets, or cleans the target repository.
 - Push, tag, release, deployment, and irreversible remote effects remain Human Gates.
+- Every Worker attempt persists bounded transport diagnostics with a typed
+  failure class (Codex turn, process, transport, timeout, runtime, interrupt);
+  a stopped Worker is never reported as an unexplained `Unknown` cause.
 
 Details: [Execution Recovery](docs/execution-recovery.md),
 [Git Delivery](docs/git-delivery.md), and
-[Project Verification](docs/project-verification.md).
+[Project Verification](docs/project-verification.md). The Worker transport
+boundary and its manual real-soak release gate are documented in
+[Codex Worker Transport Reliability](docs/codex-worker-reliability.md).
 
 ## Validation
 
 Current v0.1.1 release-preparation baseline:
 
-- **719 automated tests PASS**, including runtime-handoff, PID-reuse, and real shell restart regressions that
-  runs the persistent launcher without the repository `.venv` on `PATH`;
+- **774 automated tests PASS**, including runtime-handoff, PID-reuse, real
+  shell restart regressions that run the persistent launcher without the
+  repository `.venv` on `PATH`, and a deterministic Codex Worker transport
+  suite covering 21 fake app-server scenarios, a repeated spawn/turn/close
+  stress loop, and process/thread leak assertions;
 - `compileall`, `pip check`, and `git diff --check` PASS;
 - real DeepSeek + Codex E2E: Plan v1, 6/6 Tasks, Worker Input → Boss answer
   → fresh-session continuation, one delivery commit per Task, final review
@@ -384,6 +392,7 @@ Release has been created; the v0.1.0 tag and its historical evidence are unchang
 - [Boss CLI](docs/cli.md)
 - [Human Resolution](docs/human-resolution.md)
 - [Execution Recovery](docs/execution-recovery.md)
+- [Codex Worker Transport Reliability](docs/codex-worker-reliability.md)
 - [Git Delivery](docs/git-delivery.md)
 - [Project Verification](docs/project-verification.md)
 - [Runtime Handoff](docs/runtime-handoff.md)

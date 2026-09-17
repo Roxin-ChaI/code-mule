@@ -88,3 +88,16 @@ Project State Store remains the source of truth. The Worker neither mutates a
 `Task` nor advances project state; the deterministic Phase 7 task-cycle service
 persists reports and applies review outcomes. See [Single-Task Autonomous
 Cycle](task-cycle.md).
+
+## Transport reliability
+
+Each Worker attempt persists a bounded, secret-free supervision record:
+process identity and exit status, stdout/stderr/stdin channel states, the last
+protocol event, thread and turn identity, terminal status, a typed failure
+class and cause, cleanup reason, and a metadata-only lifecycle ring of at most
+20 entries. A stopped Worker is therefore always attributed to a typed cause
+(`codex_turn_failure`, `codex_process_failure`, `transport_failure`,
+`timeout`, `user_interrupt`, `code_mule_runtime_failure`) or to
+`unclassified_protocol_failure`; it is never reported as an unexplained
+`Unknown`. See
+[Codex Worker Transport Reliability](codex-worker-reliability.md).
