@@ -147,9 +147,11 @@ class HumanActionRenderingTests(unittest.TestCase):
         lines = boss_lines(state, pending=True, buffer="")
         text = "\n".join(lines)
         self.assertIn("HUMAN ACTION · Worker input", text)
-        self.assertIn("Worker needs a Boss decision", text)
-        self.assertIn("action-demo", text)
-        self.assertIn("answer action-demo", text)
+        self.assertIn("Request: Confirm the manifest entry point before delivery", text)
+        # The main UI stays compact: one short Actions line, not a full command.
+        self.assertIn("Actions: fail_project | acknowledge | answer", text)
+        self.assertNotIn("--strategy", text)
+        self.assertNotIn("resolve action-demo", text)
         self.assertEqual(lines[-1], "boss> ")
 
     def test_boss_pane_is_just_the_prompt_without_a_pending_action(self):
@@ -309,6 +311,41 @@ class StreamAndFallbackTests(unittest.TestCase):
         self.assertTrue(_handle_key(control, curses.KEY_ENTER, rows=24, cols=80))
         control.join(timeout=5)
         self.assertEqual(control.buffered_input, "")
+
+    def test_auto_follow_after_scrolling_shows_the_newest_activity(self):
+        import curses
+
+        from code_mule.tui.app import _handle_key
+
+        control = controller()
+        old = make_project_state()
+        control = TerminalController(
+            demo_commands(), lambda: old, input_stream=io.StringIO("")
+        )
+        for index in range(30):
+            control.activity.append(NOW, ActivityKind.INFO, f"line {index}")
+        _handle_key(control, curses.KEY_PPAGE, rows=24, cols=80)
+        self.assertFalse(control.activity.following)
+        _handle_key(control, curses.KEY_END, rows=24, cols=80)
+        self.assertTrue(control.activity.following)
+        layout = compute_layout(24, 80, status_height=8, boss_height=4)
+        snapshot = build_snapshot(
+            old,
+            tuple(entry.text for entry in control.activity.visible(layout.activity_height)),
+            now=NOW,
+        )
+        lines = [line for line in snapshot.activity]
+        self.assertEqual(lines[-1], "line 29")
+
+    def test_boss_actions_stay_single_line_for_wide_and_narrow_terminals(self):
+        from code_mule.presentation.terminal import display_width
+
+        state = demo_state()
+        lines = boss_lines(state, pending=True, buffer="")
+        actions = next(line for line in lines if line.startswith("Actions:"))
+        self.assertLess(display_width(actions), 80)
+        self.assertNotIn("--strategy", actions)
+        self.assertNotIn("resolve ", actions)
 
     def test_fallback_frame_is_bounded_for_small_terminals(self):
         control = controller()

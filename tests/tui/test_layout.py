@@ -27,6 +27,54 @@ def frame(rows: int, cols: int, *, activity=(), buffer="", state=None):
 
 
 class LayoutGeometryTests(unittest.TestCase):
+    def _frame(self, rows, cols, *, activity=(), state=None):
+        layout = compute_layout(rows, cols, status_height=8, boss_height=4)
+        snapshot = build_snapshot(state, tuple(activity), now=NOW)
+        lines = render_screen(
+            layout,
+            status=snapshot.status,
+            activity=snapshot.activity,
+            boss=snapshot.boss,
+        )
+        return layout, lines
+
+    def test_activity_is_top_aligned_with_blank_space_below(self):
+        for rows, cols in ((24, 80), (45, 80), (40, 120)):
+            with self.subTest(rows=rows, cols=cols):
+                layout, lines = self._frame(
+                    rows, cols,
+                    activity=["first activity", "second activity"],
+                    state=make_project_state(),
+                )
+                top_rule = layout.status_height
+                first = top_rule + 1
+                self.assertEqual(lines[top_rule][0], "─")
+                self.assertIn("first activity", lines[first])
+                self.assertIn("second activity", lines[first + 1])
+                # Blank space stays at the bottom of the activity region.
+                for offset in range(2, layout.activity_height):
+                    self.assertEqual(lines[first + offset].strip(), "")
+
+    def test_activity_overflow_keeps_the_newest_lines_visible(self):
+        layout, lines = self._frame(
+            24, 80,
+            activity=[f"line {index}" for index in range(40)],
+            state=make_project_state(),
+        )
+        window = lines[layout.status_height + 1: layout.status_height + 1 + layout.activity_height]
+        self.assertIn("line 39", "\n".join(window))
+        self.assertNotIn("line 0\n", "\n".join(window) + "\n")
+        self.assertEqual(window[-1].strip(), "line 39")
+
+    def test_activity_window_shrinks_for_small_terminals(self):
+        for rows, cols in ((12, 40), (10, 30)):
+            with self.subTest(rows=rows, cols=cols):
+                layout, lines = self._frame(
+                    rows, cols, activity=["only"], state=make_project_state()
+                )
+                self.assertGreaterEqual(layout.activity_height, 1)
+                self.assertEqual(len(lines), rows)
+
     def test_every_size_produces_exactly_rows_lines_within_cols_cells(self):
         for rows, cols in SIZES:
             with self.subTest(rows=rows, cols=cols):
