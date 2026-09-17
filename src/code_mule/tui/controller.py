@@ -21,6 +21,7 @@ from code_mule.progress.contracts import ProgressEvent
 from code_mule.state.models import ProjectState
 
 from .activity import ActivityKind, ActivityLog
+from .keys import KEY_NAMES
 
 
 SCROLL_STEP = 1
@@ -42,6 +43,8 @@ class ControllerState:
     should_quit: bool = False
     dirty: bool = True
     last_exit_code: int | None = None
+    last_key: str | None = None
+    key_debug: bool = False
 
 
 class TerminalController:
@@ -137,6 +140,20 @@ class TerminalController:
         self.state.should_quit = True
         self.state.status_message = "Leaving the persistent terminal. Project state was not modified."
         self.state.dirty = True
+
+    def note_key(self, name: str) -> None:
+        """Record one resolved, safe key name for demo/debug display."""
+
+        if name not in KEY_NAMES:
+            name = "UNKNOWN"
+        self.state.last_key = name
+        self.state.dirty = True
+
+    @property
+    def key_debug(self) -> str | None:
+        """The last key name, but only while demo/debug display is enabled."""
+
+        return self.state.last_key if self.state.key_debug else None
 
     def clear_buffer(self) -> None:
         self.state.buffer = ""

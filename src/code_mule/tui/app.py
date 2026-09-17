@@ -15,8 +15,9 @@ from code_mule.cli.app import BossCliCommands
 from code_mule.state.models import ProjectState
 
 from .controller import PAGE_STEP, SCROLL_STEP, TerminalController
+from .keys import KEY_NAMES, key_name
 from .layout import compute_layout, render_screen, wrapped_height
-from .snapshot import build_snapshot
+from .snapshot import build_snapshot, status_lines
 
 
 REFRESH_MILLISECONDS = 250
@@ -57,40 +58,65 @@ def fallback_lines(
     """
 
     state = controller.project_state()
-    snapshot = snapshot_for(controller, state, buffer=controller.buffered_input)
+    controller.refresh_activity_from_events()
+    layout = compute_layout(
+        rows,
+        cols,
+        status_height=max(
+            STATUS_SIZE, wrapped_height(status_lines(state) if state else (), cols)
+        ),
+        boss_height=max(BOSS_MIN_HEIGHT, 5),
+    )
+    snapshot = snapshot_for(
+        controller,
+        state,
+        buffer=controller.buffered_input,
+        activity_height=layout.activity_height,
+    )
     layout = compute_layout(
         rows,
         cols,
         status_height=max(STATUS_SIZE, wrapped_height(snapshot.status, cols)),
         boss_height=max(BOSS_MIN_HEIGHT, wrapped_height(snapshot.boss, cols)),
     )
+    snapshot = snapshot_for(
+        controller,
+        state,
+        buffer=controller.buffered_input,
+        activity_height=layout.activity_height,
+    )
     return render_screen(
-        layout, status=snapshot.status, activity=snapshot.activity, boss=snapshot.boss
+        layout,
+        status=snapshot.status,
+        activity=snapshot.activity,
+        boss=snapshot.boss,
+        indicator=snapshot.indicator,
     )
 
 
 def snapshot_for(
-    controller: TerminalController, state: ProjectState | None, *, buffer: str
+    controller: TerminalController,
+    state: ProjectState | None,
+    *,
+    buffer: str,
+    activity_height: int,
 ):
     controller.refresh_activity_from_events()
-    visible = max(1, _visible_activity_lines())
-    entries = controller.activity.visible(visible)
+    # The indicator occupies the first Activity row, so the window is one smaller.
+    window_height = max(
+        1, activity_height - (1 if activity_height >= 2 else 0)
+    )
+    entries = controller.activity.visible(window_height)
     lines = tuple(entry.text for entry in entries)
     return build_snapshot(
         state,
         lines,
         buffer=buffer,
         status_message=controller.state.status_message,
+        key_debug=controller.key_debug,
+        indicator=controller.activity.window_label(window_height),
         now=datetime.now(UTC),
     )
-
-
-def _visible_activity_lines() -> int:
-    try:
-        rows = 24
-        return max(1, rows)
-    except Exception:
-        return 1
 
 
 def run_terminal(
@@ -151,6 +177,7 @@ def _read_key(stdscr):
 def _handle_key(controller: TerminalController, key, *, rows: int, cols: int) -> bool:
     import curses
 
+    controller.note_key(key_name(key))
     activity_height = compute_layout(
         rows, cols, status_height=STATUS_SIZE, boss_height=BOSS_MIN_HEIGHT
     ).activity_height
@@ -192,12 +219,21 @@ def _handle_key(controller: TerminalController, key, *, rows: int, cols: int) ->
 
 def _draw(stdscr, controller: TerminalController, *, rows: int, cols: int) -> None:
     state = controller.project_state()
-    snapshot = snapshot_for(controller, state, buffer=controller.buffered_input)
     layout = compute_layout(
         rows, cols, status_height=STATUS_SIZE, boss_height=BOSS_MIN_HEIGHT
     )
+    snapshot = snapshot_for(
+        controller,
+        state,
+        buffer=controller.buffered_input,
+        activity_height=layout.activity_height,
+    )
     lines = render_screen(
-        layout, status=snapshot.status, activity=snapshot.activity, boss=snapshot.boss
+        layout,
+        status=snapshot.status,
+        activity=snapshot.activity,
+        boss=snapshot.boss,
+        indicator=snapshot.indicator,
     )
     # Repaint every row of every pane so a resize never leaves a ghost cell.
     stdscr.erase()

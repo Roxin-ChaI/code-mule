@@ -94,11 +94,35 @@ keeps pipes, CI, and scripted runs on the stable Phase 22 output.
 ```
 
 The demo runs the real UI against a synthetic local project and never calls a
-model, Worker, network, or shell. Suggested checks: fixed header/footer,
-activity scrolling with Up/Down, a resize of the terminal window, a HumanAction
-rendered in the Boss pane, `status` / `launch` / `inspect` typed at the prompt,
-the UI surviving after a command finishes, and Ctrl+C leaving without a
-modified project.
+model, Worker, network, or shell. It seeds **60 numbered activity events**
+(`event 001 … event 060`) so scrolling is unmistakable, and enables the
+demo-only key readout.
+
+### Reading the demo
+
+The first row of the Activity pane is a live scroll indicator:
+
+```text
+Activity 41-60 / 60 · Follow ON     # auto-following the newest events
+Activity 21-40 / 60 · Follow OFF    # scrolled back
+```
+
+The Boss pane shows the last resolved key name while demo debugging is on:
+
+```text
+Key: KEY_PPAGE
+```
+
+Only resolved names appear — never an escape payload. If a macOS Terminal does
+not map a key combination to the expected curses key, the readout shows
+`Key: UNKNOWN` (or the key it actually sent), which is the evidence needed to
+decide whether any mapping should change. No escape sequence is guessed.
+
+Suggested checks: fixed header/footer, `↑`/`↓` line scrolling, `Fn+↑`/`Fn+↓`
+page scrolling, `Fn+→` (End) returning to auto-follow, `Ctrl+L` repaint,
+`Ctrl+C` exit, a resize of the terminal window, a HumanAction rendered in the
+Boss pane, `status` / `launch` / `inspect` typed at the prompt, and the UI
+surviving after a command finishes.
 
 ## Testing
 

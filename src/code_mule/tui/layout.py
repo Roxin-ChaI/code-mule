@@ -146,8 +146,13 @@ def render_screen(
     status: tuple[str, ...],
     activity: tuple[str, ...],
     boss: tuple[str, ...],
+    indicator: str | None = None,
 ) -> tuple[str, ...]:
-    """Compose exactly ``layout.rows`` fixed-height lines."""
+    """Compose exactly ``layout.rows`` fixed-height lines.
+
+    ``indicator`` is pinned to the first row of the Activity region so the scroll
+    position stays visible without ever consuming the Boss input row.
+    """
 
     width = layout.cols
     # Status: top-aligned, oldest lines win. Boss: bottom-aligned so the input
@@ -159,9 +164,18 @@ def render_screen(
     boss_block = _fit(
         boss, layout.boss_height, width, pad_bottom=False, keep_tail=True
     )
-    activity_block = _fit(
-        activity, layout.activity_height, width, pad_bottom=True, keep_tail=True
-    )
+    if indicator is not None and layout.activity_height >= 2:
+        activity_block = (
+            _fit((indicator,), 1, width, pad_bottom=True, keep_tail=False)
+            + _fit(
+                activity, layout.activity_height - 1, width,
+                pad_bottom=True, keep_tail=True,
+            )
+        )
+    else:
+        activity_block = _fit(
+            activity, layout.activity_height, width, pad_bottom=True, keep_tail=True
+        )
     if not layout.ruled:
         lines = status_block + activity_block + boss_block
     else:

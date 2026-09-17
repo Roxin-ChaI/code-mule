@@ -25,6 +25,8 @@ from code_mule.domain.models import (
 )
 from code_mule.state.models import ProjectState
 
+from .activity import ActivityKind
+
 
 NOW = datetime(2026, 9, 18, 2, 0, tzinfo=UTC)
 
@@ -160,4 +162,39 @@ def demo_commands() -> DemoCommands:
     return DemoCommands()
 
 
-__all__ = ["DemoCommands", "demo_commands", "demo_state"]
+DEMO_ACTIVITY_COUNT = 60
+
+
+def seed_demo_activity(controller, *, count: int = DEMO_ACTIVITY_COUNT) -> int:
+    """Fill the Activity pane with numbered events so scrolling is obvious.
+
+    Numbered on purpose: the Boss can see exactly which window is on screen and
+    confirm that Up/Down, PageUp/PageDown, and End moved it.
+    """
+
+    now = datetime.now(UTC)
+    kinds = (
+        ActivityKind.TASK,
+        ActivityKind.COMMAND,
+        ActivityKind.RESPONSE,
+        ActivityKind.RUNTIME,
+    )
+    for index in range(1, count + 1):
+        controller.activity.append(
+            now,
+            kinds[(index - 1) % len(kinds)],
+            f"event {index:03d} · demo activity line for scroll verification",
+        )
+    controller.activity.append(
+        now, ActivityKind.INFO, "demo project loaded; no model or network call was made"
+    )
+    return count
+
+
+__all__ = [
+    "DEMO_ACTIVITY_COUNT",
+    "DemoCommands",
+    "demo_commands",
+    "demo_state",
+    "seed_demo_activity",
+]

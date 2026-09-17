@@ -257,7 +257,7 @@ class ProductionCliComposition:
         from code_mule.tui.app import availability, fallback_lines, run_terminal
         from code_mule.tui.activity import ActivityKind
         from code_mule.tui.controller import TerminalController
-        from code_mule.tui.demo import demo_commands, demo_state
+        from code_mule.tui.demo import demo_commands, demo_state, seed_demo_activity
 
         if demo:
             controller = TerminalController(
@@ -265,11 +265,8 @@ class ProductionCliComposition:
                 lambda: demo_state(),
                 input_stream=io.StringIO(""),
             )
-            controller.activity.append(
-                datetime.now(UTC),
-                ActivityKind.INFO,
-                "demo project loaded; no model or network call was made",
-            )
+            controller.state.key_debug = True
+            seed_demo_activity(controller)
         else:
             controller = TerminalController(
                 self,

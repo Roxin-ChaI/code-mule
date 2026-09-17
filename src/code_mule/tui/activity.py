@@ -134,11 +134,27 @@ class ActivityLog:
     def visible(self, height: int) -> tuple[ActivityEntry, ...]:
         """Return the window to draw, honouring the current scroll offset."""
 
+        start, end = self.window(height)
+        entries = list(self._entries)
+        return tuple(entries[start:end])
+
+    def window(self, height: int) -> tuple[int, int]:
+        """Zero-based half-open ``[start, end)`` range currently on screen."""
+
         height = max(1, height)
         entries = list(self._entries)
         end = max(0, len(entries) - self._offset)
         start = max(0, end - height)
-        return tuple(entries[start:end])
+        return start, end
+
+    def window_label(self, height: int) -> str:
+        """Short, safe scroll indicator for the top of the Activity pane."""
+
+        start, end = self.window(height)
+        total = len(self._entries)
+        first = start + 1 if total else 0
+        follow = "ON" if self.following else "OFF"
+        return f"Activity {first}-{end} / {total} · Follow {follow}"
 
 
 __all__ = [

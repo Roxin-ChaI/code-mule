@@ -361,7 +361,7 @@ boundary and its manual real-soak release gate are documented in
 
 Current v0.1.1 release-preparation baseline:
 
-- **884 automated tests PASS**, including runtime-handoff, PID-reuse, real
+- **897 automated tests PASS**, including runtime-handoff, PID-reuse, real
   shell restart regressions that run the persistent launcher without the
   repository `.venv` on `PATH`, and a deterministic Codex Worker transport
   suite covering 28 fake app-server scenarios, a repeated spawn/turn/close
