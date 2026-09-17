@@ -69,16 +69,23 @@ def boss_lines(
     buffer: str,
     status_message: str | None = None,
 ) -> tuple[str, ...]:
-    """Fixed Boss pane content: HumanAction (if any) then the input line."""
+    """Fixed Boss pane content: a compact HumanAction summary, then the input.
+
+    The pane stays readable: one short line per fact, no expanded
+    ``resolve <id> --strategy ...`` command.  Action ids and full commands stay
+    discoverable through the Activity pane and ``inspect``.
+    """
 
     lines: list[str] = []
     action = _pending_action(state)
     if action is not None:
         view = human_action_view(action)
         lines.append(f"HUMAN ACTION · {_bounded(view.category, 60)}")
-        lines.append(f"  {_bounded(view.summary, 160)}")
-        lines.append(f"  Request: {_bounded(view.request, 160)}")
-        lines.append("  " + _action_hint(state, action))
+        lines.append(f"Request: {_bounded(view.request, 200)}")
+        choices = _choice_summary(view)
+        if choices:
+            lines.append(f"Choices: {choices}")
+        lines.append("Actions: " + _action_summary(state, action))
     if status_message:
         lines.append(_bounded(status_message, 200))
     prompt = "boss> " + safe_text(buffer)
@@ -95,8 +102,8 @@ def _pending_action(state: ProjectState):
     return matches[-1] if len(matches) == 1 else None
 
 
-def _action_hint(state: ProjectState, action) -> str:
-    """Name the exact non-automatic actions the Boss may take."""
+def _action_summary(state: ProjectState, action) -> str:
+    """One short line naming the available Boss actions."""
 
     try:
         from code_mule.human import allowed_resolution_strategies
@@ -104,11 +111,22 @@ def _action_hint(state: ProjectState, action) -> str:
         strategies = allowed_resolution_strategies(state, action)
     except Exception:
         strategies = ()
-    names = ", ".join(strategy.value for strategy in strategies)
-    hint = f"resolve {action.id} --strategy <{names}>" if names else f"resolve {action.id}"
+    names = [strategy.value for strategy in strategies]
     if action.category.value == "worker_input":
-        hint += f" | answer {action.id} <text>"
-    return f"{hint} | inspect {action.id}"
+        names.append("answer")
+    if not names:
+        return "inspect"
+    return " | ".join(names)
+
+
+def _choice_summary(view) -> str | None:
+    """Compact, bounded choice list for a Worker input question."""
+
+    if not view.choices:
+        return None
+    joined = " | ".join(_bounded(choice, 40) for choice in view.choices[:6])
+    suffix = "" if len(view.choices) <= 6 else f" (+{len(view.choices) - 6} more)"
+    return (joined + suffix)[:200]
 
 
 @dataclass(frozen=True)

@@ -64,21 +64,29 @@ class ScreenLayout:
         return Pane.BOSS
 
 
-def _fit(lines: tuple[str, ...], height: int, width: int, *, top: bool) -> tuple[str, ...]:
+def _fit(
+    lines: tuple[str, ...],
+    height: int,
+    width: int,
+    *,
+    pad_bottom: bool,
+    keep_tail: bool,
+) -> tuple[str, ...]:
     """Wrap, clip, and pad content to exactly ``height`` lines of ``width``.
 
-    ``top=False`` anchors the *tail*: the newest activity line and the Boss
-    input prompt must survive truncation, so overflow drops the oldest lines.
+    ``pad_bottom`` puts content at the top of the pane and leaves blank space
+    below it.  ``keep_tail`` keeps the newest lines when the content overflows,
+    so the newest activity and the Boss prompt survive truncation.
     """
 
     wrapped: list[str] = []
     for line in lines:
         wrapped.extend(wrap_cells(line, width) or [""])
     if len(wrapped) > height:
-        wrapped = wrapped[:height] if top else wrapped[-height:]
+        wrapped = wrapped[-height:] if keep_tail else wrapped[:height]
     elif len(wrapped) < height:
         pad = [""] * (height - len(wrapped))
-        wrapped = wrapped + pad if top else pad + wrapped
+        wrapped = wrapped + pad if pad_bottom else pad + wrapped
     return tuple(_pad(line, width) for line in wrapped)
 
 
@@ -142,10 +150,18 @@ def render_screen(
     """Compose exactly ``layout.rows`` fixed-height lines."""
 
     width = layout.cols
-    status_block = _fit(status, layout.status_height, width, top=True)
-    boss_block = _fit(boss, layout.boss_height, width, top=False)
-    # Activity keeps the newest line visible at the bottom (tail-anchored).
-    activity_block = _fit(activity, layout.activity_height, width, top=False)
+    # Status: top-aligned, oldest lines win. Boss: bottom-aligned so the input
+    # prompt always sits on the last row. Activity: top-aligned with the empty
+    # space below it, but tail-windowed so new events stay visible.
+    status_block = _fit(
+        status, layout.status_height, width, pad_bottom=True, keep_tail=False
+    )
+    boss_block = _fit(
+        boss, layout.boss_height, width, pad_bottom=False, keep_tail=True
+    )
+    activity_block = _fit(
+        activity, layout.activity_height, width, pad_bottom=True, keep_tail=True
+    )
     if not layout.ruled:
         lines = status_block + activity_block + boss_block
     else:

@@ -22,9 +22,35 @@ layer the one-shot CLI uses, and never owns business truth.
 Geometry is pure: `tui.layout.compute_layout` splits the screen so Status and
 Boss keep their content height and Activity absorbs the slack, and
 `render_screen` returns exactly `rows` lines, each within `cols` display cells.
-Separator rules are drawn only when the screen has room. Overflow is anchored:
-Status drops from the bottom, Activity and Boss keep their **newest** lines, so
-the input prompt is never truncated away.
+Separator rules are drawn only when the screen has room.
+
+Each pane is aligned deliberately:
+
+- **Status** is top-aligned and drops its oldest lines only when it must.
+- **Activity** is top-aligned, so content starts at the top of its region and
+  the blank space stays below it. When the content is taller than the region it
+  becomes a tail window: the newest lines stay visible and scrolling moves the
+  window, not the alignment.
+- **Boss** is bottom-aligned so `boss>` always sits on the last row, and its
+  content is tail-kept so the prompt is never truncated away.
+
+### Boss area
+
+The Boss pane stays compact — one short line per fact, never an expanded
+command:
+
+```text
+HUMAN ACTION · Worker input
+Request: Confirm the manifest entry point before delivery
+Choices: yes | no            (only when the Worker offered choices)
+Actions: fail_project | acknowledge | answer
+boss> _
+```
+
+The exact action id and the full `resolve <id> --strategy …` /
+`answer <id> …` invocations stay discoverable through `code-mule inspect` and
+the Activity pane. Dispatch is unchanged: typed lines still go through the
+shared parser and command layer.
 
 Display width is cell-accurate, not character-count based: `wrap_cells` and
 `display_width` from the Phase 22 presentation layer handle CJK wide forms,
