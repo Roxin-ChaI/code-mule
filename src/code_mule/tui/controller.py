@@ -26,6 +26,11 @@ from .activity import ActivityKind, ActivityLog
 SCROLL_STEP = 1
 PAGE_STEP = 5
 
+# Boss commands whose trailing text is one free-form argument; the line is
+# rebuilt so "change add a health endpoint" works as typed.
+_FREE_TEXT_COMMANDS = frozenset({"change", "ask"})
+_IDENTIFIER_THEN_FREE_TEXT = frozenset({"answer"})
+
 
 @dataclass
 class ControllerState:
@@ -196,6 +201,7 @@ class TerminalController:
     # -- internals -----------------------------------------------------------
 
     def _run(self, line: str) -> CliCommandResult:
+        line = _normalize_command(line)
         try:
             arguments = build_parser().parse_args(shlex.split(line))
         except SystemExit as error:  # argparse rejects with exit code 2
@@ -232,4 +238,33 @@ class TerminalController:
         self.activity.scroll_to_latest()
 
 
-__all__ = ["ControllerState", "PAGE_STEP", "SCROLL_STEP", "TerminalController"]
+def _normalize_command(line: str) -> str:
+    """Quote the free-form tail of commands that take natural language."""
+
+    stripped = line.strip()
+    if stripped == "":
+        return stripped
+    head, _, tail = stripped.partition(" ")
+    tail = tail.strip()
+    if tail == "":
+        return stripped
+    if head in _FREE_TEXT_COMMANDS:
+        return f"{head} {shlex.quote(tail)}"
+    if head in _IDENTIFIER_THEN_FREE_TEXT:
+        action_id, _, rest = tail.partition(" ")
+        rest = rest.strip()
+        return (
+            stripped
+            if rest == ""
+            else f"{head} {shlex.quote(action_id)} {shlex.quote(rest)}"
+        )
+    return stripped
+
+
+__all__ = [
+    "ControllerState",
+    "PAGE_STEP",
+    "SCROLL_STEP",
+    "TerminalController",
+    "_normalize_command",
+]

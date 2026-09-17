@@ -65,13 +65,17 @@ class ScreenLayout:
 
 
 def _fit(lines: tuple[str, ...], height: int, width: int, *, top: bool) -> tuple[str, ...]:
-    """Wrap, clip, and pad content to exactly ``height`` lines of ``width``."""
+    """Wrap, clip, and pad content to exactly ``height`` lines of ``width``.
+
+    ``top=False`` anchors the *tail*: the newest activity line and the Boss
+    input prompt must survive truncation, so overflow drops the oldest lines.
+    """
 
     wrapped: list[str] = []
     for line in lines:
         wrapped.extend(wrap_cells(line, width) or [""])
     if len(wrapped) > height:
-        wrapped = wrapped[:height]
+        wrapped = wrapped[:height] if top else wrapped[-height:]
     elif len(wrapped) < height:
         pad = [""] * (height - len(wrapped))
         wrapped = wrapped + pad if top else pad + wrapped
@@ -153,6 +157,14 @@ def render_screen(
     return lines
 
 
+def wrapped_height(lines: tuple[str, ...], width: int) -> int:
+    """Rows this content needs after cell-aware wrapping at ``width``."""
+
+    return sum(
+        max(1, len(wrap_cells(line, width))) for line in lines
+    )
+
+
 __all__ = [
     "MIN_ROWS_FOR_THREE_PANES",
     "Pane",
@@ -160,4 +172,5 @@ __all__ = [
     "ScreenLayout",
     "compute_layout",
     "render_screen",
+    "wrapped_height",
 ]

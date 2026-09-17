@@ -280,7 +280,7 @@ class ProductionCliComposition:
         if not verdict.interactive:
             return CliCommandResult(
                 CliExitCode.SUCCESS,
-                fallback_lines(controller) + (f"(persistent UI unavailable: {verdict.reason})",),
+                fallback_lines(controller),
             )
         code = run_terminal(controller, stdin=self._stdin, stdout=self._stdout)
         return CliCommandResult(

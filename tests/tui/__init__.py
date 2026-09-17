@@ -1,0 +1,1 @@
+"""Persistent terminal UI tests."""

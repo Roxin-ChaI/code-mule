@@ -361,7 +361,7 @@ boundary and its manual real-soak release gate are documented in
 
 Current v0.1.1 release-preparation baseline:
 
-- **840 automated tests PASS**, including runtime-handoff, PID-reuse, real
+- **878 automated tests PASS**, including runtime-handoff, PID-reuse, real
   shell restart regressions that run the persistent launcher without the
   repository `.venv` on `PATH`, and a deterministic Codex Worker transport
   suite covering 28 fake app-server scenarios, a repeated spawn/turn/close
@@ -395,6 +395,7 @@ Release has been created; the v0.1.0 tag and its historical evidence are unchang
 - [Architecture](docs/architecture.md)
 - [Project Revisions](docs/project-revisions.md)
 - [Boss CLI](docs/cli.md)
+- [Persistent Terminal UI](docs/persistent-terminal.md)
 - [Human Resolution](docs/human-resolution.md)
 - [Execution Recovery](docs/execution-recovery.md)
 - [Codex Worker Transport Reliability](docs/codex-worker-reliability.md)

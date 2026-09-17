@@ -15,7 +15,7 @@ from code_mule.cli.app import BossCliCommands
 from code_mule.state.models import ProjectState
 
 from .controller import PAGE_STEP, SCROLL_STEP, TerminalController
-from .layout import compute_layout, render_screen
+from .layout import compute_layout, render_screen, wrapped_height
 from .snapshot import build_snapshot
 
 
@@ -50,11 +50,20 @@ def _isatty(stream: TextIO) -> bool:
 def fallback_lines(
     controller: TerminalController, *, rows: int = 24, cols: int = 80
 ) -> tuple[str, ...]:
-    """Deterministic text frame for non-TTY callers."""
+    """Deterministic text frame for non-TTY callers.
+
+    Text output has no fixed screen to preserve, so the Status and Boss panes
+    are sized to their content and nothing important is clipped.
+    """
 
     state = controller.project_state()
     snapshot = snapshot_for(controller, state, buffer=controller.buffered_input)
-    layout = compute_layout(rows, cols, status_height=STATUS_SIZE, boss_height=BOSS_MIN_HEIGHT)
+    layout = compute_layout(
+        rows,
+        cols,
+        status_height=max(STATUS_SIZE, wrapped_height(snapshot.status, cols)),
+        boss_height=max(BOSS_MIN_HEIGHT, wrapped_height(snapshot.boss, cols)),
+    )
     return render_screen(
         layout, status=snapshot.status, activity=snapshot.activity, boss=snapshot.boss
     )
@@ -98,6 +107,8 @@ def run_terminal(
     if not verdict.interactive:
         for line in fallback_lines(controller):
             print(line, file=stdout)
+        print(f"persistent UI unavailable: {verdict.reason}", file=stdout)
+        print("Run this command in a terminal for the persistent interface.", file=stdout)
         return 0
     return _run_curses(controller, stdout=stdout)
 
