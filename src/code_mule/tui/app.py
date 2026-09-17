@@ -15,7 +15,14 @@ from code_mule.cli.app import BossCliCommands
 from code_mule.state.models import ProjectState
 
 from .controller import PAGE_STEP, SCROLL_STEP, TerminalController
-from .keys import KEY_NAMES, key_name
+from .keys import (
+    ESCAPE,
+    KEY_NAMES,
+    MAX_ESCAPE_LENGTH,
+    key_name,
+    resolve_sequence,
+    sequence_table,
+)
 from .layout import compute_layout, render_screen, wrapped_height
 from .snapshot import build_snapshot, status_lines
 
@@ -23,6 +30,9 @@ from .snapshot import build_snapshot, status_lines
 REFRESH_MILLISECONDS = 250
 STATUS_SIZE = 8
 BOSS_MIN_HEIGHT = 4
+# A split escape sequence arrives within a few milliseconds; this bound keeps
+# the read responsive while never blocking on a bare ESC keypress.
+ESCAPE_AGGREGATE_MILLISECONDS = 30
 
 
 @dataclass(frozen=True)
@@ -158,10 +168,10 @@ def _run_curses(controller: TerminalController, *, stdout: TextIO) -> int:
         while not controller.should_quit:
             rows, cols = stdscr.getmaxyx()
             _draw(stdscr, controller, rows=rows, cols=cols)
-            key = _read_key(stdscr)
-            if key is None:
+            name = read_key_event(stdscr)
+            if name is None:
                 continue
-            if not _handle_key(controller, key, rows=rows, cols=cols):
+            if not _handle_key(controller, name, rows=rows, cols=cols):
                 continue
         return 0
 
@@ -179,44 +189,114 @@ def _read_key(stdscr):
         return None
 
 
+def read_key_event(stdscr, *, read_tail=None, table=None) -> str | None:
+    """Read one key and resolve it to a safe name, aggregating escape tails.
+
+    macOS Terminal delivers ``Fn+Right`` as the terminfo `kend` sequence
+    (``ESC O F``).  A single ``get_wch`` call can return those bytes one at a
+    time, so a lone ESC is followed by a bounded tail read before resolution;
+    otherwise a valid End keypress degrades into ``UNKNOWN`` plus stray text.
+    """
+
+    key = _read_key(stdscr)
+    if key is None:
+        return None
+    if isinstance(key, str) and key.startswith(ESCAPE):
+        tail_reader = read_tail if read_tail is not None else _read_escape_tail
+        resolved_table = table or sequence_table()
+        remainder = key[1:]
+        if remainder == "":
+            remainder = tail_reader(stdscr)
+        elif (
+            resolved_table.resolve(ESCAPE + remainder) is None
+            and resolved_table.is_prefix(ESCAPE + remainder)
+        ):
+            # A read may hand back part of the sequence; collect the rest.
+            remainder += tail_reader(stdscr)
+        return resolve_sequence(ESCAPE + remainder, resolved_table)
+    return key_name(key)
+
+
+def _read_escape_tail(stdscr, *, table=None) -> str:
+    """Bounded, prefix-aware collection of one escape sequence's remainder."""
+
+    import curses
+
+    table = table or sequence_table()
+    collected = ""
+    previous_timeout = None
+    try:
+        stdscr.timeout(ESCAPE_AGGREGATE_MILLISECONDS)
+    except Exception:
+        previous_timeout = None
+    try:
+        while len(collected) < MAX_ESCAPE_LENGTH:
+            key = _read_key(stdscr)
+            if key is None or not isinstance(key, str):
+                break
+            if key == ESCAPE:
+                break
+            collected += key
+            sequence = ESCAPE + collected
+            if table.resolve(sequence) is not None:
+                break
+            if not table.is_prefix(sequence):
+                break
+    finally:
+        if previous_timeout is None:
+            try:
+                stdscr.timeout(REFRESH_MILLISECONDS)
+            except Exception:
+                pass
+        else:
+            try:
+                stdscr.timeout(previous_timeout)
+            except Exception:
+                pass
+    return collected
+
+
 def _handle_key(controller: TerminalController, key, *, rows: int, cols: int) -> bool:
     import curses
 
-    controller.note_key(key_name(key))
+    # Accept either a resolved name (from read_key_event) or a raw curses key,
+    # so the aggregation layer and direct callers share one behaviour.
+    name = key if isinstance(key, str) and key in KEY_NAMES else key_name(key)
+    controller.note_key(name)
     activity_height = compute_layout(
         rows, cols, status_height=STATUS_SIZE, boss_height=BOSS_MIN_HEIGHT
     ).activity_height
-    if key == curses.KEY_RESIZE:
+    if name == "KEY_RESIZE":
         controller.state.dirty = True
         return True
-    if isinstance(key, str) and key == "\x03":
+    if name == "CTRL_C":
         controller.request_quit()
         return True
-    if isinstance(key, str) and key == "\x0c":
+    if name == "CTRL_L":
         controller.state.dirty = True
         return True
-    if key in (curses.KEY_UP,):
+    if name == "KEY_UP":
         controller.scroll(SCROLL_STEP, visible=activity_height)
         return True
-    if key in (curses.KEY_DOWN,):
+    if name == "KEY_DOWN":
         controller.scroll(-SCROLL_STEP, visible=activity_height)
         return True
-    if key in (curses.KEY_PPAGE,):
+    if name == "KEY_PPAGE":
         controller.scroll(PAGE_STEP, visible=activity_height)
         return True
-    if key in (curses.KEY_NPAGE,):
+    if name == "KEY_NPAGE":
         controller.scroll(-PAGE_STEP, visible=activity_height)
         return True
-    if key in (curses.KEY_END,):
+    if name == "KEY_END":
         controller.scroll_to_latest()
         return True
-    if key in (curses.KEY_ENTER, "\n", "\r"):
+    if name in ("KEY_ENTER", "ENTER"):
         controller.submit_async(visible=activity_height)
         return True
-    if key in (curses.KEY_BACKSPACE, "\x7f", "\b"):
+    if name == "BACKSPACE":
         controller.backspace()
         return True
-    if isinstance(key, str) and key.isprintable():
+    if name == "TEXT" and isinstance(key, str):
         controller.insert(key)
         return True
     return False

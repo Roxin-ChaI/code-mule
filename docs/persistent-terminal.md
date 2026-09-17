@@ -122,6 +122,18 @@ not map a key combination to the expected curses key, the readout shows
 `Key: UNKNOWN` (or the key it actually sent), which is the evidence needed to
 decide whether any mapping should change. No escape sequence is guessed.
 
+### macOS key decoding
+
+`Fn+→` is an escape sequence, not a character. The input layer resolves keys
+**terminfo first** — `kend`, `kcuu1`, `kcuf1`, … are the terminal's own
+declarations, and macOS Terminal sets `kend = ESC O F` — with the published
+xterm/VT encodings used only when terminfo has no capability for `TERM`.
+Because one `get_wch` call can return those bytes a few at a time, a leading ESC
+is followed by a bounded, prefix-aware tail read (≤ 8 characters, ~30 ms)
+before resolution, so a split sequence still becomes `KEY_END` instead of
+`UNKNOWN` plus stray text. `→` alone stays `KEY_RIGHT`, and an unrecognised
+sequence still reads `Key: UNKNOWN`.
+
 Suggested checks: fixed header/footer, `↑`/`↓` line scrolling, `Fn+↑`/`Fn+↓`
 page scrolling, `Fn+→` (End) returning to auto-follow, `Ctrl+L` repaint,
 `Ctrl+C` exit, a resize of the terminal window, a HumanAction rendered in the
