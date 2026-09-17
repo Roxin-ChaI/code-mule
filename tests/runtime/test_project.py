@@ -253,7 +253,12 @@ class ProjectExecutionContractTests(unittest.TestCase):
         state = replace(make_state((completed, final)), delivery_manifest_required=True)
         prompt = TaskPromptBuilder().build(state, final)
         self.assertIn("code-mule-delivery.json", prompt)
-        self.assertIn("executable and args arrays", prompt)
+        # The prompt carries the exact nested contract, not only field names,
+        # so the Worker candidate matches the validator it will be checked by.
+        self.assertIn("executable and args array", prompt)
+        self.assertIn('"deliverable_type": "service"', prompt)
+        self.assertIn('"supports_dynamic_port": true', prompt)
+        self.assertIn("deliverable_type must be one of: cli, service", prompt)
         self.assertNotIn("code-mule-delivery.json", TaskPromptBuilder().build(state, completed))
 
     def test_worker_prompt_distinguishes_native_input_and_typed_report_actions(self):

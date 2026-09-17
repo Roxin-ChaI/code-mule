@@ -207,6 +207,18 @@ class ProjectDiagnosisService:
             else no_change_delivery_recovery_evidence(state, action)
         )
         planning_metadata: dict[str, str] = {}
+        manifest_handoff: dict[str, str] | None = None
+        if action is not None:
+            manifest_events = tuple(
+                event
+                for event in state.events
+                if event.event_type == "project.verification_failed"
+                and event.entity_id == state.project.id
+                and event.timestamp == action.created_at
+                and "manifest_code" in event.metadata
+            )
+            if len(manifest_events) == 1:
+                manifest_handoff = manifest_events[0].metadata
         if action is not None and planning_failure_is_persisted(state, action):
             matching = tuple(
                 event
@@ -426,21 +438,31 @@ class ProjectDiagnosisService:
                 else replanning_failure.revision_materialized
             ),
             failure_category=(
-                None
+                manifest_handoff["manifest_stage"]
+                if manifest_handoff is not None
+                else None
                 if replanning_failure is None
                 else replanning_failure.failure_category
             ),
             failure_code=(
-                planning_metadata.get("validation_code")
+                manifest_handoff.get("manifest_code")
+                if manifest_handoff is not None
+                else planning_metadata.get("validation_code")
                 if replanning_failure is None
                 else replanning_failure.failure_code
             ),
             failure_field_path=(
-                planning_metadata.get("field_path")
+                manifest_handoff.get("manifest_field_path")
+                if manifest_handoff is not None
+                else planning_metadata.get("field_path")
                 if replanning_failure is None
                 else replanning_failure.field_path
             ),
-            failure_summary=planning_metadata.get("safe_summary") or None,
+            failure_summary=(
+                manifest_handoff.get("manifest_summary")
+                if manifest_handoff is not None
+                else planning_metadata.get("safe_summary") or None
+            ),
             change_summary=(
                 None if open_change is None else open_change.description
             ),

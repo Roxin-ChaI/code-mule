@@ -22,6 +22,7 @@ from code_mule.progress import (
 from code_mule.scheduler import SchedulerError, TaskScheduler
 from code_mule.scheduler.selection import resolve_active_plan_graph
 from code_mule.state.models import ProjectState
+from code_mule.runtime_handoff.handoff import manifest_candidate_prompt
 from code_mule.recovery import SafePointKind
 from code_mule.recovery import RecoveryMode, RecoveryPlan
 from code_mule.recovery.state import with_safe_point
@@ -92,18 +93,7 @@ class TaskPromptBuilder:
                 for item in state.tasks if item.id in active_task_ids
             )
         )
-        delivery = (
-            "\n\nFinal delivery handoff:\n"
-            "- Create code-mule-delivery.json at the repository root for the actual deliverable.\n"
-            "- Use exact top-level fields: deliverable_type, runnable, entry_point, launch_spec, "
-            "verification_spec, health_check_spec, access_spec, stop_spec, required_environment, "
-            "runtime_generated_paths, usage.\n"
-            "- Commands are objects with executable and args arrays; never use shell strings.\n"
-            "- Runnable products need local launch, health, access, and graceful-stop metadata. "
-            "Libraries/components must use runnable=false and launch_spec/access_spec/stop_spec=null.\n"
-            "- Do not include secrets. Runtime-generated paths must be Git ignored.\n"
-            if final_delivery_task else ""
-        )
+        delivery = manifest_candidate_prompt() if final_delivery_task else ""
         return (
             "Execute this Code Mule task in the provided repository.\n\n"
             f"Project: {state.project.name}\n"

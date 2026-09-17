@@ -31,6 +31,7 @@ from code_mule.project_verification.service import (
 )
 from code_mule.supervisor import FinalReviewResult, SupervisorService
 from runtime_handoff.test_contracts import candidate
+from code_mule.runtime_handoff import parse_manifest_candidate
 
 from state import make_project_state
 
@@ -242,6 +243,50 @@ class ProjectFinalizationTests(FinalVerificationCase):
         self.assertIs(final.project.status, ProjectStatus.HUMAN_REQUIRED)
         self.assertEqual(supervisor.requests, [])
         self.assertEqual(final.project_verification_results, ())
+
+    def test_manifest_handoff_failure_is_named_stage_code_and_field(self):
+        """The v4 shape: a present candidate rejected by the contract."""
+
+        payload = candidate()
+        payload["deliverable_type"] = "http-service"
+        state = self._state_with_manifest_candidate(payload)
+        service, _store = self.finalizer(state, FakeFinalSupervisor())
+        final = service.finalize(state)
+        self.assertIs(final.project.status, ProjectStatus.HUMAN_REQUIRED)
+        event = next(
+            item
+            for item in final.events
+            if item.event_type == "project.verification_failed"
+        )
+        self.assertEqual(event.metadata["manifest_code"], "manifest_validation_failed")
+        self.assertEqual(event.metadata["manifest_stage"], "contract_parse")
+        self.assertEqual(event.metadata["manifest_field_path"], "deliverable_type")
+        self.assertEqual(event.metadata["manifest_candidate_present"], "true")
+        action = final.human_actions[-1]
+        self.assertNotIn("missing or invalid", action.summary.lower())
+        self.assertIn("deliverable_type", action.requested_action)
+
+    def test_revision_owned_manifest_is_a_mismatch_not_a_missing_candidate(self):
+        state = replace(self.state(), delivery_manifest_required=True)
+        manifest = parse_manifest_candidate(
+            candidate(),
+            project_id=state.project.id,
+            revision_number=9,
+            plan_version=9,
+            generated_at=NOW,
+        )
+        state = replace(state, delivery_manifests=(manifest,))
+        service, _store = self.finalizer(state, FakeFinalSupervisor())
+        final = service.finalize(state)
+        self.assertIs(final.project.status, ProjectStatus.HUMAN_REQUIRED)
+        event = next(
+            item
+            for item in final.events
+            if item.event_type == "project.verification_failed"
+        )
+        self.assertEqual(event.metadata["manifest_code"], "manifest_revision_mismatch")
+        self.assertEqual(event.metadata["manifest_stage"], "revision_ownership")
+        self.assertEqual(event.metadata["manifest_candidate_present"], "true")
 
     def test_secret_in_manifest_fails_closed_without_persistence(self):
         payload = candidate(); payload["usage"] = "token=do-not-persist"

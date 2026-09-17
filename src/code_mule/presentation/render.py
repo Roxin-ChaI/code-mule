@@ -457,6 +457,7 @@ def render_human_action(
     ):
         replanning = _render_post_completion_replanning_failure(state, action)
         lines += replanning or _render_planning_failure(state, action)
+        lines += _render_manifest_handoff_failure(state, action)
     if (
         action.category is HumanActionCategory.RECOVERY_UNCERTAIN
         and state is not None
@@ -824,6 +825,42 @@ def _no_change_delivery_lines(evidence) -> tuple[str, ...]:
         + ("Yes" if evidence.continuation_safe else "No"),
         "Failure reason    Empty change set was rejected before review",
     )
+
+
+def _render_manifest_handoff_failure(
+    state: ProjectState, action: HumanAction
+) -> tuple[str, ...]:
+    """Name exactly where the delivery manifest handoff chain stopped."""
+
+    events = tuple(
+        event
+        for event in state.events
+        if event.event_type == "project.verification_failed"
+        and event.entity_id == state.project.id
+        and event.timestamp == action.created_at
+        and "manifest_code" in event.metadata
+    )
+    if len(events) != 1:
+        return ()
+    metadata = events[0].metadata
+    candidate_present = metadata.get("manifest_candidate_present") == "true"
+    lines = (
+        "",
+        "DELIVERY MANIFEST HANDOFF",
+        "Stage         " + humanize_identifier(metadata.get("manifest_stage", "unknown")),
+        "Code          "
+        + humanize_identifier(metadata.get("manifest_code", "manifest_handoff_failed")),
+        "Candidate     " + metadata.get("manifest_candidate_path", "-"),
+        "Candidate state "
+        + ("Present and read" if candidate_present else "Not found at the repository root"),
+    )
+    if metadata.get("manifest_field_path"):
+        lines += (f"Field         {metadata['manifest_field_path']}",)
+    if metadata.get("manifest_revision"):
+        lines += (f"Revision      {metadata['manifest_revision']}",)
+    if metadata.get("manifest_summary"):
+        lines += (f"Reason        {metadata['manifest_summary']}",)
+    return lines
 
 
 def _render_planning_failure(

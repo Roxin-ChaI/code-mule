@@ -20,6 +20,13 @@ from .contracts import (
     StopSpec,
     VerificationSpec,
 )
+from .handoff import (
+    CANDIDATE_FILENAME,
+    ManifestFailureCode,
+    ManifestFailureStage,
+    ManifestHandoffError,
+    manifest_field_path,
+)
 
 
 MANIFEST_FILE = "code-mule-delivery.json"
@@ -273,10 +280,25 @@ def parse_manifest_candidate(
             plan_version=plan_version,
             generated_at=generated_at,
         )
-    except InvalidDeliveryManifest:
+    except ManifestHandoffError:
         raise
+    except InvalidDeliveryManifest as error:
+        # Keep the typed contract rejection, but name the exact field.
+        raise ManifestHandoffError(
+            ManifestFailureStage.CONTRACT_PARSE,
+            ManifestFailureCode.MANIFEST_VALIDATION_FAILED,
+            field_path=manifest_field_path(payload, str(error)),
+            revision=revision_number,
+            summary=str(error)[:300],
+        ) from None
     except (TypeError, ValueError) as error:
-        raise InvalidDeliveryManifest("delivery manifest violates its typed contract") from error
+        raise ManifestHandoffError(
+            ManifestFailureStage.CONTRACT_PARSE,
+            ManifestFailureCode.MANIFEST_VALIDATION_FAILED,
+            field_path=manifest_field_path(payload, str(error)),
+            revision=revision_number,
+            summary=f"delivery manifest violates its typed contract: {error}",
+        ) from error
 
 
 def validate_manifest(manifest: DeliveryManifest, workspace: Path) -> None:
@@ -338,11 +360,31 @@ def load_and_validate_manifest(
     generated_at: datetime,
 ) -> DeliveryManifest:
     path = workspace / MANIFEST_FILE
+    if not path.exists():
+        raise ManifestHandoffError(
+            ManifestFailureStage.CANDIDATE_LOOKUP,
+            ManifestFailureCode.MANIFEST_MISSING,
+            revision=revision_number,
+            summary=f"{CANDIDATE_FILENAME} is not present at the repository root",
+        )
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise InvalidDeliveryManifest(
-            f"verified delivery manifest is unavailable at {MANIFEST_FILE}"
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise ManifestHandoffError(
+            ManifestFailureStage.CANDIDATE_LOOKUP,
+            ManifestFailureCode.MANIFEST_UNREADABLE,
+            revision=revision_number,
+            summary=f"{CANDIDATE_FILENAME} could not be read as UTF-8 text",
+        ) from error
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ManifestHandoffError(
+            ManifestFailureStage.JSON_DECODE,
+            ManifestFailureCode.MANIFEST_PARSE_FAILED,
+            field_path=f"line {error.lineno} column {error.colno}",
+            revision=revision_number,
+            summary=f"{CANDIDATE_FILENAME} is not valid JSON",
         ) from error
     manifest = parse_manifest_candidate(
         payload,
@@ -351,7 +393,18 @@ def load_and_validate_manifest(
         plan_version=plan_version,
         generated_at=generated_at,
     )
-    validate_manifest(manifest, workspace)
+    try:
+        validate_manifest(manifest, workspace)
+    except ManifestHandoffError:
+        raise
+    except InvalidDeliveryManifest as error:
+        raise ManifestHandoffError(
+            ManifestFailureStage.WORKSPACE_VALIDATION,
+            ManifestFailureCode.MANIFEST_VALIDATION_FAILED,
+            field_path=manifest_field_path(payload, str(error)),
+            revision=revision_number,
+            summary=str(error)[:300],
+        ) from None
     return manifest
 
 

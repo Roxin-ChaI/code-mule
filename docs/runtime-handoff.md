@@ -39,6 +39,36 @@ usage and starts no process.
 
 ## Manifest candidate
 
+### Candidate contract and handoff diagnostics
+
+The prompt and the validator share one source of truth
+(`runtime_handoff/handoff.py`). The final Task receives the exact nested shape
+for a runnable service and for a non-runnable product, the exact top-level field
+list, and the allowed `deliverable_type` values, because the candidate is
+rejected wholesale when its fields do not match the contract. A test asserts the
+prompt's service skeleton parses and validates against the real validator, so
+the prompt cannot drift from the check.
+
+Every stop in the chain is named. `ManifestHandoffError` carries a bounded,
+secret-free `stage`, `code`, `field_path`, `candidate_path`, `revision`, and
+safe summary:
+
+```text
+stage  candidate_lookup | json_decode | contract_parse | workspace_validation
+       | revision_ownership | runtime_smoke
+code   manifest_missing | manifest_unreadable | manifest_parse_failed
+       | manifest_validation_failed | manifest_revision_mismatch
+       | manifest_handoff_failed | manifest_runtime_smoke_failed
+```
+
+A candidate that exists but violates the contract therefore reports
+`manifest_validation_failed` with its exact field path, never "missing or
+invalid". The diagnostics are persisted on `project.verification_failed` and
+shown by `code-mule inspect --verbose` (stage, code, candidate path, candidate
+state, field, revision, reason) and `code-mule diagnose --verbose`. The
+validator is never bypassed: the same strict parse and workspace validation gate
+the handoff.
+
 The final Task writes `code-mule-delivery.json` at the target repository root.
 Code Mule treats this file as untrusted candidate data and materializes it into
 ProjectState only after strict deterministic validation. A runnable static site can

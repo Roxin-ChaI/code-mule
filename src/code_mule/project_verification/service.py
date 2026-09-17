@@ -41,8 +41,16 @@ from code_mule.revision import (
     latest_revision,
 )
 from code_mule.runtime_handoff import InvalidDeliveryManifest
+from code_mule.runtime_handoff.handoff import (
+    ManifestFailureCode,
+    ManifestFailureStage,
+    ManifestHandoffError,
+    as_handoff_error,
+    manifest_failure_metadata,
+)
 from code_mule.runtime_handoff.service import RuntimeSmokeVerifier
 from code_mule.runtime_handoff.validation import (
+    MANIFEST_FILE,
     load_and_validate_manifest,
     validate_manifest,
 )
@@ -376,12 +384,13 @@ class ProjectFinalizationService:
         try:
             state = self._ensure_delivery_manifest(state)
         except InvalidDeliveryManifest as error:
+            failure = as_handoff_error(error)
             return self._human(
                 self._store.load(),
                 HumanActionCategory.RECOVERY_UNCERTAIN,
-                "Delivery manifest is missing or invalid",
-                "Correct the revision delivery manifest before final verification",
-                {"error_type": type(error).__name__},
+                failure.message,
+                failure.requested_action,
+                manifest_failure_metadata(failure),
             )
         state = self._event_save(state, "project.verification_started", {})
         try:
@@ -495,7 +504,12 @@ class ProjectFinalizationService:
             and item.plan_version == plan.version
         )
         if len(matching) > 1:
-            raise InvalidDeliveryManifest("delivery manifest identity is ambiguous")
+            raise ManifestHandoffError(
+                ManifestFailureStage.REVISION_OWNERSHIP,
+                ManifestFailureCode.MANIFEST_REVISION_MISMATCH,
+                revision=revision_number,
+                summary="delivery manifest identity is ambiguous",
+            )
         if matching:
             manifest = matching[0]
             validate_manifest(manifest, Path(state.project.workspace))
@@ -531,6 +545,27 @@ class ProjectFinalizationService:
                 self._store.save(updated)
                 return updated
             return state
+        other_revisions = tuple(
+            item for item in state.delivery_manifests
+            if item.revision_number != revision_number
+            or item.plan_version != plan.version
+        )
+        if other_revisions and not (
+            Path(state.project.workspace) / MANIFEST_FILE
+        ).exists():
+            # A manifest exists, but it belongs to a different revision: that is
+            # an ownership stop, not a missing candidate.
+            raise ManifestHandoffError(
+                ManifestFailureStage.REVISION_OWNERSHIP,
+                ManifestFailureCode.MANIFEST_REVISION_MISMATCH,
+                revision=revision_number,
+                summary=(
+                    "a persisted manifest belongs to revision "
+                    f"{other_revisions[0].revision_number} plan "
+                    f"v{other_revisions[0].plan_version}, not revision "
+                    f"{revision_number} plan v{plan.version}"
+                ),
+            )
         manifest = load_and_validate_manifest(
             Path(state.project.workspace),
             project_id=state.project.id,
