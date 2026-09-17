@@ -50,6 +50,39 @@ class ProcessObservation:
     command_fingerprint: str | None
 
 
+@dataclass(frozen=True)
+class HealthProbeResult:
+    """Bounded outcome of one readiness poll, safe to persist."""
+
+    status: RuntimeHealthStatus
+    attempts: int
+    elapsed_seconds: float
+    last_failure: str
+    url: str | None
+    http_status: int | None
+
+    @property
+    def metadata(self) -> dict[str, str]:
+        metadata = {
+            "health_attempts": str(self.attempts),
+            "health_elapsed_seconds": format(self.elapsed_seconds, ".3f"),
+            "health_failure": self.last_failure,
+            "health_status": self.status.value,
+        }
+        if self.url is not None:
+            metadata["health_url"] = self.url[:300]
+        if self.http_status is not None:
+            metadata["health_http_status"] = str(self.http_status)
+        return metadata
+
+
+# A launcher such as /usr/bin/python3 re-execs the real interpreter shortly
+# after fork, so its first observable image is not its identity.  Identity is
+# only trusted once two consecutive samples agree.
+_IDENTITY_POLL_SECONDS = 0.05
+_IDENTITY_STABLE_SAMPLES = 2
+
+
 def _fingerprint(value: str) -> str:
     return hashlib.sha256(value.strip().encode("utf-8")).hexdigest()
 
@@ -212,17 +245,26 @@ class RuntimeHandoffService:
         )
         state = self._persist_session(state, session, "runtime.started")
         health = self._wait_for_health(manifest, session, workspace, port)
-        accepted_health = health in {RuntimeHealthStatus.HEALTHY, RuntimeHealthStatus.NOT_CHECKED}
+        accepted_health = health.status in {
+            RuntimeHealthStatus.HEALTHY,
+            RuntimeHealthStatus.NOT_CHECKED,
+        }
         session = replace(
             session,
             status=RuntimeSessionStatus.RUNNING if accepted_health else RuntimeSessionStatus.FAILED,
-            health_status=health,
+            health_status=health.status,
         )
-        self._replace_session(self._store.load(), session, "runtime.health_checked")
+        self._replace_session(
+            self._store.load(), session, "runtime.health_checked", health.metadata
+        )
         if not accepted_health:
             latest_observation = self._observe(session.pid or 0)
             if latest_observation.alive and self._owned(session, latest_observation):
                 self._signal(session.pid or 0, signal.SIGTERM)
+            if health.last_failure == "process_exited":
+                raise RuntimeLaunchBlocked(
+                    "runtime process exited before becoming healthy"
+                )
             raise RuntimeLaunchBlocked("runtime health check failed")
         return LaunchResult(LaunchDisposition.STARTED, manifest, session)
 
@@ -249,10 +291,12 @@ class RuntimeHandoffService:
         if not state.runtime_sessions:
             raise RuntimeLaunchBlocked("no runtime session exists")
         session = state.runtime_sessions[-1]
-        if session.status in {RuntimeSessionStatus.EXITED, RuntimeSessionStatus.STOPPED, RuntimeSessionStatus.FAILED}:
+        if session.status in {RuntimeSessionStatus.EXITED, RuntimeSessionStatus.STOPPED}:
             return session
         observation = self._observe(session.pid or 0)
         if not observation.alive:
+            # A failed session whose process is already gone becomes EXITED;
+            # nothing else is touched.
             updated = replace(session, status=RuntimeSessionStatus.EXITED, health_status=RuntimeHealthStatus.UNHEALTHY)
             self._replace_session(state, updated, "runtime.status_changed")
             return updated
@@ -338,31 +382,140 @@ class RuntimeHandoffService:
         return f"http://{manifest.access_spec.host}:{port}{manifest.access_spec.path}"
 
     def _wait_for_identity(self, pid: int, timeout: float) -> ProcessObservation:
+        """Return this process's identity once it is observable and settled.
+
+        ``/usr/bin/python3`` and similar launchers fork a stub and then re-exec
+        the real interpreter, so the first observable command line belongs to a
+        transient image.  Anchoring ownership on it makes every later identity
+        comparison fail, which is exactly how a healthy service was misread as
+        unhealthy.  Wait for two consecutive agreeing samples instead.
+        """
+
         deadline = time.monotonic() + timeout
         observation = self._observe(pid)
         while not observation.alive and time.monotonic() < deadline:
-            self._sleep(0.05)
+            self._sleep(_IDENTITY_POLL_SECONDS)
             observation = self._observe(pid)
-        return observation
-
-    def _wait_for_health(self, manifest: DeliveryManifest, session: RuntimeSession, workspace: Path, port: int | None) -> RuntimeHealthStatus:
-        spec = manifest.health_check_spec
-        if spec.type is HealthCheckType.NONE:
-            return RuntimeHealthStatus.NOT_CHECKED
-        deadline = time.monotonic() + (manifest.launch_spec.startup_timeout_seconds if manifest.launch_spec else spec.timeout_seconds)
+        if not observation.alive:
+            return observation
+        stable = 1
+        previous = observation
         while time.monotonic() < deadline:
+            self._sleep(_IDENTITY_POLL_SECONDS)
+            current = self._observe(pid)
+            if not current.alive:
+                return current
+            if (
+                current.process_start_identity == previous.process_start_identity
+                and current.command_fingerprint == previous.command_fingerprint
+            ):
+                stable += 1
+                if stable >= _IDENTITY_STABLE_SAMPLES:
+                    return current
+            else:
+                stable = 1
+            previous = current
+        return previous
+
+    def _wait_for_health(
+        self,
+        manifest: DeliveryManifest,
+        session: RuntimeSession,
+        workspace: Path,
+        port: int | None,
+    ) -> HealthProbeResult:
+        """Poll readiness until healthy, until the process exits, or until the bound.
+
+        A single refused connection, non-matching status, or transient identity
+        change is never a terminal verdict: launch is bounded readiness polling,
+        not one probe.
+        """
+
+        spec = manifest.health_check_spec
+        started = time.monotonic()
+        budget = (
+            manifest.launch_spec.startup_timeout_seconds
+            if manifest.launch_spec
+            else spec.timeout_seconds
+        )
+        deadline = started + budget
+        url = (
+            (spec.url or "").replace("{port}", "" if port is None else str(port))
+            if spec.type is HealthCheckType.HTTP
+            else None
+        )
+        attempts = 0
+        last_failure = "not_ready"
+        last_status: int | None = None
+        while True:
+            now = time.monotonic()
+            if now >= deadline:
+                return HealthProbeResult(
+                    RuntimeHealthStatus.UNHEALTHY,
+                    attempts,
+                    now - started,
+                    last_failure,
+                    url,
+                    last_status,
+                )
             observation = self._observe(session.pid or 0)
-            if not observation.alive or not self._owned(session, observation):
-                return RuntimeHealthStatus.UNHEALTHY
+            if not observation.alive:
+                return HealthProbeResult(
+                    RuntimeHealthStatus.UNHEALTHY,
+                    attempts,
+                    time.monotonic() - started,
+                    "process_exited",
+                    url,
+                    last_status,
+                )
+            if not self._owned(session, observation):
+                # Another image change is not yet a verdict: record it and keep
+                # polling so an ordinary launcher re-exec cannot fail launch.
+                last_failure = "identity_mismatch"
+                self._sleep(0.1)
+                continue
+            attempts += 1
+            if spec.type is HealthCheckType.NONE:
+                return HealthProbeResult(
+                    RuntimeHealthStatus.NOT_CHECKED,
+                    attempts,
+                    time.monotonic() - started,
+                    "none",
+                    url,
+                    last_status,
+                )
             if spec.type is HealthCheckType.PROCESS:
-                return RuntimeHealthStatus.HEALTHY
+                return HealthProbeResult(
+                    RuntimeHealthStatus.HEALTHY,
+                    attempts,
+                    time.monotonic() - started,
+                    "none",
+                    url,
+                    last_status,
+                )
             if spec.type is HealthCheckType.HTTP:
-                url = (spec.url or "").replace("{port}", "" if port is None else str(port))
-                if self._http_status(url, spec.timeout_seconds) == spec.expected_status:
-                    return RuntimeHealthStatus.HEALTHY
+                last_status = self._http_status(url or "", spec.timeout_seconds)
+                if last_status == spec.expected_status:
+                    return HealthProbeResult(
+                        RuntimeHealthStatus.HEALTHY,
+                        attempts,
+                        time.monotonic() - started,
+                        "none",
+                        url,
+                        last_status,
+                    )
+                last_failure = (
+                    "connection_failed" if last_status is None else "unexpected_status"
+                )
             elif spec.type is HealthCheckType.COMMAND and spec.command is not None:
-                argv = self._command_argv(spec.command.executable, spec.command.args, workspace, ".", port)
-                launch_keys = () if manifest.launch_spec is None else manifest.launch_spec.environment_keys
+                argv = self._command_argv(
+                    spec.command.executable, spec.command.args, workspace, ".", port
+                )
+                launch_keys = (
+                    ()
+                    if manifest.launch_spec is None
+                    else manifest.launch_spec.environment_keys
+                )
                 environment = {
                     key: value for key, value in self._environment.items()
                     if key in _BASE_ENVIRONMENT or key in launch_keys
@@ -377,9 +530,16 @@ class RuntimeHandoffService:
                 except (OSError, subprocess.TimeoutExpired):
                     healthy = False
                 if healthy:
-                    return RuntimeHealthStatus.HEALTHY
+                    return HealthProbeResult(
+                        RuntimeHealthStatus.HEALTHY,
+                        attempts,
+                        time.monotonic() - started,
+                        "none",
+                        url,
+                        last_status,
+                    )
+                last_failure = "command_failed"
             self._sleep(0.1)
-        return RuntimeHealthStatus.UNHEALTHY
 
     @staticmethod
     def _owned(session: RuntimeSession, observation: ProcessObservation) -> bool:
@@ -397,20 +557,37 @@ class RuntimeHandoffService:
         self._store.save(updated)
         return updated
 
-    def _replace_session(self, state: ProjectState, session: RuntimeSession, event_type: str) -> ProjectState:
+    def _replace_session(
+        self,
+        state: ProjectState,
+        session: RuntimeSession,
+        event_type: str,
+        metadata: dict[str, str] | None = None,
+    ) -> ProjectState:
         updated = replace(
             state,
             runtime_sessions=tuple(session if item.id == session.id else item for item in state.runtime_sessions),
-            events=state.events + (self._event(state, event_type, session),),
+            events=state.events + (self._event(state, event_type, session, metadata),),
         )
         self._store.save(updated)
         return updated
 
-    def _event(self, state: ProjectState, event_type: str, session: RuntimeSession) -> ProjectEvent:
+    def _event(
+        self,
+        state: ProjectState,
+        event_type: str,
+        session: RuntimeSession,
+        metadata: dict[str, str] | None = None,
+    ) -> ProjectEvent:
         return ProjectEvent(
             self._event_id_factory(), state.project.id, event_type, session.id,
             self._clock(),
-            {"session_id": session.id, "status": session.status.value, "health": session.health_status.value},
+            {
+                "session_id": session.id,
+                "status": session.status.value,
+                "health": session.health_status.value,
+                **({} if metadata is None else metadata),
+            },
         )
 
 

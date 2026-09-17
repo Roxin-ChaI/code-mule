@@ -122,12 +122,39 @@ or integration entry point.
 
 ## Process ownership and safety
 
+### Launch readiness
+
+`launch` is bounded readiness polling, never a single probe. Two properties are
+required for that to hold:
+
+- **Settled identity.** A launcher such as `/usr/bin/python3` forks a stub and
+  then re-execs the real interpreter, so the first observable command line is a
+  transient image. Ownership is anchored only after two consecutive samples
+  agree. Anchoring on the transient image made every later comparison fail,
+  which reported a healthy service as unhealthy without polling at all.
+- **No terminal verdict from one probe.** A refused connection, an unexpected
+  status, or a transient identity change is recorded and retried until the
+  bounded deadline. Only a process exit ends the wait early, and it is reported
+  as a typed process failure rather than a health failure.
+
+Every attempt is persisted on `runtime.health_checked` as bounded, response-free
+metadata: `health_attempts`, `health_elapsed_seconds`, `health_failure`
+(`none`, `connection_failed`, `unexpected_status`, `identity_mismatch`,
+`process_exited`, `command_failed`), `health_status`, `health_url`, and
+`health_http_status`. Response bodies are never stored.
+
 A `RuntimeSession` stores the PID together with fingerprints of the OS process start
 identity and command. `stop-app` sends a graceful termination signal only when all
 identities still match. A reused PID or changed command becomes
 `OWNERSHIP_UNCERTAIN`; Code Mule will not kill it. There is no force kill, browser
 automation, container orchestration, deployment, or remote side effect in this
 phase.
+
+`stop-app` also cleans up a **failed** session. If the recorded PID is still
+alive and its identity still matches, Code Mule signals its own process and
+records `stopped`; a mismatch fails closed with `OWNERSHIP_UNCERTAIN` and
+signals nothing; an already-gone process becomes `exited`. Only `exited` and
+`stopped` sessions return immediately.
 
 Full runtime log capture and an `app-logs` command are deliberately deferred.
 The launcher discards child stdout/stderr instead of retaining unbounded or
