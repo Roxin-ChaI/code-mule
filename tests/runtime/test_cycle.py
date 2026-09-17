@@ -1400,7 +1400,7 @@ class WorkerTransportEvidenceTests(unittest.TestCase):
             app_server_pid=4321,
             app_server_exit_code=0,
             transport_failure_kind=TransportFailureKind.REPORT_PARSE_FAILED,
-            failure_class=WorkerFailureClass.TRANSPORT_FAILURE,
+            failure_class=WorkerFailureClass.CODE_MULE_RUNTIME_FAILURE,
             thread_id="thread-1",
             turn_id="turn-1",
             cleanup_reason="closed",
@@ -1445,7 +1445,7 @@ class WorkerTransportEvidenceTests(unittest.TestCase):
         metadata = failure_events[0].metadata
         self.assertEqual(metadata["terminal_event_received"], "true")
         self.assertEqual(metadata["report_parse_failed"], "true")
-        self.assertEqual(metadata["failure_class"], "transport_failure")
+        self.assertEqual(metadata["failure_class"], "code_mule_runtime_failure")
 
     def test_typed_stop_boundary_is_reachable_from_persisted_evidence(self):
         terminal = WorkerTurnTerminal(
@@ -1475,7 +1475,7 @@ class WorkerTransportEvidenceTests(unittest.TestCase):
         self.assertTrue(evidence.trusted_terminal_result)
         self.assertTrue(evidence.transport_evidence_available)
         diagnosis = ProjectDiagnosisService().diagnose(store.current)
-        self.assertEqual(diagnosis.worker_failure_class, "transport_failure")
+        self.assertEqual(diagnosis.worker_failure_class, "code_mule_runtime_failure")
         text = "\n".join(render_project_diagnosis(diagnosis, verbose=True))
         self.assertIn("Terminal result   Received", text)
         self.assertIn("Stop cause        Terminal received report parse failed", text)

@@ -12,6 +12,7 @@ from code_mule.progress import ProgressSink
 from .client import CodexAppServerClient
 from .contracts import CodexWorkerConfig, WorkerTaskRequest, WorkerTurnResult
 from .parsing import build_execution_report
+from .report_contract import REPORT_ENVELOPE_INSTRUCTION
 from .structured_report import (
     InvalidWorkerReport,
     parse_structured_worker_report,
@@ -106,9 +107,12 @@ class CodexWorkerSession:
     ) -> ExecutionReport:
         if self._thread_id is None:
             raise RuntimeError("Codex Worker session has not been started")
+        # The envelope is stated on the wire for every Worker, so the prompt
+        # contract and the extractor can never drift apart.
+        prompt = f"{request.prompt}\n\n{REPORT_ENVELOPE_INSTRUCTION}"
         turn_id = self._client.start_turn(
             self._thread_id,
-            request.prompt,
+            prompt,
             output_schema=structured_worker_report_schema(),
         )
         self._turn_id = turn_id
@@ -119,7 +123,10 @@ class CodexWorkerSession:
         try:
             report = parse_structured_worker_report(result.final_message)
         except InvalidWorkerReport as error:
-            raise InvalidWorkerReport(str(error), terminal=terminal) from None
+            # Keep the typed stage/code/field path intact; only attach the
+            # terminal evidence observed before parsing.
+            error.terminal = terminal
+            raise
         return build_execution_report(
             request=request,
             result=report,

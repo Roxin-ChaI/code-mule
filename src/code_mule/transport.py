@@ -117,7 +117,9 @@ FAILURE_CLASS_BY_KIND: dict[TransportFailureKind, WorkerFailureClass] = {
     TransportFailureKind.PARENT_INTERRUPTED: WorkerFailureClass.USER_INTERRUPT,
     TransportFailureKind.TRANSPORT_CANCELLED: WorkerFailureClass.CODE_MULE_RUNTIME_FAILURE,
     TransportFailureKind.APP_SERVER_DISCONNECTED: WorkerFailureClass.TRANSPORT_FAILURE,
-    TransportFailureKind.REPORT_PARSE_FAILED: WorkerFailureClass.TRANSPORT_FAILURE,
+    # The report contract is Code Mule's own boundary: a rejected Worker report
+    # is a runtime/report-contract failure, never a transport failure.
+    TransportFailureKind.REPORT_PARSE_FAILED: WorkerFailureClass.CODE_MULE_RUNTIME_FAILURE,
     TransportFailureKind.REPORT_PERSIST_FAILED: WorkerFailureClass.CODE_MULE_RUNTIME_FAILURE,
     TransportFailureKind.UNCLASSIFIED_PROTOCOL_FAILURE: WorkerFailureClass.TRANSPORT_FAILURE,
 }

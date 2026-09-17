@@ -733,7 +733,33 @@ def _worker_transport_lines(
                 )
                 for event in diagnostics.events
             )
+    report_failure = _report_contract_failure(state, task_id)
+    if report_failure is not None:
+        lines += (
+            "Report stage      " + humanize_identifier(report_failure.get("report_stage", "unknown")),
+            "Report code       " + humanize_identifier(report_failure.get("report_code", "unknown")),
+        )
+        field_path = report_failure.get("report_field_path")
+        if field_path is not None:
+            lines += (f"Report field      {field_path}",)
     return lines
+
+
+def _report_contract_failure(
+    state: ProjectState, task_id: str
+) -> dict[str, str] | None:
+    """Return bounded report-contract diagnostics for the latest failure."""
+
+    matches = tuple(
+        event
+        for event in state.events
+        if event.event_type == "task.execution_failed"
+        and event.entity_id == task_id
+        and "report_code" in event.metadata
+    )
+    if not matches:
+        return None
+    return max(matches, key=lambda event: event.timestamp).metadata
 
 
 def _no_change_delivery_lines(evidence) -> tuple[str, ...]:

@@ -261,7 +261,7 @@ class TransportScenarioTests(unittest.TestCase):
     # -- 9/10. reader and framing failures ---------------------------------
 
     def test_stdout_reader_failure_propagates_and_is_classified(self) -> None:
-        client = self.client("stdout_reader_exception")
+        client = self.client("stdout_reader_exception_delayed")
         client.initialize()
         thread_id = client.start_thread()
         turn_id = client.start_turn(thread_id, "prompt")
@@ -274,6 +274,21 @@ class TransportScenarioTests(unittest.TestCase):
         )
         self.assertIs(diagnostics.stdout_state, ChannelState.FAILED)
         self.assertIsNotNone(diagnostics.reader_failure_kind)
+
+    def test_corrupt_bytes_in_a_read_chunk_are_still_a_typed_reader_failure(self) -> None:
+        # A bad byte invalidates the whole text-mode read chunk, so the failure
+        # may surface on whichever call is reading.  It must still be typed.
+        client = self.client("stdout_reader_exception")
+        client.initialize()
+        thread_id = client.start_thread()
+        with self.assertRaises(CodexStdoutReaderFailed):
+            turn_id = client.start_turn(thread_id, "prompt")
+            client.wait_for_turn(thread_id, turn_id)
+        diagnostics = client.transport_diagnostics()
+        self.assertIs(
+            diagnostics.transport_failure_kind,
+            TransportFailureKind.STDOUT_READER_FAILED,
+        )
 
     def test_malformed_jsonrpc_is_a_decode_failure(self) -> None:
         client = self.client("malformed_jsonrpc")
@@ -521,6 +536,79 @@ class WorkerSessionHandoffTests(unittest.TestCase):
         )
         self.addCleanup(session.close)
         return session
+
+    def _execute(self, scenario: str):
+        from code_mule.worker.contracts import WorkerTaskRequest
+
+        with TemporaryDirectory() as tmp:
+            session = self._session(scenario, Path(tmp))
+            session.start()
+            request = WorkerTaskRequest(self._task(), "prompt", "Fake transport task")
+            return session.execute(
+                request,
+                report_id="report-1",
+                created_at=datetime(2026, 9, 17, tzinfo=UTC),
+            )
+
+    def _expect_report_failure(self, scenario: str):
+        from code_mule.worker.contracts import WorkerTaskRequest
+
+        with TemporaryDirectory() as tmp:
+            session = self._session(scenario, Path(tmp))
+            session.start()
+            request = WorkerTaskRequest(self._task(), "prompt", "Fake transport task")
+            with self.assertRaises(InvalidWorkerReport) as caught:
+                session.execute(
+                    request,
+                    report_id="report-1",
+                    created_at=datetime(2026, 9, 17, tzinfo=UTC),
+                )
+            return caught.exception
+
+    def test_prose_plus_json_fence_is_accepted(self) -> None:
+        """The exact envelope that broke real soak iterations 02 and 08."""
+
+        report = self._execute("wrapped_report")
+        self.assertEqual(report.status, "completed")
+        self.assertIn("value.txt", report.files_changed)
+        self.assertTrue(report.tests)
+
+    def test_prose_plus_embedded_object_is_accepted(self) -> None:
+        report = self._execute("embedded_report")
+        self.assertEqual(report.status, "completed")
+
+    def test_ambiguous_report_candidates_fail_closed(self) -> None:
+        from code_mule.worker.report_contract import (
+            ReportFailureStage,
+            ReportValidationCode,
+        )
+
+        error = self._expect_report_failure("ambiguous_report")
+        self.assertIs(error.stage, ReportFailureStage.EXTRACTION)
+        self.assertIs(error.code, ReportValidationCode.AMBIGUOUS_JSON_CANDIDATE)
+        self.assertTrue(error.candidate_found)
+        self.assertFalse(error.json_decoded)
+        metadata = worker_failure_metadata(error)
+        self.assertEqual(metadata["report_stage"], "extraction")
+        self.assertEqual(
+            metadata["report_code"], "ambiguous_json_candidate"
+        )
+        self.assertEqual(metadata["failure_class"], "code_mule_runtime_failure")
+
+    def test_prose_without_json_is_a_typed_extraction_failure(self) -> None:
+        from code_mule.worker.report_contract import (
+            ReportFailureStage,
+            ReportValidationCode,
+        )
+
+        error = self._expect_report_failure("prose_only_report")
+        self.assertIs(error.stage, ReportFailureStage.EXTRACTION)
+        self.assertIs(error.code, ReportValidationCode.NO_JSON_CANDIDATE)
+        self.assertIsNotNone(error.terminal)
+        self.assertTrue(error.terminal.final_message_present)
+        metadata = worker_failure_metadata(error)
+        self.assertEqual(metadata["terminal_event_received"], "true")
+        self.assertEqual(metadata["report_parse_failed"], "true")
 
     def test_completed_turn_with_a_rejected_report_keeps_terminal_evidence(self) -> None:
         from code_mule.worker.contracts import WorkerTaskRequest

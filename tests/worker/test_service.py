@@ -11,6 +11,7 @@ from code_mule.worker.contracts import (
     WorkerTurnResult,
 )
 from code_mule.worker.service import CodexWorkerService
+from code_mule.worker.report_contract import REPORT_ENVELOPE_INSTRUCTION
 
 from .test_contracts import make_task
 
@@ -94,16 +95,14 @@ class CodexWorkerServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(captured, [worker_config()])
-        self.assertEqual(
-            fake.calls,
-            [
-                ("initialize",),
-                ("start_thread",),
-                ("start_turn", "thread-1", "Inspect files", ANY),
-                ("wait_for_turn", "thread-1", "turn-1"),
-                ("close",),
-            ],
-        )
+        self.assertEqual([call[0] for call in fake.calls],
+                         ["initialize", "start_thread", "start_turn", "wait_for_turn", "close"])
+        start_turn = fake.calls[2]
+        self.assertEqual((start_turn[1], start_turn[3]), ("thread-1", ANY))
+        # The wire prompt states the report envelope for every Worker, so the
+        # prompt contract and the extractor cannot drift apart.
+        self.assertTrue(start_turn[2].startswith("Inspect files\n\n"))
+        self.assertIn(REPORT_ENVELOPE_INSTRUCTION, start_turn[2])
         self.assertTrue(fake.closed)
         self.assertEqual(report.id, "report-1")
         self.assertEqual(report.task_id, task.id)

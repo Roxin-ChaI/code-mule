@@ -3,6 +3,10 @@ import json
 import unittest
 
 from code_mule.worker.contracts import CodexWorkerError
+from code_mule.worker.report_contract import (
+    ReportFailureStage,
+    ReportValidationCode,
+)
 from code_mule.worker.structured_report import (
     InvalidWorkerReport,
     WorkerCheckStatus,
@@ -156,21 +160,125 @@ class StructuredWorkerReportTests(unittest.TestCase):
         self.assertTrue(parsed.tests[0].required)
         self.assertFalse(parsed.tests[1].required)
 
-    def test_parser_does_not_extract_or_repair_json(self):
+    def test_extractor_accepts_the_envelopes_real_codex_emits(self):
         payload = json.dumps(valid_payload())
-        invalid = (
-            "```json\n" + payload + "\n```",
-            "Execution report: " + payload,
-            payload[:-1],
-            "[]",
-        )
-        for raw in invalid:
-            with self.subTest(raw=raw[:20]):
+        accepted = {
+            "bare": payload,
+            "json_fence": "```json\n" + payload + "\n```",
+            "plain_fence": "```\n" + payload + "\n```",
+            "prose_then_fence": (
+                "Done. `value.txt` now contains `value = 42`.\n\n"
+                "```json\n" + payload + "\n```\n"
+            ),
+            "prose_then_object": "Execution report: " + payload,
+            "padded": "\n\n  " + payload + "  \n\n",
+        }
+        for name, raw in accepted.items():
+            with self.subTest(envelope=name):
+                parsed = parse_structured_worker_report(raw)
+                self.assertIs(parsed.status, WorkerExecutionStatus.COMPLETED)
+
+    def test_extractor_never_repairs_json_or_guesses_between_candidates(self):
+        payload = json.dumps(valid_payload())
+        rejected = {
+            "truncated": payload[:-1],
+            "not_an_object": "[]",
+            "two_fences": (
+                "```json\n" + payload + "\n```\n```json\n" + payload + "\n```"
+            ),
+            "two_objects": "First " + payload + " then " + payload,
+            "empty": "",
+            "prose_only": "I finished the task and updated value.txt.",
+            "single_quotes": payload.replace('"', "'"),
+        }
+        for name, raw in rejected.items():
+            with self.subTest(envelope=name):
                 with self.assertRaises(InvalidWorkerReport):
                     parse_structured_worker_report(raw)
 
+    def test_report_failure_carries_a_typed_stage_code_and_field_path(self):
+        payload = valid_payload()
+        del payload["tests"]
+        with self.assertRaises(InvalidWorkerReport) as caught:
+            parse_structured_worker_report(
+                "Here is the report:\n```json\n" + json.dumps(payload) + "\n```"
+            )
+        error = caught.exception
+        self.assertIs(error.stage, ReportFailureStage.SCHEMA)
+        self.assertIs(error.code, ReportValidationCode.MISSING_FIELD)
+        self.assertEqual(error.field_path, "worker report.tests")
+        self.assertTrue(error.candidate_found)
+        self.assertTrue(error.json_decoded)
+        self.assertTrue(error.semantic_validation_started)
+
+        with self.assertRaises(InvalidWorkerReport) as fence_failure:
+            parse_structured_worker_report("```json\n{not json}\n```")
+        self.assertIs(fence_failure.exception.stage, ReportFailureStage.JSON_DECODE)
+        self.assertIs(
+            fence_failure.exception.code, ReportValidationCode.INVALID_JSON
+        )
+
+        with self.assertRaises(InvalidWorkerReport) as no_candidate:
+            parse_structured_worker_report("nothing structured here")
+        self.assertIs(no_candidate.exception.stage, ReportFailureStage.EXTRACTION)
+        self.assertIs(
+            no_candidate.exception.code, ReportValidationCode.NO_JSON_CANDIDATE
+        )
+        self.assertFalse(no_candidate.exception.candidate_found)
+
+    def test_invalid_enum_reports_the_exact_field_path(self):
+        payload = valid_payload()
+        payload["git_state"] = "cleanish"
+        with self.assertRaises(InvalidWorkerReport) as caught:
+            parse_structured_worker_report(json.dumps(payload))
+        self.assertIs(caught.exception.code, ReportValidationCode.INVALID_ENUM)
+        self.assertEqual(caught.exception.field_path, "worker report.git_state")
+
+        payload = valid_payload()
+        payload["tests"][0]["status"] = "maybe"
+        with self.assertRaises(InvalidWorkerReport) as nested:
+            parse_structured_worker_report(json.dumps(payload))
+        self.assertEqual(nested.exception.field_path, "worker report.tests[0].status")
+
     def test_invalid_report_is_a_worker_boundary_error(self):
         self.assertTrue(issubclass(InvalidWorkerReport, CodexWorkerError))
+
+
+class WorkerReportContractMapTests(unittest.TestCase):
+    """The prompt, the schema, and the validator must state one contract."""
+
+    def test_prompt_envelope_names_exactly_the_schema_fields(self):
+        import re
+
+        from code_mule.worker.report_contract import REPORT_ENVELOPE_INSTRUCTION
+
+        schema_fields = set(structured_worker_report_schema()["required"])
+        match = re.search(
+            r"top-level fields must be exactly: ([^.]+)\.", REPORT_ENVELOPE_INSTRUCTION
+        )
+        self.assertIsNotNone(match, REPORT_ENVELOPE_INSTRUCTION)
+        named = {item.strip() for item in match.group(1).split(",")}
+        self.assertEqual(named, schema_fields)
+
+    def test_schema_and_parser_reject_the_same_envelope_breaches(self):
+        schema = structured_worker_report_schema()
+        self.assertFalse(schema["additionalProperties"])
+        payload = valid_payload()
+        payload["unexpected"] = "value"
+        with self.assertRaises(InvalidWorkerReport) as extra:
+            parse_structured_worker_report(json.dumps(payload))
+        self.assertIs(extra.exception.code, ReportValidationCode.EXTRA_FIELD)
+        self.assertEqual(extra.exception.field_path, "worker report.unexpected")
+
+    def test_worker_prompt_states_the_envelope_it_must_obey(self):
+        from code_mule.worker.report_contract import REPORT_ENVELOPE_INSTRUCTION
+
+        for requirement in (
+            "exactly one JSON object",
+            "Do not add prose",
+            "Do not wrap it in a ```json code fence",
+        ):
+            self.assertIn(requirement, REPORT_ENVELOPE_INSTRUCTION)
 
 
 if __name__ == "__main__":

@@ -292,7 +292,32 @@ def worker_failure_metadata(error: CodexWorkerError) -> dict[str, str]:
                 "report_parse_failed": "true",
             }
         )
+    stage = getattr(error, "stage", None)
+    code = getattr(error, "code", None)
+    if stage is not None or code is not None:
+        metadata["report_parse_failed"] = "true"
+        if stage is not None:
+            metadata["report_stage"] = _bounded_diagnostic(getattr(stage, "value", stage))
+        if code is not None:
+            metadata["report_code"] = _bounded_diagnostic(getattr(code, "value", code))
+        field_path = getattr(error, "field_path", None)
+        if isinstance(field_path, str) and 0 < len(field_path) <= 160:
+            metadata["report_field_path"] = field_path
+        for name, attribute in (
+            ("candidate_found", "candidate_found"),
+            ("json_decoded", "json_decoded"),
+            ("semantic_validation_started", "semantic_validation_started"),
+            ("final_message_present", "final_message_present"),
+        ):
+            value = getattr(error, attribute, None)
+            if type(value) is bool:
+                metadata[name] = str(value).lower()
     return metadata
+
+
+def _bounded_diagnostic(value: object) -> str:
+    text = str(value)
+    return text if len(text) <= 64 else text[:64]
 
 
 def turn_failure_details_from_metadata(metadata: dict[str, str]) -> CodexTurnFailureDetails | None:

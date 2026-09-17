@@ -1,7 +1,12 @@
-"""Strict native structured-output contract for Codex execution evidence."""
+"""Strict native structured-output contract for Codex execution evidence.
 
-import json
-from dataclasses import dataclass
+Schema and semantic validation stay strict and perform no repair.  The only
+tolerance lives in ``report_contract.extract_report_candidate``, which accepts
+the envelope shapes real Codex actually produces (bare JSON, one ```json block,
+or one embedded object) and fails closed when a candidate is ambiguous.
+"""
+
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import cast
 
@@ -10,6 +15,13 @@ from code_mule.domain.models import WorkerHumanAction
 from code_mule.domain.worker_verification import WorkerCheckStatus
 
 from .contracts import CodexWorkerError, WorkerTurnTerminal
+from .report_contract import (
+    ReportContractError,
+    ReportExtractionMode,
+    ReportFailureStage,
+    ReportValidationCode,
+    extract_report_candidate,
+)
 from code_mule.transport import TransportFailureKind
 
 
@@ -25,12 +37,39 @@ class InvalidWorkerReport(CodexWorkerError):
     transport_failure_kind = TransportFailureKind.REPORT_PARSE_FAILED
 
     def __init__(
-        self, message: str, *, terminal: WorkerTurnTerminal | None = None
+        self,
+        message: str,
+        *,
+        terminal: WorkerTurnTerminal | None = None,
+        stage: ReportFailureStage = ReportFailureStage.SCHEMA,
+        code: ReportValidationCode = ReportValidationCode.INVALID_SEMANTIC_VALUE,
+        field_path: str | None = None,
+        candidate_found: bool = False,
+        json_decoded: bool = False,
+        semantic_validation_started: bool = False,
     ) -> None:
         # A completed turn whose structured report was rejected is *not* a
         # missing terminal result; retain the terminal evidence explicitly.
         self.terminal = terminal
+        self.stage = stage
+        self.code = code
+        self.field_path = field_path
+        self.candidate_found = candidate_found
+        self.json_decoded = json_decoded
+        self.semantic_validation_started = semantic_validation_started
         super().__init__(message)
+
+    @property
+    def terminal_received(self) -> bool:
+        """Whether a trusted terminal turn event was observed before parsing."""
+
+        return self.terminal is not None
+
+    @property
+    def final_message_present(self) -> bool | None:
+        """Whether the terminal turn carried a completed final agent message."""
+
+        return None if self.terminal is None else self.terminal.final_message_present
 
 
 @dataclass(frozen=True)
@@ -57,6 +96,7 @@ class StructuredWorkerReport:
     git_state: str
     issues: tuple[str, ...]
     human_action: WorkerHumanAction | None
+    extraction_mode: ReportExtractionMode = ReportExtractionMode.WHOLE_MESSAGE
 
     def __post_init__(self) -> None:
         if self.git_state not in {"clean", "dirty", "unknown"}:
@@ -141,14 +181,19 @@ def structured_worker_report_schema() -> dict[str, object]:
 
 
 def parse_structured_worker_report(raw_output: str) -> StructuredWorkerReport:
-    """Parse exactly one JSON object without repair, extraction, or defaults."""
+    """Parse exactly one Worker report envelope without repairing its content.
 
-    if not isinstance(raw_output, str):
-        raise InvalidWorkerReport("worker report output must be a string")
+    The envelope may be a bare JSON object, one fenced ```json block, or one
+    embedded object.  The decoded object is then validated strictly: no missing
+    fields, no extra fields, no coercion, no defaults.
+    """
+
     try:
-        value: object = json.loads(raw_output)
-    except json.JSONDecodeError as error:
-        raise InvalidWorkerReport("worker report is not valid JSON") from error
+        extracted = extract_report_candidate(raw_output)
+    except ReportContractError as error:
+        raise _from_contract_error(error) from None
+    value = extracted.value
+    mode = extracted.mode
     try:
         payload = _object(value, "worker report")
         _exact_fields(
@@ -166,25 +211,84 @@ def parse_structured_worker_report(raw_output: str) -> StructuredWorkerReport:
             "worker report",
         )
         human_action = _human_action(payload["human_action"])
-        return StructuredWorkerReport(
-            status=WorkerExecutionStatus(_string(payload["status"], "status")),
-            summary=_string(payload["summary"], "summary"),
-            files_changed=_string_tuple(payload["files_changed"], "files_changed"),
-            tests=_checks(payload["tests"], "tests"),
-            static_checks=_checks(payload["static_checks"], "static_checks"),
-            git_state=_string(payload["git_state"], "git_state"),
-            issues=_string_tuple(payload["issues"], "issues"),
+        status = WorkerExecutionStatus(
+            _string(payload["status"], "worker report.status")
+        )
+        git_state = _string(payload["git_state"], "worker report.git_state")
+        if git_state not in {"clean", "dirty", "unknown"}:
+            raise _schema_error(
+                ReportValidationCode.INVALID_ENUM, "worker report.git_state"
+            )
+        report = StructuredWorkerReport(
+            status=status,
+            summary=_string(payload["summary"], "worker report.summary"),
+            files_changed=_string_tuple(
+                payload["files_changed"], "worker report.files_changed"
+            ),
+            tests=_checks(payload["tests"], "worker report.tests"),
+            static_checks=_checks(
+                payload["static_checks"], "worker report.static_checks"
+            ),
+            git_state=git_state,
+            issues=_string_tuple(payload["issues"], "worker report.issues"),
             human_action=human_action,
         )
-    except InvalidWorkerReport:
-        raise
-    except (TypeError, ValueError) as error:
-        raise InvalidWorkerReport("worker report violates its contract") from error
+    except TypeError as error:
+        raise InvalidWorkerReport(
+            "worker report violates its contract",
+            stage=ReportFailureStage.SEMANTIC_VALIDATION,
+            code=ReportValidationCode.INVALID_SEMANTIC_VALUE,
+            candidate_found=True,
+            json_decoded=True,
+            semantic_validation_started=True,
+        ) from error
+    except ReportContractError as error:
+        raise _from_contract_error(error) from None
+    except ValueError as error:
+        raise InvalidWorkerReport(
+            "worker report violates its contract",
+            stage=ReportFailureStage.SEMANTIC_VALIDATION,
+            code=ReportValidationCode.INVALID_SEMANTIC_VALUE,
+            candidate_found=True,
+            json_decoded=True,
+            semantic_validation_started=True,
+        ) from error
+    return replace(report, extraction_mode=mode)
+
+
+def _from_contract_error(error: ReportContractError) -> InvalidWorkerReport:
+    return InvalidWorkerReport(
+        error.describe(),
+        stage=error.stage,
+        code=error.code,
+        field_path=error.field_path,
+        candidate_found=error.candidate_found,
+        json_decoded=error.json_decoded,
+        semantic_validation_started=error.semantic_validation_started,
+    )
+
+
+def _schema_error(code: ReportValidationCode, field_path: str | None) -> ReportContractError:
+    return ReportContractError(
+        ReportFailureStage.SCHEMA,
+        code,
+        field_path=field_path,
+        candidate_found=True,
+        json_decoded=True,
+        semantic_validation_started=True,
+    )
 
 
 def _object(value: object, context: str) -> dict[str, object]:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
-        raise InvalidWorkerReport(f"{context} must be an object")
+        raise ReportContractError(
+            ReportFailureStage.SCHEMA,
+            ReportValidationCode.NOT_AN_OBJECT,
+            field_path=context,
+            candidate_found=True,
+            json_decoded=True,
+            semantic_validation_started=True,
+        )
     return cast(dict[str, object], value)
 
 
@@ -194,24 +298,50 @@ def _exact_fields(
     missing = required - set(payload)
     extra = set(payload) - required
     if missing:
-        raise InvalidWorkerReport(
-            f"{context} is missing fields: {', '.join(sorted(missing))}"
+        first = sorted(missing)[0]
+        raise ReportContractError(
+            ReportFailureStage.SCHEMA,
+            ReportValidationCode.MISSING_FIELD,
+            field_path=f"{context}.{first}",
+            candidate_found=True,
+            json_decoded=True,
+            semantic_validation_started=True,
         )
     if extra:
-        raise InvalidWorkerReport(
-            f"{context} contains extra fields: {', '.join(sorted(extra))}"
+        first = sorted(extra)[0]
+        raise ReportContractError(
+            ReportFailureStage.SCHEMA,
+            ReportValidationCode.EXTRA_FIELD,
+            field_path=f"{context}.{first}",
+            candidate_found=True,
+            json_decoded=True,
+            semantic_validation_started=True,
         )
 
 
 def _string(value: object, context: str) -> str:
     if not isinstance(value, str):
-        raise InvalidWorkerReport(f"{context} must be a string")
+        raise ReportContractError(
+            ReportFailureStage.SCHEMA,
+            ReportValidationCode.INVALID_FIELD_TYPE,
+            field_path=context,
+            candidate_found=True,
+            json_decoded=True,
+            semantic_validation_started=True,
+        )
     return value
 
 
 def _array(value: object, context: str) -> list[object]:
     if not isinstance(value, list):
-        raise InvalidWorkerReport(f"{context} must be an array")
+        raise ReportContractError(
+            ReportFailureStage.SCHEMA,
+            ReportValidationCode.INVALID_FIELD_TYPE,
+            field_path=context,
+            candidate_found=True,
+            json_decoded=True,
+            semantic_validation_started=True,
+        )
     return cast(list[object], value)
 
 
@@ -230,13 +360,39 @@ def _checks(value: object, context: str) -> tuple[WorkerCheckResult, ...]:
         _exact_fields(payload, {"name", "status", "detail", "required"}, item_context)
         detail = payload["detail"]
         if detail is not None and not isinstance(detail, str):
-            raise InvalidWorkerReport(f"{item_context}.detail must be string or null")
+            raise ReportContractError(
+                ReportFailureStage.SCHEMA,
+                ReportValidationCode.INVALID_FIELD_TYPE,
+                field_path=f"{item_context}.detail",
+                candidate_found=True,
+                json_decoded=True,
+                semantic_validation_started=True,
+            )
+        status_text = _string(payload["status"], f"{item_context}.status")
+        try:
+            status = WorkerCheckStatus(status_text)
+        except ValueError:
+            raise ReportContractError(
+                ReportFailureStage.SCHEMA,
+                ReportValidationCode.INVALID_ENUM,
+                field_path=f"{item_context}.status",
+                candidate_found=True,
+                json_decoded=True,
+                semantic_validation_started=True,
+            ) from None
+        if type(payload["required"]) is not bool:
+            raise ReportContractError(
+                ReportFailureStage.SCHEMA,
+                ReportValidationCode.INVALID_CHECK_RESULT,
+                field_path=f"{item_context}.required",
+                candidate_found=True,
+                json_decoded=True,
+                semantic_validation_started=True,
+            )
         parsed.append(
             WorkerCheckResult(
                 name=_string(payload["name"], f"{item_context}.name"),
-                status=WorkerCheckStatus(
-                    _string(payload["status"], f"{item_context}.status")
-                ),
+                status=status,
                 detail=detail,
                 required=payload["required"],
             )
@@ -253,14 +409,36 @@ def _human_action(value: object) -> WorkerHumanAction | None:
         {"kind", "summary", "request", "choices"},
         "worker report.human_action",
     )
-    return WorkerHumanAction(
-        kind=WorkerHumanActionKind(
-            _string(payload["kind"], "worker report.human_action.kind")
-        ),
-        summary=_string(payload["summary"], "worker report.human_action.summary"),
-        request=_string(payload["request"], "worker report.human_action.request"),
-        choices=_string_tuple(payload["choices"], "worker report.human_action.choices"),
-    )
+    kind_text = _string(payload["kind"], "worker report.human_action.kind")
+    try:
+        kind = WorkerHumanActionKind(kind_text)
+    except ValueError:
+        raise ReportContractError(
+            ReportFailureStage.SCHEMA,
+            ReportValidationCode.INVALID_HUMAN_ACTION,
+            field_path="worker report.human_action.kind",
+            candidate_found=True,
+            json_decoded=True,
+            semantic_validation_started=True,
+        ) from None
+    try:
+        return WorkerHumanAction(
+            kind=kind,
+            summary=_string(payload["summary"], "worker report.human_action.summary"),
+            request=_string(payload["request"], "worker report.human_action.request"),
+            choices=_string_tuple(
+                payload["choices"], "worker report.human_action.choices"
+            ),
+        )
+    except ValueError:
+        raise ReportContractError(
+            ReportFailureStage.SEMANTIC_VALIDATION,
+            ReportValidationCode.INVALID_HUMAN_ACTION,
+            field_path="worker report.human_action",
+            candidate_found=True,
+            json_decoded=True,
+            semantic_validation_started=True,
+        ) from None
 
 
 __all__ = [

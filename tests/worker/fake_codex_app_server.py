@@ -50,6 +50,7 @@ SCENARIOS = (
     "stdout_eof_while_alive",
     "stderr_burst",
     "stdout_reader_exception",
+    "stdout_reader_exception_delayed",
     "malformed_jsonrpc",
     "delayed_terminal",
     "terminal_then_report_parse_failure",
@@ -64,6 +65,10 @@ SCENARIOS = (
     "oversized_line",
     "soak_edit",
     "turn_failed_method",
+    "wrapped_report",
+    "embedded_report",
+    "ambiguous_report",
+    "prose_only_report",
 )
 
 
@@ -101,6 +106,16 @@ def _report(text: str = VALID_REPORT) -> None:
         "item/completed",
         item={"type": "agentMessage", "id": "msg-1", "text": text},
     )
+
+
+# Byte-for-byte the envelope Codex produced in the real soak failures:
+# a prose summary followed by a fenced ```json block.
+WRAPPED_AGENT_MESSAGE = (
+    "Done. `value.txt` now contains `value = 42` (single line, "
+    "newline-terminated), the verification command exited 0, and the change "
+    "is unstaged with no commits created.\n\n"
+    "```json\n" + VALID_REPORT + "\n```"
+)
 
 
 def _terminal(status: str = "completed") -> None:
@@ -177,6 +192,28 @@ def _incomplete_after_activity(scenario: str) -> None:
                 },
             }
         )
+    elif scenario == "wrapped_report":
+        _activity()
+        _report(WRAPPED_AGENT_MESSAGE)
+        _terminal("completed")
+    elif scenario == "embedded_report":
+        _activity()
+        _report("Execution report: " + VALID_REPORT)
+        _terminal("completed")
+    elif scenario == "ambiguous_report":
+        _activity()
+        _report(
+            "First candidate:\n```json\n"
+            + VALID_REPORT
+            + "\n```\nSecond candidate:\n```json\n"
+            + VALID_REPORT.replace('"completed"', '"blocked"')
+            + "\n```"
+        )
+        _terminal("completed")
+    elif scenario == "prose_only_report":
+        _activity()
+        _report("I updated value.txt and the verification passed.")
+        _terminal("completed")
     elif scenario == "error_notification":
         _activity()
         _note("error", willRetry=False, error={"message": "fake failure"})
@@ -202,6 +239,14 @@ def _incomplete_after_activity(scenario: str) -> None:
         _note("turn/started", turn={"id": TURN_ID, "status": "inProgress"})
         sys.stdout.flush()
         # Invalid UTF-8 decodes as a hard failure inside the text-mode reader.
+        os.write(1, b"\xff\xfe\x00bad-utf8\n")
+        time.sleep(60)
+    elif scenario == "stdout_reader_exception_delayed":
+        # Same corruption, but after the caller has consumed the turn response,
+        # so the failure is unambiguously a mid-turn reader failure.
+        _note("turn/started", turn={"id": TURN_ID, "status": "inProgress"})
+        sys.stdout.flush()
+        time.sleep(0.4)
         os.write(1, b"\xff\xfe\x00bad-utf8\n")
         time.sleep(60)
     elif scenario == "malformed_jsonrpc":

@@ -60,9 +60,9 @@ _FAILURE_CLASS_BY_STOP_CAUSE: dict[WorkerStopCause, WorkerFailureClass] = {
     WorkerStopCause.STDIN_WRITE_FAILED: WorkerFailureClass.TRANSPORT_FAILURE,
     WorkerStopCause.JSONRPC_DECODE_FAILED: WorkerFailureClass.TRANSPORT_FAILURE,
     WorkerStopCause.APP_SERVER_DISCONNECTED: WorkerFailureClass.TRANSPORT_FAILURE,
-    WorkerStopCause.REPORT_PARSE_FAILED: WorkerFailureClass.TRANSPORT_FAILURE,
+    WorkerStopCause.REPORT_PARSE_FAILED: WorkerFailureClass.CODE_MULE_RUNTIME_FAILURE,
     WorkerStopCause.TERMINAL_RECEIVED_REPORT_PARSE_FAILED: (
-        WorkerFailureClass.TRANSPORT_FAILURE
+        WorkerFailureClass.CODE_MULE_RUNTIME_FAILURE
     ),
     WorkerStopCause.UNCLASSIFIED_PROTOCOL_FAILURE: (
         WorkerFailureClass.TRANSPORT_FAILURE
