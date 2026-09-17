@@ -40,7 +40,17 @@ from code_mule.runtime import (
     TaskCycleRequest,
     TaskCycleService,
 )
+from code_mule.diagnosis import ProjectDiagnosisService
+from code_mule.presentation import render_project_diagnosis
+from code_mule.recovery import ExecutionAttemptStatus, WorkerStopCause
+from code_mule.recovery.uncertainty import worker_uncertainty_evidence
 from code_mule.supervisor.contracts import ReviewResult
+from code_mule.transport import (
+    ChannelState,
+    TransportFailureKind,
+    WorkerFailureClass,
+    legacy_transport_diagnostics,
+)
 from code_mule.worker import (
     CodexCapabilityApprovalRequired,
     CodexApprovalRequired,
@@ -48,6 +58,7 @@ from code_mule.worker import (
     CodexTurnTimeout,
     InvalidWorkerReport,
     WorkerCapabilityApprovalRequest,
+    WorkerTurnTerminal,
 )
 from code_mule.worker import CodexUserInputRequired, WorkerInputRequest
 
@@ -144,6 +155,22 @@ class FakeWorkerSession:
 
     def close(self):
         self.closed += 1
+
+
+class TransportFakeWorkerSession(FakeWorkerSession):
+    """A session that also exposes bounded v16 transport diagnostics."""
+
+    def __init__(self, outcomes, transport, turn_id="turn-1"):
+        super().__init__(outcomes)
+        self._transport = transport
+        self._turn_id = turn_id
+
+    @property
+    def turn_id(self):
+        return self._turn_id
+
+    def transport_diagnostics(self):
+        return self._transport
 
 
 class FakeSupervisor:
@@ -1353,6 +1380,106 @@ class TaskCycleFailureTests(unittest.TestCase):
                 ProgressEventType.SUPERVISOR_FAILED,
             ),
         )
+
+
+class WorkerTransportEvidenceTests(unittest.TestCase):
+    """The exact current E2E failure class must stay forensically typed."""
+
+    def _transport(self, **overrides):
+        base = legacy_transport_diagnostics()
+        return replace(
+            base,
+            legacy_transport_evidence_incomplete=False,
+            stdout_state=ChannelState.OPEN,
+            stderr_state=ChannelState.OPEN,
+            stdin_state=ChannelState.OPEN,
+            terminal_event_received=True,
+            terminal_event_type="turn/completed",
+            activity_count=4,
+            last_activity_at=NOW,
+            app_server_pid=4321,
+            app_server_exit_code=0,
+            transport_failure_kind=TransportFailureKind.REPORT_PARSE_FAILED,
+            failure_class=WorkerFailureClass.TRANSPORT_FAILURE,
+            thread_id="thread-1",
+            turn_id="turn-1",
+            cleanup_reason="closed",
+            **overrides,
+        )
+
+    def test_report_parse_failure_is_persisted_as_terminal_received_not_missing(self):
+        terminal = WorkerTurnTerminal(
+            thread_id="thread-1",
+            turn_id="turn-1",
+            terminal_event_type="turn/completed",
+            turn_status="completed",
+            activity_count=4,
+            event_count=6,
+            final_message_present=True,
+        )
+        session = TransportFakeWorkerSession(
+            [InvalidWorkerReport("rejected", terminal=terminal)],
+            self._transport(),
+        )
+        service, request, store, _, _, _ = build_cycle(
+            session=session, supervisor=FakeSupervisor([])
+        )
+
+        service.execute(request)
+
+        attempt = store.current.execution_attempts[-1]
+        self.assertEqual(attempt.status, ExecutionAttemptStatus.UNCERTAIN)
+        self.assertIsNotNone(attempt.transport)
+        self.assertIs(
+            attempt.transport.transport_failure_kind,
+            TransportFailureKind.REPORT_PARSE_FAILED,
+        )
+        self.assertTrue(attempt.transport.terminal_event_received)
+        self.assertEqual(attempt.turn_id, "turn-1")
+        failure_events = tuple(
+            event
+            for event in store.current.events
+            if event.event_type == "task.execution_failed"
+        )
+        self.assertEqual(len(failure_events), 1)
+        metadata = failure_events[0].metadata
+        self.assertEqual(metadata["terminal_event_received"], "true")
+        self.assertEqual(metadata["report_parse_failed"], "true")
+        self.assertEqual(metadata["failure_class"], "transport_failure")
+
+    def test_typed_stop_boundary_is_reachable_from_persisted_evidence(self):
+        terminal = WorkerTurnTerminal(
+            thread_id="thread-1",
+            turn_id="turn-1",
+            terminal_event_type="turn/completed",
+            turn_status="completed",
+            activity_count=4,
+            event_count=6,
+            final_message_present=True,
+        )
+        session = TransportFakeWorkerSession(
+            [InvalidWorkerReport("rejected", terminal=terminal)],
+            self._transport(),
+        )
+        service, request, store, _, _, _ = build_cycle(
+            session=session, supervisor=FakeSupervisor([])
+        )
+        service.execute(request)
+
+        evidence = worker_uncertainty_evidence(store.current, store.current.human_actions[-1])
+        self.assertIsNotNone(evidence)
+        self.assertIs(
+            evidence.stop_cause,
+            WorkerStopCause.TERMINAL_RECEIVED_REPORT_PARSE_FAILED,
+        )
+        self.assertTrue(evidence.trusted_terminal_result)
+        self.assertTrue(evidence.transport_evidence_available)
+        diagnosis = ProjectDiagnosisService().diagnose(store.current)
+        self.assertEqual(diagnosis.worker_failure_class, "transport_failure")
+        text = "\n".join(render_project_diagnosis(diagnosis, verbose=True))
+        self.assertIn("Terminal result   Received", text)
+        self.assertIn("Stop cause        Terminal received report parse failed", text)
+        self.assertNotIn("Stop cause        Unknown", text)
 
 
 if __name__ == "__main__":

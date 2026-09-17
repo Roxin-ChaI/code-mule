@@ -24,7 +24,10 @@ from code_mule.recovery.contracts import (
     WorkerStopCause,
     WorkerWorkspaceState,
 )
-from code_mule.recovery.uncertainty import worker_uncertainty_evidence
+from code_mule.recovery.uncertainty import (
+    failure_class_for_stop_cause,
+    worker_uncertainty_evidence,
+)
 from code_mule.recovery.service import RecoveryClassifier
 from code_mule.recovery import RecoveryMode
 from code_mule.state.serialization import deserialize_project_state, serialize_project_state
@@ -289,6 +292,120 @@ class WorkerUncertaintyEvidenceTests(unittest.TestCase):
         self.assertEqual(
             serialize_project_state(deserialize_project_state(before)), before
         )
+
+
+class WorkerStopCauseClassificationTests(unittest.TestCase):
+    """Every persisted Worker failure must map to a typed, honest stop cause."""
+
+    def _evidence(self, metadata: dict[str, str], *, keep_event: bool = True):
+        state = uncertain_state()
+        events = state.events if keep_event else state.events[:-1]
+        if keep_event:
+            events = state.events[:-1] + (
+                replace(state.events[-1], metadata=metadata),
+            )
+        state = replace(state, events=events)
+        return worker_uncertainty_evidence(state, state.human_actions[0])
+
+    def test_terminal_received_report_parse_failure_is_not_a_missing_terminal(self):
+        evidence = self._evidence(
+            {
+                "error_type": "InvalidWorkerReport",
+                "transport_failure_kind": "report_parse_failed",
+                "failure_class": "transport_failure",
+                "terminal_event_received": "true",
+                "report_parse_failed": "true",
+                "thread_id": THREAD,
+                "turn_id": TURN,
+                "activity_count": "4",
+            }
+        )
+        self.assertIs(
+            evidence.stop_cause,
+            WorkerStopCause.TERMINAL_RECEIVED_REPORT_PARSE_FAILED,
+        )
+        self.assertTrue(evidence.trusted_terminal_result)
+
+    def test_report_parse_failure_without_terminal_evidence_stays_typed(self):
+        evidence = self._evidence(
+            {
+                "error_type": "InvalidWorkerReport",
+                "transport_failure_kind": "report_parse_failed",
+                "failure_class": "transport_failure",
+                "report_parse_failed": "true",
+            }
+        )
+        self.assertIs(evidence.stop_cause, WorkerStopCause.REPORT_PARSE_FAILED)
+        self.assertFalse(evidence.trusted_terminal_result)
+
+    def test_legacy_invalid_report_evidence_is_upgraded_from_unknown(self):
+        evidence = self._evidence({"error_type": "InvalidWorkerReport"})
+        self.assertIs(evidence.stop_cause, WorkerStopCause.REPORT_PARSE_FAILED)
+        self.assertFalse(evidence.transport_evidence_available)
+
+    def test_transport_failure_kind_maps_to_the_exact_stop_cause(self):
+        cases = {
+            "stdout_eof": WorkerStopCause.STDOUT_EOF,
+            "stdout_reader_failed": WorkerStopCause.STDOUT_READER_FAILED,
+            "stderr_reader_failed": WorkerStopCause.STDERR_READER_FAILED,
+            "stdin_write_failed": WorkerStopCause.STDIN_WRITE_FAILED,
+            "jsonrpc_decode_failed": WorkerStopCause.JSONRPC_DECODE_FAILED,
+            "process_exited": WorkerStopCause.PROCESS_EXITED,
+            "app_server_disconnected": WorkerStopCause.APP_SERVER_DISCONNECTED,
+            "request_rejected": WorkerStopCause.REQUEST_REJECTED,
+            "parent_interrupted": WorkerStopCause.PARENT_INTERRUPTED,
+            "hard_timeout": WorkerStopCause.HARD_TIMEOUT,
+            "protocol_violation": WorkerStopCause.PROTOCOL_ERROR,
+        }
+        for kind, expected in cases.items():
+            with self.subTest(kind=kind):
+                evidence = self._evidence(
+                    {"error_type": "CodexProtocolError", "transport_failure_kind": kind}
+                )
+                self.assertIs(evidence.stop_cause, expected)
+
+    def test_unrecognised_protocol_event_is_never_presented_as_unknown(self):
+        evidence = self._evidence({"error_type": "SomeFutureBoundaryError"})
+        self.assertIs(
+            evidence.stop_cause, WorkerStopCause.UNCLASSIFIED_PROTOCOL_FAILURE
+        )
+        self.assertIsNot(evidence.stop_cause, WorkerStopCause.UNKNOWN)
+
+    def test_unknown_is_only_used_when_no_failure_event_exists(self):
+        evidence = self._evidence({}, keep_event=False)
+        self.assertIs(evidence.stop_cause, WorkerStopCause.UNKNOWN)
+
+    def test_unknown_stop_cause_renders_as_legacy_evidence_insufficient(self):
+        state = uncertain_state()
+        state = replace(state, events=state.events[:-1])
+        diagnosis = ProjectDiagnosisService().diagnose(state)
+        text = "\n".join(render_project_diagnosis(diagnosis))
+        self.assertIn("Legacy evidence insufficient", text)
+        self.assertNotIn("Stop cause        Unknown", text)
+
+    def test_failure_class_is_exposed_and_never_unknown(self):
+        evidence = self._evidence(
+            {"error_type": "CodexProtocolError", "transport_failure_kind": "stdout_eof"}
+        )
+        self.assertEqual(
+            failure_class_for_stop_cause(evidence.stop_cause).value,
+            "transport_failure",
+        )
+        self.assertEqual(
+            failure_class_for_stop_cause(WorkerStopCause.HARD_TIMEOUT).value, "timeout"
+        )
+        self.assertEqual(
+            failure_class_for_stop_cause(WorkerStopCause.TURN_FAILED).value,
+            "codex_turn_failure",
+        )
+        self.assertIsNone(failure_class_for_stop_cause(WorkerStopCause.UNKNOWN))
+
+    def test_diagnosis_reports_the_typed_worker_failure_class(self):
+        state = uncertain_state()
+        diagnosis = ProjectDiagnosisService().diagnose(state)
+        self.assertEqual(diagnosis.worker_failure_class, "codex_turn_failure")
+        text = "\n".join(render_project_diagnosis(diagnosis))
+        self.assertIn("Failure class     Codex turn failure", text)
 
 
 if __name__ == "__main__":

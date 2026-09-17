@@ -520,10 +520,24 @@ class CodexAppServerClient:
                 message = self._next_turn_message(
                     hard_deadline, inactivity_deadline
                 )
-            except CodexTurnTimeout:
+            except CodexTurnTimeout as error:
+                self._failure_kind = error.transport_failure_kind
+                self._process_alive_at_failure = (
+                    None if self._process is None else self._process.poll() is None
+                )
                 self.close(reason="timeout")
                 raise
             except CodexParentInterrupted:
+                self.close(reason="parent_interrupted")
+                raise
+            except KeyboardInterrupt:
+                # A Ctrl+C at the parent boundary is a typed stop cause, not an
+                # unexplained transport loss.  The interrupt is re-raised so the
+                # CLI keeps its normal signal semantics.
+                self._failure_kind = TransportFailureKind.PARENT_INTERRUPTED
+                self._process_alive_at_failure = (
+                    None if self._process is None else self._process.poll() is None
+                )
                 self.close(reason="parent_interrupted")
                 raise
             self._check_reader_health()
@@ -941,7 +955,11 @@ class CodexAppServerClient:
         while True:
             try:
                 message = self._read_new_message(deadline)
-            except CodexTurnTimeout:
+            except CodexTurnTimeout as error:
+                self._failure_kind = error.transport_failure_kind
+                self._process_alive_at_failure = (
+                    None if self._process is None else self._process.poll() is None
+                )
                 self.close(reason="request_timeout")
                 raise
             except CodexParentInterrupted:

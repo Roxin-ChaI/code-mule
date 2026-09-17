@@ -1365,6 +1365,8 @@ class TaskCycleService:
                 task.id,
                 attempt,
                 ExecutionAttemptStatus.UNCERTAIN,
+                thread_id=None if transport is None else transport.thread_id,
+                turn_id=None if transport is None else transport.turn_id,
                 terminal_at=self._clock(),
                 failure_kind=type(error).__name__.lower()[:64],
                 partial_paths_exist=bool(partial_paths),
