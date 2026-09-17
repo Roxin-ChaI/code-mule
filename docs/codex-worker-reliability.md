@@ -86,14 +86,18 @@ A stopped Worker is always attributed to exactly one owner:
 | --- | --- |
 | `codex_turn_failure` | Codex explicitly reported `turn_failed`, `turn_interrupted`, or a non-retryable `error_notification`, or rejected a request |
 | `codex_process_failure` | the app-server could not start, or exited unexpectedly |
-| `transport_failure` | pipe, EOF, JSON-RPC, reader, writer, disconnect, or report-parse failure |
+| `transport_failure` | pipe, EOF, JSON-RPC, reader, writer, or disconnect failure |
 | `timeout` | inactivity or hard turn deadline |
 | `user_interrupt` | the parent CLI received an interrupt |
-| `code_mule_runtime_failure` | Code Mule's own persistence or routing boundary failed |
+| `code_mule_runtime_failure` | Code Mule's own report-contract, parsing, or persistence boundary failed |
 
 An unrecognised protocol event is `unclassified_protocol_failure` with a
 bounded method name, process status, and channel status.  It is never reported
 as `Unknown`.
+
+A rejected structured Worker report (`report_parse_failed`) is a
+`code_mule_runtime_failure`: the report contract is Code Mule's own boundary.
+It must never be counted as a transport failure.
 
 `Stop cause: Unknown` is reserved for legacy state that recorded no failure
 event at all.  Rendering that legacy case prints `Legacy evidence
@@ -127,6 +131,59 @@ An attempt upgraded from schema ≤ 15 is marked
 cause, process status, or terminal result.
 
 ## Terminal evidence and report hand-off
+
+### Worker report contract map
+
+The contract has one source of truth
+(`src/code_mule/worker/report_contract.py`). Each layer must state the same
+rule:
+
+```text
+Worker is instructed to output:        REPORT_ENVELOPE_INSTRUCTION
+        ↓                              (appended to every Worker prompt)
+Extractor accepts:                     extract_report_candidate
+        ↓
+Parser constructs / validator requires: parse_structured_worker_report
+        ↓
+ExecutionReport persists:              build_execution_report
+```
+
+The envelope rule is: the entire final answer is exactly one JSON object, with
+no surrounding prose, headings, or Markdown, and no ```json code fence. A
+contract-map test asserts that the prompt names exactly the top-level fields
+the JSON Schema requires, so the prompt, the schema, and the validator can
+never drift apart.
+
+### Envelope extraction
+
+Extraction is deterministic and bounded, and performs **no JSON repair**:
+
+1. the whole final message must be JSON; otherwise
+2. exactly one fenced ```json (or bare ```) block; otherwise
+3. exactly one embedded balanced `{...}` object.
+
+Two or more distinct candidates fail closed
+(`ambiguous_json_candidate`); the parser never guesses between two plausible
+reports. Field-level schema and semantic validation stay strict: no missing
+fields, no extra fields, no coercion, no defaults.
+
+### Typed report failure diagnostics
+
+Every report rejection carries a bounded, secret-free
+`ReportFailureStage` / `ReportValidationCode` / `field_path` pair:
+
+```text
+stage   envelope | extraction | json_decode | schema | semantic_validation
+code    not_a_string, empty_output, output_too_large, no_json_candidate,
+        ambiguous_json_candidate, invalid_json, not_an_object, missing_field,
+        extra_field, invalid_enum, invalid_field_type, invalid_check_result,
+        invalid_human_action, invalid_semantic_value
+```
+
+The persisted failure metadata also records `candidate_found`,
+`json_decoded`, `semantic_validation_started`, `final_message_present`,
+`report_stage`, `report_code`, and `report_field_path`. Raw final answers are
+never persisted.
 
 Ordering on a terminal event is fixed:
 
@@ -179,8 +236,13 @@ real Codex Worker turn that must read `value.txt`, change it to a deterministic
 value, run one local Python verification command, and return the structured
 report.  There is no network, no MCP server, no Computer Use, no sandbox
 escalation, and no DeepSeek planning or review.  The ExecutionReport and the
-bounded transport diagnostics are written per iteration; a failing iteration
-keeps its workspace unless `--keep-failures` is omitted on success.
+bounded transport diagnostics are written per iteration. A **failing iteration
+keeps its workspace** so evidence is never destroyed by cleanup; successful
+workspaces are removed. `--purge-failures` opts out of preserving failures.
+
+Failure buckets follow the Worker failure classes, so a rejected report is
+counted under runtime failures (with its own `report contract failures` line),
+never under transport failures.
 
 ## Acceptance criteria
 

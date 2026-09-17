@@ -369,6 +369,11 @@ trusted event, terminal and report status, workspace state, ownership, and
 retry safety. Legacy state with no captured evidence prints `Legacy evidence
 insufficient` instead of `Unknown`.
 
+A rejected structured Worker report additionally reports its typed
+`report_stage`, `report_code`, and `report_field_path` (for example
+`extraction / ambiguous_json_candidate` or `schema / missing_field @
+worker report.tests`). Raw final answers are never displayed.
+
 `code-mule doctor --verbose` additionally reports the Codex binary, its
 version, and whether `codex app-server` is available. It never starts a model
 turn. See [Codex Worker Transport Reliability](codex-worker-reliability.md).

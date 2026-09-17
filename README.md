@@ -346,6 +346,10 @@ Code Mule fits local software work that benefits from:
 - Every Worker attempt persists bounded transport diagnostics with a typed
   failure class (Codex turn, process, transport, timeout, runtime, interrupt);
   a stopped Worker is never reported as an unexplained `Unknown` cause.
+- The structured Worker report contract is stated in the prompt and enforced
+  by one parser: a bare JSON object, one fenced ```json block, or one embedded
+  object is accepted; an ambiguous candidate fails closed with a typed stage,
+  code, and field path.
 
 Details: [Execution Recovery](docs/execution-recovery.md),
 [Git Delivery](docs/git-delivery.md), and
@@ -357,7 +361,7 @@ boundary and its manual real-soak release gate are documented in
 
 Current v0.1.1 release-preparation baseline:
 
-- **775 automated tests PASS**, including runtime-handoff, PID-reuse, real
+- **787 automated tests PASS**, including runtime-handoff, PID-reuse, real
   shell restart regressions that run the persistent launcher without the
   repository `.venv` on `PATH`, and a deterministic Codex Worker transport
   suite covering 23 fake app-server scenarios, a repeated spawn/turn/close

@@ -142,11 +142,15 @@ stopped Worker is attributed to a typed cause instead of an unexplained one:
 ```text
 codex_turn_failure        Codex reported turn_failed / interrupted / a non-retryable error
 codex_process_failure     app-server failed to start or exited unexpectedly
-transport_failure         pipe, EOF, JSON-RPC, reader, writer, or report-parse failure
+transport_failure         pipe, EOF, JSON-RPC, reader, or writer failure
 timeout                   inactivity or hard turn deadline
 user_interrupt            the parent CLI was interrupted
-code_mule_runtime_failure Code Mule's own persistence boundary failed
+code_mule_runtime_failure Code Mule's own report-contract or persistence boundary failed
 ```
+
+A rejected structured Worker report (`report_parse_failed`) belongs to
+`code_mule_runtime_failure`: the report contract is Code Mule's own boundary,
+so a report rejection must never inflate the transport failure count.
 
 An unrecognised protocol event becomes `unclassified_protocol_failure` with
 bounded method/process/channel facts, never `Unknown`. Legacy state that

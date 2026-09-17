@@ -79,6 +79,15 @@ must PASS, optional NOT_RUN may continue, and FAIL/UNKNOWN always block delivery
 See [Worker verification](worker-verification.md) for schema v11 evidence and
 safe diagnostics, and [v0.1.1 release notes](releases/v0.1.1.md) for the real E2E.
 
+Every Worker prompt states the report envelope explicitly: the entire final
+answer must be exactly one JSON object, with no prose and no code fence. The
+extractor accepts that object directly, or from a single fenced ```json block,
+or from a single embedded object, and fails closed when a candidate is
+ambiguous. A rejection carries a typed stage, code, and field path, and is
+classified as `code_mule_runtime_failure` — the report contract is Code Mule's
+boundary, not a transport failure. See
+[Codex Worker Transport Reliability](codex-worker-reliability.md).
+
 `code-mule answer <action-id> "<answer>"` records one pending WORKER_INPUT answer
 without starting a Worker. A subsequent explicit `run` verifies the original
 baseline and partial paths, then uses a fresh session for the same Task. It

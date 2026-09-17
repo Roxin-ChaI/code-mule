@@ -59,7 +59,9 @@ class SoakHarnessUnitTests(unittest.TestCase):
             (CodexTurnHardTimeout("x"), "timeout"),
             (CodexTurnInactivityTimeout("x"), "timeout"),
             (CodexRequestRejected("x"), "codex_turn_failure"),
-            (InvalidWorkerReport("x"), "transport_failure"),
+            # A rejected structured report is Code Mule's own report-contract
+            # boundary, so it must never inflate the transport failure count.
+            (InvalidWorkerReport("x"), "runtime_failure"),
             (CodexAppServerStartError("x"), "process_failure"),
         )
         for error, expected in cases:
@@ -90,6 +92,28 @@ class SoakHarnessUnitTests(unittest.TestCase):
                     WorkerFailureClass(failure_class),
                     set(WorkerFailureClass),
                 )
+
+    def test_report_parse_failure_is_a_runtime_bucket_not_a_transport_bucket(self) -> None:
+        for kind in (
+            TransportFailureKind.REPORT_PARSE_FAILED,
+            TransportFailureKind.REPORT_PERSIST_FAILED,
+        ):
+            with self.subTest(kind=kind.value):
+                bucket, reported_kind, failure_class = self.soak._classify(
+                    InvalidWorkerReport("rejected")
+                    if kind is TransportFailureKind.REPORT_PARSE_FAILED
+                    else self._persist_error(kind)
+                )
+                self.assertEqual(bucket, "runtime_failure")
+                self.assertEqual(failure_class, "code_mule_runtime_failure")
+                if kind is TransportFailureKind.REPORT_PARSE_FAILED:
+                    self.assertEqual(reported_kind, "report_parse_failed")
+
+    @staticmethod
+    def _persist_error(kind: TransportFailureKind) -> CodexWorkerError:
+        error = CodexWorkerError("typed")
+        error.transport_failure_kind = kind
+        return error
 
     def test_report_verification_requires_an_edit_a_command_and_a_report(self) -> None:
         with TemporaryDirectory() as tmp:

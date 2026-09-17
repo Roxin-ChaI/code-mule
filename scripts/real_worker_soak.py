@@ -14,7 +14,11 @@ Guarantees:
 * no external network, no Computer Use, no MCP server, no approvals;
 * a bounded task that must edit one file and run one local command;
 * the ExecutionReport is persisted per iteration;
-* a failing iteration keeps its workspace and forensic record.
+* a failing iteration keeps its workspace and forensic record, so evidence is
+  never destroyed by cleanup (use ``--purge-failures`` to opt out).
+
+Failure buckets follow the Worker failure classes: a rejected structured
+report is a Code Mule runtime/report-contract failure, not a transport failure.
 
 It contains no DeepSeek planning or review.
 
@@ -83,6 +87,11 @@ class IterationResult:
     detail: str
     workspace: Path
     preserved: bool
+    report_stage: str | None = None
+    report_code: str | None = None
+    report_field_path: str | None = None
+    terminal_received: bool | None = None
+    final_message_present: bool | None = None
 
 
 def _run(argv: list[str], cwd: Path) -> None:
@@ -198,6 +207,14 @@ def _write_forensics(
             "tests": list(report.tests),
             "git_state": report.git_state,
         }
+    if result.report_stage is not None or result.report_code is not None:
+        payload["report_contract"] = {
+            "stage": result.report_stage,
+            "code": result.report_code,
+            "field_path": result.report_field_path,
+            "terminal_received": result.terminal_received,
+            "final_message_present": result.final_message_present,
+        }
     if diagnostics is not None:
         payload["transport"] = {
             "transport_failure_kind": (
@@ -265,6 +282,7 @@ def run_iteration(index: int, root: Path, artifacts: Path) -> IterationResult:
         )
     except CodexWorkerError as error:
         bucket, failure_kind, failure_class = _classify(error)
+        terminal = getattr(error, "terminal", None)
         result = IterationResult(
             index=index,
             passed=False,
@@ -275,6 +293,25 @@ def run_iteration(index: int, root: Path, artifacts: Path) -> IterationResult:
             detail=type(error).__name__,
             workspace=workspace,
             preserved=True,
+            report_stage=(
+                None
+                if getattr(error, "stage", None) is None
+                else str(getattr(error.stage, "value", error.stage))
+            ),
+            report_code=(
+                None
+                if getattr(error, "code", None) is None
+                else str(getattr(error.code, "value", error.code))
+            ),
+            report_field_path=getattr(error, "field_path", None),
+            terminal_received=(
+                None
+                if terminal is None
+                else bool(getattr(terminal, "turn_status", None) is not None)
+            ),
+            final_message_present=(
+                None if terminal is None else bool(terminal.final_message_present)
+            ),
         )
     except Exception as error:  # noqa: BLE001 - recorded, never swallowed
         result = IterationResult(
@@ -307,9 +344,12 @@ def main(argv: list[str] | None = None) -> int:
         help="where to keep per-iteration records (default: a temp directory)",
     )
     parser.add_argument(
-        "--keep-failures",
+        "--purge-failures",
         action="store_true",
-        help="keep failing workspaces instead of only recording their evidence",
+        help=(
+            "delete failing workspaces too; by default a failing iteration keeps "
+            "its workspace for forensics"
+        ),
     )
     arguments = parser.parse_args(argv)
     if arguments.iterations < 1:
@@ -337,12 +377,26 @@ def main(argv: list[str] | None = None) -> int:
         results.append(result)
         status = "PASS" if result.passed else "FAIL"
         suffix = "" if result.failure_kind is None else f" ({result.failure_kind})"
+        if result.report_code is not None:
+            suffix += (
+                f" [{result.report_stage}/{result.report_code}"
+                + (
+                    ""
+                    if result.report_field_path is None
+                    else f" @ {result.report_field_path}"
+                )
+                + "]"
+            )
         print(
             f"[{index:02d}/{arguments.iterations:02d}] {status} "
             f"{result.duration_seconds:6.1f}s  {result.bucket}{suffix}  "
             f"{result.detail}"
         )
-        if result.preserved and not arguments.keep_failures:
+        if result.passed:
+            # Cleanup policy: a successful iteration is disposable, a failing
+            # iteration keeps its workspace so evidence is never destroyed.
+            shutil.rmtree(result.workspace, ignore_errors=True)
+        elif arguments.purge_failures:
             shutil.rmtree(result.workspace, ignore_errors=True)
 
     durations = [item.duration_seconds for item in results]
@@ -352,6 +406,9 @@ def main(argv: list[str] | None = None) -> int:
 
     passed = sum(1 for item in results if item.passed)
     unknown = counts.get("unknown_failure", 0)
+    report_contract_failures = sum(
+        1 for item in results if item.failure_kind == "report_parse_failed"
+    )
     print("")
     print("RELIABILITY SUMMARY")
     print(f"Iterations           {len(results)}")
@@ -361,6 +418,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Transport failures   {counts.get('transport_failure', 0)}")
     print(f"Timeouts             {counts.get('timeout', 0)}")
     print(f"Runtime failures     {counts.get('runtime_failure', 0)}")
+    print(f"  of which report contract failures  {report_contract_failures}")
     print(f"User interrupts      {counts.get('user_interrupt', 0)}")
     print(f"Incomplete delivery  {counts.get('incomplete_delivery', 0)}")
     print(f"Unknown failures     {unknown}")
