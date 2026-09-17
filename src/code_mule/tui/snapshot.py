@@ -68,7 +68,6 @@ def boss_lines(
     pending: bool,
     buffer: str,
     status_message: str | None = None,
-    key_debug: str | None = None,
 ) -> tuple[str, ...]:
     """Fixed Boss pane content: a compact HumanAction summary, then the input.
 
@@ -78,9 +77,6 @@ def boss_lines(
     """
 
     lines: list[str] = []
-    if key_debug is not None:
-        # Demo/debug only: a safe resolved key name, never raw bytes.
-        lines.append(f"Key: {_bounded(key_debug, 24)}")
     action = _pending_action(state)
     if action is not None:
         view = human_action_view(action)
@@ -159,7 +155,6 @@ def build_snapshot(
     *,
     buffer: str = "",
     status_message: str | None = None,
-    key_debug: str | None = None,
     indicator: str | None = None,
     verbose: bool = False,
     now: datetime,
@@ -187,7 +182,6 @@ def build_snapshot(
             pending=True,
             buffer=buffer,
             status_message=status_message,
-            key_debug=key_debug,
         ),
         now,
         indicator,

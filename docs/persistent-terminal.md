@@ -107,13 +107,17 @@ Activity 41-60 / 60 · Follow ON     # auto-following the newest events
 Activity 21-40 / 60 · Follow OFF    # scrolled back
 ```
 
-The Boss pane shows the last resolved key name while demo debugging is on:
+The last resolved key name appears on the same line, while demo debugging is on:
 
 ```text
-Key: KEY_PPAGE
+Activity 41-60 / 60 · Follow ON · Key: KEY_PPAGE
+Activity 41-60 / 60 · Follow ON · Key: —          # no key pressed yet
 ```
 
-Only resolved names appear — never an escape payload. If a macOS Terminal does
+The readout starts at an em dash, updates on every key that passes through the
+key handler, and lives on the Activity status line so it never competes with the
+Boss input row. Only whitelisted resolved names appear — never an escape
+payload; an unmapped byte sequence reads `Key: UNKNOWN`. If a macOS Terminal does
 not map a key combination to the expected curses key, the readout shows
 `Key: UNKNOWN` (or the key it actually sent), which is the evidence needed to
 decide whether any mapping should change. No escape sequence is guessed.

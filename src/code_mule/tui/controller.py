@@ -155,6 +155,18 @@ class TerminalController:
 
         return self.state.last_key if self.state.key_debug else None
 
+    @property
+    def key_display(self) -> str | None:
+        """Readout next to the Activity status line, or None when disabled.
+
+        Always present while demo debugging is on: an untouched session shows an
+        em dash so the Boss can tell "no key yet" from "readout missing".
+        """
+
+        if not self.state.key_debug:
+            return None
+        return self.state.last_key or "—"
+
     def clear_buffer(self) -> None:
         self.state.buffer = ""
         self.state.dirty = True

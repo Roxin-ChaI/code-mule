@@ -108,13 +108,18 @@ def snapshot_for(
     )
     entries = controller.activity.visible(window_height)
     lines = tuple(entry.text for entry in entries)
+    indicator = controller.activity.window_label(window_height)
+    key_display = controller.key_display
+    if key_display is not None:
+        # Demo/debug readout lives beside the Activity status line, so it never
+        # competes with the Boss input row.
+        indicator = f"{indicator} · Key: {key_display}"
     return build_snapshot(
         state,
         lines,
         buffer=buffer,
         status_message=controller.state.status_message,
-        key_debug=controller.key_debug,
-        indicator=controller.activity.window_label(window_height),
+        indicator=indicator,
         now=datetime.now(UTC),
     )
 
