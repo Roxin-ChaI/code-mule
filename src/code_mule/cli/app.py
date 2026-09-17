@@ -26,6 +26,7 @@ from code_mule.presentation.terminal import TerminalDashboard, DashboardSection
 
 class BossCliCommands(Protocol):
     def doctor(self, verbose: bool = False) -> CliCommandResult: ...
+    def ui(self, demo: bool = False, verbose: bool = False) -> CliCommandResult: ...
     def start(self, objective: str | None, verbose: bool = False) -> CliCommandResult: ...
     def init_project(self, project_id: str, name: str, workspace: Path, verbose: bool = False) -> CliCommandResult: ...
     def run(self, objective: str | None, verbose: bool = False) -> CliCommandResult: ...
@@ -69,12 +70,16 @@ def _production_factory(
     )
 
 
-def _dispatch(
+def dispatch_arguments(
     commands: BossCliCommands, arguments: object, input_stream: TextIO
 ) -> CliCommandResult:
     command = getattr(arguments, "command")
     if command == "doctor":
         return commands.doctor(getattr(arguments, "verbose"))
+    if command == "ui":
+        return commands.ui(
+            getattr(arguments, "demo", False), getattr(arguments, "verbose")
+        )
     if command == "start":
         return commands.start(
             getattr(arguments, "objective"),
@@ -140,6 +145,10 @@ def _dispatch(
     if command == "chat":
         return commands.chat(input_stream, getattr(arguments, "verbose"))
     raise CliUsageError("unsupported command")
+
+
+# Historical private name; the persistent terminal uses the public spelling.
+_dispatch = dispatch_arguments
 
 
 def _print_error(error: CliError, stream: TextIO) -> None:

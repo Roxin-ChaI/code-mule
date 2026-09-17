@@ -3,7 +3,9 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+import io
 import os
+import sys
 from pathlib import Path
 from typing import Protocol, TextIO
 from uuid import uuid4
@@ -198,11 +200,13 @@ class ProductionCliComposition:
         stdout: TextIO,
         stderr: TextIO,
         runtime_factory: RuntimeFactory | None = None,
+        stdin: TextIO | None = None,
     ) -> None:
         self._state_file = state_file.expanduser().resolve()
         self._environment = os.environ if environment is None else environment
         self._stdout = stdout
         self._stderr = stderr
+        self._stdin = stdin if stdin is not None else sys.stdin
         self._store = JsonProjectStateStore(self._state_file)
         self._runtime_factory = runtime_factory
         self._diagnosis_service = ProjectDiagnosisService()
@@ -246,6 +250,49 @@ class ProductionCliComposition:
             else CliExitCode.ENVIRONMENT_CHECK_FAILED
         )
         return CliCommandResult(code, lines)
+
+    def ui(self, demo: bool = False, verbose: bool = False) -> CliCommandResult:
+        """Run the persistent terminal; a non-TTY caller gets stable text."""
+
+        from code_mule.tui.app import availability, fallback_lines, run_terminal
+        from code_mule.tui.activity import ActivityKind
+        from code_mule.tui.controller import TerminalController
+        from code_mule.tui.demo import demo_commands, demo_state
+
+        if demo:
+            controller = TerminalController(
+                demo_commands(),
+                lambda: demo_state(),
+                input_stream=io.StringIO(""),
+            )
+            controller.activity.append(
+                datetime.now(UTC),
+                ActivityKind.INFO,
+                "demo project loaded; no model or network call was made",
+            )
+        else:
+            controller = TerminalController(
+                self,
+                self._load_for_ui,
+                input_stream=self._stdin or io.StringIO(""),
+            )
+        verdict = availability(self._stdin, self._stdout)
+        if not verdict.interactive:
+            return CliCommandResult(
+                CliExitCode.SUCCESS,
+                fallback_lines(controller) + (f"(persistent UI unavailable: {verdict.reason})",),
+            )
+        code = run_terminal(controller, stdin=self._stdin, stdout=self._stdout)
+        return CliCommandResult(
+            CliExitCode.SUCCESS if code == 0 else CliExitCode.INVALID_PROJECT_STATE,
+            ("Persistent terminal closed. Project state was not modified by the UI.",),
+        )
+
+    def _load_for_ui(self):
+        try:
+            return self._store.load()
+        except Exception:
+            return None
 
     def start(
         self,

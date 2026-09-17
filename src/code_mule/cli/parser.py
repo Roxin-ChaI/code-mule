@@ -35,6 +35,17 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = commands.add_parser("doctor", help="check environment and workspace readiness")
     _state_file(doctor)
 
+    ui = commands.add_parser(
+        "ui",
+        help="start the persistent terminal interface (TTY only)",
+    )
+    _state_file(ui)
+    ui.add_argument(
+        "--demo",
+        action="store_true",
+        help="run against a synthetic local project; never calls a model",
+    )
+
     start = commands.add_parser(
         "start",
         help="initialize and start a new project from the current directory",
