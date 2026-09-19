@@ -37,6 +37,7 @@ from code_mule.git_delivery import (
     GitWorkspaceIsolationError,
     register_state_exclusion,
 )
+from code_mule.installation import diagnose_installation, render_version
 from code_mule.onboarding import (
     DoctorService,
     StartDecision,
@@ -236,6 +237,16 @@ class ProductionCliComposition:
         return CliCommandResult(
             CliExitCode.SUCCESS,
             lines,
+        )
+
+    def version(self, verbose: bool = False) -> CliCommandResult:
+        diagnostics = diagnose_installation(
+            environment=self._environment,
+            executable=Path(sys.argv[0]),
+        )
+        return CliCommandResult(
+            CliExitCode.SUCCESS,
+            render_version(diagnostics, verbose=verbose),
         )
 
     def doctor(self, verbose: bool = False) -> CliCommandResult:

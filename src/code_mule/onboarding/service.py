@@ -10,6 +10,8 @@ import sys
 from typing import Mapping
 
 from code_mule import __version__
+from code_mule.installation import diagnose_installation
+from code_mule.state.serialization import StateSchemaCompatibilityError
 from code_mule.state.models import ProjectState
 from code_mule.state.store import JsonProjectStateStore
 
@@ -208,14 +210,32 @@ class DoctorService:
 
     def _code_mule_check(self) -> DoctorCheck:
         location = _cli_location(self._environment)
+        diagnostics = diagnose_installation(
+            environment=self._environment,
+            executable=None if location == "not on PATH" else Path(location),
+        )
+        details = (
+            f"version  {__version__}",
+            f"cli      {location}",
+            f"revision {diagnostics.build_revision or 'unknown'}",
+            f"schema   {diagnostics.schema_min}..{diagnostics.schema_max}",
+            f"install  {diagnostics.global_install_status}",
+        )
+        if diagnostics.global_install_status == "STALE GLOBAL INSTALL":
+            advice = (
+                "Update required: the persistent CLI was built from an older source revision.",
+            )
+            if diagnostics.update_command is not None:
+                advice += (diagnostics.update_command,)
+            return DoctorCheck(
+                "Code Mule", "STALE GLOBAL INSTALL", False,
+                details=details, advice=advice,
+            )
         return DoctorCheck(
             "Code Mule",
             "PASS",
             True,
-            details=(
-                f"version  {__version__}",
-                f"cli      {location}",
-            ),
+            details=details,
         )
 
     def _python_check(self) -> DoctorCheck:
@@ -338,6 +358,10 @@ class DoctorService:
             details.append(f"worktree  {'clean' if probe.clean else 'dirty'}")
         state_status: str | None = None
         state_invalid = False
+        state_advice = (
+            "A Code Mule state file exists but cannot be read. "
+            "Do not run start again; inspect or repair the state file yourself."
+        )
         if state_file.exists():
             store = JsonProjectStateStore(state_file)
             try:
@@ -346,6 +370,20 @@ class DoctorService:
                 if state is not None:
                     details.append(f"project   {state.project.name}")
                     details.append(f"status    {state_status}")
+            except StateSchemaCompatibilityError as error:
+                state_invalid = True
+                compatibility = error.compatibility
+                details.append(f"state     {compatibility.code.value}")
+                if compatibility.project_schema is not None:
+                    details.append(f"project schema {compatibility.project_schema}")
+                details.append(
+                    f"cli schema {compatibility.supported_min}..{compatibility.supported_max}"
+                )
+                if compatibility.code.value == "CLI_TOO_OLD":
+                    state_advice = (
+                        "Update required: use the installed Code Mule source installer, "
+                        "then rerun doctor. The state file was not modified."
+                    )
             except Exception:
                 state_invalid = True
                 details.append("state     present but unreadable")
@@ -386,10 +424,7 @@ class DoctorService:
                 "PROBLEM",
                 False,
                 details=tuple(details),
-                advice=(
-                    "A Code Mule state file exists but cannot be read. "
-                    "Do not run start again; inspect or repair the state file yourself.",
-                ),
+                advice=(state_advice,),
             )
         return DoctorCheck(
             "Workspace",

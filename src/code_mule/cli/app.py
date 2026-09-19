@@ -23,11 +23,13 @@ from .contracts import (
 )
 from .compatibility import command_requires_state_preflight, inspect_state_file_schema
 from .parser import build_parser
+from code_mule.installation import diagnose_installation
 from code_mule.presentation.terminal import TerminalDashboard, DashboardSection
 from code_mule.state.serialization import StateSchemaCompatibilityError
 
 
 class BossCliCommands(Protocol):
+    def version(self, verbose: bool = False) -> CliCommandResult: ...
     def doctor(self, verbose: bool = False) -> CliCommandResult: ...
     def ui(self, demo: bool = False, verbose: bool = False) -> CliCommandResult: ...
     def start(self, objective: str | None, verbose: bool = False) -> CliCommandResult: ...
@@ -77,6 +79,8 @@ def dispatch_arguments(
     commands: BossCliCommands, arguments: object, input_stream: TextIO
 ) -> CliCommandResult:
     command = getattr(arguments, "command")
+    if command == "version":
+        return commands.version(getattr(arguments, "verbose"))
     if command == "doctor":
         return commands.doctor(getattr(arguments, "verbose"))
     if command == "ui":
@@ -157,12 +161,43 @@ _dispatch = dispatch_arguments
 def _print_error(error: CliError, stream: TextIO) -> None:
     if isinstance(error, CliStateCompatibilityError):
         compatibility = error.compatibility
+        diagnostics = error.diagnostics
         title = (
             "CLI UPDATE REQUIRED"
             if compatibility.code.value == "CLI_TOO_OLD"
             else "STATE SCHEMA ERROR"
         )
-        next_command = "code-mule doctor --verbose"
+        next_command = diagnostics.update_command or "code-mule doctor --verbose"
+        project_schema = (
+            "unknown"
+            if compatibility.project_schema is None
+            else str(compatibility.project_schema)
+        )
+        details = (
+            f"Reason          {compatibility.code.value}",
+            f"Executable      {diagnostics.executable}",
+            f"CLI version     {diagnostics.cli_version}",
+            f"Build revision  {diagnostics.build_revision or 'unknown'}",
+            f"Project schema  {project_schema}",
+            f"Schema support  {compatibility.supported_min}..{compatibility.supported_max}",
+        )
+        if compatibility.code.value == "CLI_TOO_OLD":
+            details += ("Update required",)
+        details += (
+            "No project state was changed.",
+            "",
+            f"Next            {next_command}",
+        )
+        terminal = TerminalDashboard.for_stream(stream)
+        if terminal.interactive:
+            for line in terminal.render((DashboardSection(title, details),)):
+                print(line, file=stream)
+        else:
+            print(title, file=stream)
+            print(file=stream)
+            for line in details:
+                print(line, file=stream)
+        return
     elif isinstance(error, CliProjectAlreadyRunning):
         title = "PROJECT ALREADY RUNNING"
         next_command = "code-mule status"
@@ -230,11 +265,17 @@ def main(
                     f"{'unknown' if schema is None else schema}; CLI supports "
                     f"{compatibility.supported_min}..{compatibility.supported_max}."
                 )
+                diagnostics = diagnose_installation(
+                    environment=os.environ if environment is None else environment,
+                    executable=Path(sys.argv[0]),
+                )
                 raise CliStateCompatibilityError(
-                    message, compatibility=compatibility
+                    message,
+                    compatibility=compatibility,
+                    diagnostics=diagnostics,
                 ) from error
         commands = composition_factory(
-            arguments.state_file,
+            getattr(arguments, "state_file", Path(".code-mule/project-state.json")),
             os.environ if environment is None else environment,
             output,
             errors,

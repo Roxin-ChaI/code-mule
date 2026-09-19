@@ -32,6 +32,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
+    version = commands.add_parser("version", help="show CLI and installation compatibility")
+    version.add_argument(
+        "--verbose",
+        action="store_true",
+        help="show executable, build revision, and schema support",
+    )
+
     doctor = commands.add_parser("doctor", help="check environment and workspace readiness")
     _state_file(doctor)
 

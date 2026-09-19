@@ -376,20 +376,35 @@ fi
 version="$(
     cd / && "$app_python" -c 'import code_mule; print(code_mule.__version__)'
 )"
+schema_min="$(
+    cd / && "$app_python" -c 'from code_mule.state import MIN_SUPPORTED_SCHEMA_VERSION; print(MIN_SUPPORTED_SCHEMA_VERSION)'
+)"
+schema_max="$(
+    cd / && "$app_python" -c 'from code_mule.state import CURRENT_SCHEMA_VERSION; print(CURRENT_SCHEMA_VERSION)'
+)"
+source_revision="$(git -C "$SOURCE_ROOT" rev-parse HEAD 2>/dev/null || true)"
+case "$source_revision" in
+    *[!0-9a-f]*|'') source_revision="unknown" ;;
+esac
 installed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 dependency_state="installed"
 [ "$no_deps" -eq 1 ] && dependency_state="skipped"
 [ "$dependencies_ok" -eq 0 ] && dependency_state="missing"
-cat > "$marker" <<EOF
+marker_tmp="$prefix/.CODE_MULE_INSTALL.$$"
+cat > "$marker_tmp" <<EOF
 Code Mule persistent installation
 version: $version
 prefix: $prefix
 source: $SOURCE_ROOT
 launcher: $launcher
 model_dependency: $dependency_state
+source_revision: $source_revision
+schema_min: $schema_min
+schema_max: $schema_max
 installed_at: $installed_at
 status: ready
 EOF
+mv -f -- "$marker_tmp" "$marker"
 
 # ---------------------------------------------------------------------------
 # PATH configuration (automatic by default; opt out with --no-configure-shell).

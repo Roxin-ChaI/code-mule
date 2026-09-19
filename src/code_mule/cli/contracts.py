@@ -32,9 +32,12 @@ class InvalidCliProjectState(CliError):
 class CliStateCompatibilityError(InvalidCliProjectState):
     """A typed state/CLI schema mismatch detected before deserialization."""
 
-    def __init__(self, public_message: str, *, compatibility: object) -> None:
+    def __init__(
+        self, public_message: str, *, compatibility: object, diagnostics: object
+    ) -> None:
         super().__init__(public_message)
         self.compatibility = compatibility
+        self.diagnostics = diagnostics
 
 
 class CliUsageError(CliError):
