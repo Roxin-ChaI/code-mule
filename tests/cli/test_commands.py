@@ -40,6 +40,7 @@ class _FakeCommands:
             raise self.error
         return self.result
 
+    def version(self, *values): return self._call("version", *values)
     def doctor(self, *values): return self._call("doctor", *values)
     def start(self, *values): return self._call("start", *values)
     def init_project(self, *values): return self._call("init", *values)

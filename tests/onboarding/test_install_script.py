@@ -68,6 +68,11 @@ class PersistentInstallScriptTests(unittest.TestCase):
         self.assertIn("Code Mule persistent installation", marker_text)
         self.assertIn("status: ready", marker_text)
         self.assertIn("model_dependency: skipped", marker_text)
+        self.assertIn("source_revision:", marker_text)
+        self.assertIn("schema_min: 1", marker_text)
+        self.assertIn("schema_max: 16", marker_text)
+        self.assertIn("installed_at:", marker_text)
+        self.assertEqual(list(self.prefix.glob(".CODE_MULE_INSTALL.*")), [])
         self.assertTrue((self.prefix / "venv" / "bin" / "python").exists())
         package = self.prefix / "venv" / "lib"
         package_init = next(package.glob("python*/site-packages/code_mule/__init__.py"))

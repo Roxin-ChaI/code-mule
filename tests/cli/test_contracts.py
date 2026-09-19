@@ -31,6 +31,8 @@ class CliContractTests(unittest.TestCase):
     def test_parser_exposes_all_boss_commands(self):
         parser = build_parser()
         cases = (
+            (["version"], "version"),
+            (["version", "--verbose"], "version"),
             (["doctor"], "doctor"),
             (["doctor", "--verbose"], "doctor"),
             (["start", "--objective", "build it"], "start"),
