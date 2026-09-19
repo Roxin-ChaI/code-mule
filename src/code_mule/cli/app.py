@@ -17,11 +17,14 @@ from .contracts import (
     CliHumanActionRequired,
     CliProjectAlreadyRunning,
     CliRecoveryRequired,
+    CliStateCompatibilityError,
     CliUsageError,
     InvalidCliProjectState,
 )
+from .compatibility import command_requires_state_preflight, inspect_state_file_schema
 from .parser import build_parser
 from code_mule.presentation.terminal import TerminalDashboard, DashboardSection
+from code_mule.state.serialization import StateSchemaCompatibilityError
 
 
 class BossCliCommands(Protocol):
@@ -152,7 +155,15 @@ _dispatch = dispatch_arguments
 
 
 def _print_error(error: CliError, stream: TextIO) -> None:
-    if isinstance(error, CliProjectAlreadyRunning):
+    if isinstance(error, CliStateCompatibilityError):
+        compatibility = error.compatibility
+        title = (
+            "CLI UPDATE REQUIRED"
+            if compatibility.code.value == "CLI_TOO_OLD"
+            else "STATE SCHEMA ERROR"
+        )
+        next_command = "code-mule doctor --verbose"
+    elif isinstance(error, CliProjectAlreadyRunning):
         title = "PROJECT ALREADY RUNNING"
         next_command = "code-mule status"
     elif isinstance(error, CliRecoveryRequired):
@@ -204,13 +215,30 @@ def main(
     errors = stderr or sys.stderr
     inputs = stdin or sys.stdin
     arguments = build_parser().parse_args(argv)
-    commands = composition_factory(
-        arguments.state_file,
-        os.environ if environment is None else environment,
-        output,
-        errors,
-    )
     try:
+        if (
+            command_requires_state_preflight(arguments)
+            and arguments.state_file.exists()
+        ):
+            try:
+                inspect_state_file_schema(arguments.state_file)
+            except StateSchemaCompatibilityError as error:
+                compatibility = error.compatibility
+                schema = compatibility.project_schema
+                message = (
+                    f"{compatibility.code.value}: project schema "
+                    f"{'unknown' if schema is None else schema}; CLI supports "
+                    f"{compatibility.supported_min}..{compatibility.supported_max}."
+                )
+                raise CliStateCompatibilityError(
+                    message, compatibility=compatibility
+                ) from error
+        commands = composition_factory(
+            arguments.state_file,
+            os.environ if environment is None else environment,
+            output,
+            errors,
+        )
         result = _dispatch(commands, arguments, inputs)
     except CliError as error:
         _print_error(error, errors)

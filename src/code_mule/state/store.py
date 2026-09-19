@@ -9,8 +9,11 @@ from typing import cast
 
 from .models import ProjectState
 from .serialization import (
-    InvalidProjectState,
+    StateSchemaCompatibility,
+    StateSchemaCompatibilityCode,
+    StateSchemaCompatibilityError,
     deserialize_project_state,
+    inspect_state_schema,
     serialize_project_state,
 )
 
@@ -64,8 +67,25 @@ class JsonProjectStateStore:
                 f"project state file not found: {self._path}"
             ) from error
         except (json.JSONDecodeError, UnicodeDecodeError) as error:
-            raise InvalidProjectState("project state file is not valid JSON") from error
+            raise StateSchemaCompatibilityError(
+                StateSchemaCompatibility(
+                    StateSchemaCompatibilityCode.STATE_DOCUMENT_CORRUPT, None
+                ),
+                "project state file is not valid JSON",
+            ) from error
 
+        compatibility = inspect_state_schema(payload)
+        if not compatibility.compatible:
+            messages = {
+                StateSchemaCompatibilityCode.CLI_TOO_OLD: "project state schema is newer than this CLI",
+                StateSchemaCompatibilityCode.STATE_SCHEMA_UNSUPPORTED: "project state schema is older than this CLI supports",
+                StateSchemaCompatibilityCode.STATE_SCHEMA_MISSING: "schema_version is required",
+                StateSchemaCompatibilityCode.STATE_SCHEMA_INVALID: "schema_version must be an integer",
+            }
+            raise StateSchemaCompatibilityError(
+                compatibility,
+                messages.get(compatibility.code, "project state schema is invalid"),
+            )
         return deserialize_project_state(cast(dict[str, object], payload))
 
     def exists(self) -> bool:

@@ -1,7 +1,9 @@
 """Explicit JSON-compatible serialization for project-state snapshots."""
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import TypeVar, cast
 
 from code_mule.domain.enums import (
@@ -92,6 +94,7 @@ from code_mule.transport import (
 
 
 CURRENT_SCHEMA_VERSION = 16
+MIN_SUPPORTED_SCHEMA_VERSION = 1
 
 
 class UnsupportedStateSchema(ValueError):
@@ -100,6 +103,81 @@ class UnsupportedStateSchema(ValueError):
 
 class InvalidProjectState(ValueError):
     """Raised when a state payload cannot form a complete valid snapshot."""
+
+
+class StateSchemaCompatibilityCode(StrEnum):
+    """Stable pre-deserialization state compatibility classifications."""
+
+    COMPATIBLE = "COMPATIBLE"
+    CLI_TOO_OLD = "CLI_TOO_OLD"
+    STATE_SCHEMA_UNSUPPORTED = "STATE_SCHEMA_UNSUPPORTED"
+    STATE_SCHEMA_MISSING = "STATE_SCHEMA_MISSING"
+    STATE_SCHEMA_INVALID = "STATE_SCHEMA_INVALID"
+    STATE_DOCUMENT_CORRUPT = "STATE_DOCUMENT_CORRUPT"
+
+
+@dataclass(frozen=True)
+class StateSchemaCompatibility:
+    code: StateSchemaCompatibilityCode
+    project_schema: int | None
+    supported_min: int = MIN_SUPPORTED_SCHEMA_VERSION
+    supported_max: int = CURRENT_SCHEMA_VERSION
+
+    @property
+    def compatible(self) -> bool:
+        return self.code is StateSchemaCompatibilityCode.COMPATIBLE
+
+
+class StateSchemaCompatibilityError(UnsupportedStateSchema, InvalidProjectState):
+    """Typed schema failure raised before full ProjectState deserialization."""
+
+    def __init__(self, compatibility: StateSchemaCompatibility, message: str) -> None:
+        super().__init__(message)
+        self.compatibility = compatibility
+
+
+def inspect_state_schema(payload: object) -> StateSchemaCompatibility:
+    """Inspect only the root schema marker, without migrating or decoding state."""
+
+    if not isinstance(payload, dict):
+        return StateSchemaCompatibility(
+            StateSchemaCompatibilityCode.STATE_SCHEMA_INVALID, None
+        )
+    if "schema_version" not in payload:
+        return StateSchemaCompatibility(
+            StateSchemaCompatibilityCode.STATE_SCHEMA_MISSING, None
+        )
+    version = payload["schema_version"]
+    if type(version) is not int:
+        return StateSchemaCompatibility(
+            StateSchemaCompatibilityCode.STATE_SCHEMA_INVALID, None
+        )
+    if version > CURRENT_SCHEMA_VERSION:
+        code = StateSchemaCompatibilityCode.CLI_TOO_OLD
+    elif version < MIN_SUPPORTED_SCHEMA_VERSION:
+        code = StateSchemaCompatibilityCode.STATE_SCHEMA_UNSUPPORTED
+    else:
+        code = StateSchemaCompatibilityCode.COMPATIBLE
+    return StateSchemaCompatibility(code, version)
+
+
+def require_supported_state_schema(payload: object) -> int:
+    """Fail closed on incompatible schema markers before any domain decoding."""
+
+    compatibility = inspect_state_schema(payload)
+    if compatibility.compatible:
+        assert compatibility.project_schema is not None
+        return compatibility.project_schema
+    messages = {
+        StateSchemaCompatibilityCode.CLI_TOO_OLD: "project state schema is newer than this CLI",
+        StateSchemaCompatibilityCode.STATE_SCHEMA_UNSUPPORTED: "project state schema is older than this CLI supports",
+        StateSchemaCompatibilityCode.STATE_SCHEMA_MISSING: "schema_version is required",
+        StateSchemaCompatibilityCode.STATE_SCHEMA_INVALID: "schema_version must be an integer",
+    }
+    raise StateSchemaCompatibilityError(
+        compatibility,
+        messages.get(compatibility.code, "project state schema is invalid"),
+    )
 
 
 _T = TypeVar("_T")
@@ -2589,32 +2667,7 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
     """Restore a complete snapshot, rejecting unknown or corrupt payloads."""
 
     root = _expect_object(payload, "project state")
-    if "schema_version" not in root:
-        raise UnsupportedStateSchema("schema_version is required")
-    schema_version = root["schema_version"]
-    if type(schema_version) is not int:
-        raise UnsupportedStateSchema("schema_version must be an integer")
-    if schema_version not in {
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-        10,
-        11,
-        12,
-        13,
-        14,
-        15,
-        CURRENT_SCHEMA_VERSION,
-    }:
-        raise UnsupportedStateSchema(
-            f"unsupported schema_version: {schema_version!r}"
-        )
+    schema_version = require_supported_state_schema(root)
     if schema_version == 1:
         root = _migrate_v1_to_v2(root)
         schema_version = 2
@@ -2806,8 +2859,14 @@ def deserialize_project_state(payload: dict[str, object]) -> ProjectState:
 
 __all__ = [
     "CURRENT_SCHEMA_VERSION",
+    "MIN_SUPPORTED_SCHEMA_VERSION",
     "InvalidProjectState",
+    "StateSchemaCompatibility",
+    "StateSchemaCompatibilityCode",
+    "StateSchemaCompatibilityError",
     "UnsupportedStateSchema",
     "deserialize_project_state",
+    "inspect_state_schema",
+    "require_supported_state_schema",
     "serialize_project_state",
 ]

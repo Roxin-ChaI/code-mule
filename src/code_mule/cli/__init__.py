@@ -8,6 +8,7 @@ from .contracts import (
     CliHumanActionRequired,
     CliProjectAlreadyRunning,
     CliRecoveryRequired,
+    CliStateCompatibilityError,
     CliUsageError,
     InvalidCliProjectState,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "CliHumanActionRequired",
     "CliProjectAlreadyRunning",
     "CliRecoveryRequired",
+    "CliStateCompatibilityError",
     "CliUsageError",
     "DEFAULT_STATE_FILE",
     "InvalidCliProjectState",

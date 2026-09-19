@@ -29,6 +29,14 @@ class InvalidCliProjectState(CliError):
     exit_code = CliExitCode.INVALID_PROJECT_STATE
 
 
+class CliStateCompatibilityError(InvalidCliProjectState):
+    """A typed state/CLI schema mismatch detected before deserialization."""
+
+    def __init__(self, public_message: str, *, compatibility: object) -> None:
+        super().__init__(public_message)
+        self.compatibility = compatibility
+
+
 class CliUsageError(CliError):
     exit_code = CliExitCode.INVALID_USAGE
 
@@ -63,6 +71,7 @@ __all__ = [
     "CliHumanActionRequired",
     "CliProjectAlreadyRunning",
     "CliRecoveryRequired",
+    "CliStateCompatibilityError",
     "CliUsageError",
     "InvalidCliProjectState",
 ]
