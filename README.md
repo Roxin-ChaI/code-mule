@@ -10,8 +10,8 @@ Turn one coding objective into a controlled **PLAN → CODE → REVIEW → VERIF
 COMMIT** workflow.
 
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB)
-![Tests 719](https://img.shields.io/badge/tests-719%20passed-2E7D32)
-![ProjectState v13](https://img.shields.io/badge/ProjectState-v13-6A5ACD)
+![Tests 947](https://img.shields.io/badge/tests-947%20passed-2E7D32)
+![ProjectState v16](https://img.shields.io/badge/ProjectState-v16-6A5ACD)
 
 ## Demo
 
@@ -359,14 +359,15 @@ boundary and its manual real-soak release gate are documented in
 
 ## Validation
 
-Current v0.1.1 release-preparation baseline:
+Current v0.2.0 release-candidate baseline:
 
-- **917 automated tests PASS**, including runtime-handoff, PID-reuse, real
+- **947 automated tests PASS**, including runtime-handoff, PID-reuse, real
   shell restart regressions that run the persistent launcher without the
   repository `.venv` on `PATH`, and a deterministic Codex Worker transport
   suite covering 28 fake app-server scenarios, a repeated spawn/turn/close
   stress loop, process/thread leak assertions, a 29-case report-contract
-  matrix, and a 1000-iteration deterministic parser stress loop;
+  matrix, a 1000-iteration deterministic parser stress loop, and a model-free
+  smoke check for every public CLI command;
 - `compileall`, `pip check`, and `git diff --check` PASS;
 - real DeepSeek + Codex E2E: Plan v1, 6/6 Tasks, Worker Input → Boss answer
   → fresh-session continuation, one delivery commit per Task, final review
@@ -376,8 +377,8 @@ Current v0.1.1 release-preparation baseline:
 In that disposable demo, unconfigured project-level test/lint/typecheck/build
 hooks were **SKIPPED**, and optional browser visual verification was **NOT_RUN**—
 neither is claimed as PASS. See the detailed
-[v0.1.1 release preparation notes](docs/releases/v0.1.1.md). No v0.1.1 GitHub
-Release has been created; the v0.1.0 tag and its historical evidence are unchanged.
+[v0.2.0 release-candidate notes](docs/releases/v0.2.0.md). The existing v0.1.0
+and v0.1.1 tags remain unchanged; this RC has not been tagged or released.
 
 ## Current Limitations
 
@@ -403,4 +404,5 @@ Release has been created; the v0.1.0 tag and its historical evidence are unchang
 - [Project Verification](docs/project-verification.md)
 - [Runtime Handoff](docs/runtime-handoff.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [v0.2.0 Release Candidate Notes](docs/releases/v0.2.0.md)
 - [v0.1.1 Release Notes](docs/releases/v0.1.1.md)

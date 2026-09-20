@@ -25,7 +25,7 @@ order and records presentation errors while continuing core execution.
 ## Truthful Codex Activity
 
 The mapping was originally based on the older Codex CLI 0.147.0 schema generated
-with `codex app-server generate-json-schema`. The current v0.1.1 real E2E was
+with `codex app-server generate-json-schema`. The latest completed authenticated E2E was
 validated with Codex CLI 0.153.4, not asserted as a minimum version.
 The protocol exposes `turn/started`,
 `item/started`, `item/completed`, and `turn/completed`; item variants include

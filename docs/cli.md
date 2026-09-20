@@ -285,10 +285,11 @@ line-oriented, and contains no ANSI or spinner control characters.
 Normal errors identify the failing boundary and give a safe next command.
 Tracebacks remain exclusive to global `--debug` mode.
 
-The current development baseline uses ProjectState schema v15; the v0.1.1 baseline was real-E2E
-validated with Codex CLI 0.153.4 (not a minimum-version claim). Historical state
+The v0.2.0 release candidate uses ProjectState schema v16 and supports loading
+and migrating schema v1..v16. The latest completed authenticated baseline used
+Codex CLI 0.153.4 (not a minimum-version claim). Historical state
 migrations remain supported, but old Code Mule versions may not read new state;
-back up state before upgrading. See [release notes](releases/v0.1.1.md).
+back up state before upgrading. See [release notes](releases/v0.2.0.md).
 
 Completed projects can be reopened with `code-mule change ...` as a new linear
 Revision. See [Project Revisions](project-revisions.md) for the revision

@@ -10,8 +10,8 @@
 工作流。
 
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB)
-![Tests 719](https://img.shields.io/badge/tests-719%20passed-2E7D32)
-![ProjectState v13](https://img.shields.io/badge/ProjectState-v13-6A5ACD)
+![Tests 947](https://img.shields.io/badge/tests-947%20passed-2E7D32)
+![ProjectState v16](https://img.shields.io/badge/ProjectState-v16-6A5ACD)
 
 ## Demo
 
@@ -326,9 +326,11 @@ Code Mule 适合需要以下能力的本地软件开发：
 
 ## 验证
 
-当前 v0.1.1 发布准备基线：
+当前 v0.2.0 Release Candidate 基线：
 
-- **719 项自动化测试 PASS**，包括 runtime handoff、PID 复用防护及不激活仓库 `.venv` 的真实 shell 重启回归测试；
+- **947 项自动化测试 PASS**，包括 runtime handoff、PID 复用防护、不激活仓库
+  `.venv` 的真实 shell 重启回归、Worker transport/structured report，以及覆盖
+  全部公开 CLI 命令入口的无模型 smoke suite；
 - `compileall`、`pip check` 和 `git diff --check` PASS；
 - 真实 DeepSeek + Codex E2E：Plan v1、6/6 Tasks、Worker Input → Boss answer
   → fresh-session continuation、每个 Task 一个 delivery commit、最终 review
@@ -337,8 +339,8 @@ Code Mule 适合需要以下能力的本地软件开发：
 
 该 disposable demo 中，未配置的项目级 test/lint/typecheck/build hooks 为
 **SKIPPED**，optional browser visual verification 为 **NOT_RUN**——两者均未被
-声明为 PASS。详细范围见 [v0.1.1 发布准备说明](docs/releases/v0.1.1.md)。
-v0.1.1 GitHub Release 尚未创建；v0.1.0 tag 与历史证据保持不变。
+声明为 PASS。详细范围见 [v0.2.0 RC 说明](docs/releases/v0.2.0.md)。已有
+v0.1.0、v0.1.1 tag 均保持不变；当前 RC 尚未创建 tag 或 release。
 
 ## 当前限制
 
@@ -360,4 +362,5 @@ v0.1.1 GitHub Release 尚未创建；v0.1.0 tag 与历史证据保持不变。
 - [Project Verification](docs/project-verification.md)
 - [Runtime Handoff](docs/runtime-handoff.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [v0.2.0 Release Candidate Notes](docs/releases/v0.2.0.md)
 - [v0.1.1 Release Notes](docs/releases/v0.1.1.md)

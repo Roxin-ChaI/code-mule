@@ -5,7 +5,7 @@ library integration, not an autonomous orchestration loop or a CLI.
 
 ## Tested Runtime
 
-Real E2E validated with **Codex CLI 0.153.4** for v0.1.1. This is not a proven
+The latest completed authenticated E2E validated with **Codex CLI 0.153.4**. This is not a proven
 minimum supported version. The older `codex-cli 0.147.0` was used during initial
 development; that historical fact is not a current model-compatibility guarantee.
 Protocol fields were originally inspected with:

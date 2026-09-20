@@ -2,7 +2,7 @@
 
 `code-mule ui` replaces the scroll-away dashboard on a TTY with a fixed
 three-pane terminal. The UI is a **presentation/controller layer only**: it
-reads persisted `ProjectState`, dispatches Boss input through the same command
+reads persisted `ProjectState`, dispatches user input through the same command
 layer the one-shot CLI uses, and never owns business truth.
 
 ## Layout
@@ -15,12 +15,12 @@ layer the one-shot CLI uses, and never owns business truth.
 │ Activity (scrollable, tail-anchored)          │
 │ worker / supervisor / verification / command  │
 ├───────────────────────────────────────────────┤
-│ Boss     (fixed) HumanAction + boss> input    │
+│ Me       (fixed) HumanAction + me> input      │
 └───────────────────────────────────────────────┘
 ```
 
 Geometry is pure: `tui.layout.compute_layout` splits the screen so Status and
-Boss keep their content height and Activity absorbs the slack, and
+Me keep their content height and Activity absorbs the slack, and
 `render_screen` returns exactly `rows` lines, each within `cols` display cells.
 Separator rules are drawn only when the screen has room.
 
@@ -31,12 +31,12 @@ Each pane is aligned deliberately:
   the blank space stays below it. When the content is taller than the region it
   becomes a tail window: the newest lines stay visible and scrolling moves the
   window, not the alignment.
-- **Boss** is bottom-aligned so `boss>` always sits on the last row, and its
+- **Me** is bottom-aligned so `me>` always sits on the last row, and its
   content is tail-kept so the prompt is never truncated away.
 
-### Boss area
+### Me area
 
-The Boss pane stays compact — one short line per fact, never an expanded
+The Me pane stays compact — one short line per fact, never an expanded
 command:
 
 ```text
@@ -44,7 +44,7 @@ HUMAN ACTION · Worker input
 Request: Confirm the manifest entry point before delivery
 Choices: yes | no            (only when the Worker offered choices)
 Actions: fail_project | acknowledge | answer
-boss> _
+me> _
 ```
 
 The exact action id and the full `resolve <id> --strategy …` /
@@ -61,7 +61,7 @@ never paints past the pane edge.
 
 | Key | Effect |
 | --- | --- |
-| printable characters | edit the `boss>` input line |
+| printable characters | edit the `me>` input line |
 | Enter | dispatch the line through the CLI command layer |
 | Up / Down / PgUp / PgDn / End | scroll activity; End resumes auto-follow |
 | Ctrl+L | repaint |
@@ -73,8 +73,8 @@ so a typed line behaves exactly like the one-shot command. Natural-language
 commands (`change`, `ask`, `answer`) accept an unquoted tail.
 
 The UI never approves a HumanAction, never retries a Worker, and never starts a
-process on its own. A pending HumanAction is rendered in the Boss pane with its
-exact available actions; only an explicit Boss keystroke dispatches one.
+process on its own. A pending HumanAction is rendered in the Me pane with its
+exact available actions; only an explicit user keystroke dispatches one.
 
 `ProjectState` is re-read on every refresh, so planning, Worker activity,
 verification, Human Gates, recovery, completion, and runtime changes all appear
@@ -116,7 +116,7 @@ Activity 41-60 / 60 · Follow ON · Key: —          # no key pressed yet
 
 The readout starts at an em dash, updates on every key that passes through the
 key handler, and lives on the Activity status line so it never competes with the
-Boss input row. Only whitelisted resolved names appear — never an escape
+Me input row. Only whitelisted resolved names appear — never an escape
 payload; an unmapped byte sequence reads `Key: UNKNOWN`. If a macOS Terminal does
 not map a key combination to the expected curses key, the readout shows
 `Key: UNKNOWN` (or the key it actually sent), which is the evidence needed to
@@ -137,7 +137,7 @@ sequence still reads `Key: UNKNOWN`.
 Suggested checks: fixed header/footer, `↑`/`↓` line scrolling, `Fn+↑`/`Fn+↓`
 page scrolling, `Fn+→` (End) returning to auto-follow, `Ctrl+L` repaint,
 `Ctrl+C` exit, a resize of the terminal window, a HumanAction rendered in the
-Boss pane, `status` / `launch` / `inspect` typed at the prompt, and the UI
+Me pane, `status` / `launch` / `inspect` typed at the prompt, and the UI
 surviving after a command finishes.
 
 ## Testing

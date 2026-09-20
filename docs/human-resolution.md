@@ -64,7 +64,7 @@ acknowledging it leaves the project stopped. See [Worker verification](worker-ve
 
 ## Recovery boundary
 
-Codex approval interrupts the current app-server turn. v0.1.1 still does not
+Codex approval interrupts the current app-server turn. v0.2.0 still does not
 provide transparent durable same-turn recovery. Approval is therefore persisted
 as `APPROVED`, but the project stays `HUMAN_REQUIRED`: Code Mule does not forge
 a session continuation, repeat the operation, or claim the side effect ran.

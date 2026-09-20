@@ -7,7 +7,7 @@ does not schedule another task, apply a Plan, or handle Boss CHANGE commands.
 ## Structured Worker Evidence
 
 The original Phase 7 schema inspection used the older Codex CLI 0.147.0.
-The current v0.1.1 real E2E validated native `outputSchema` with Codex CLI 0.153.4;
+The latest completed authenticated E2E validated native `outputSchema` with Codex CLI 0.153.4;
 this is a tested version, not a minimum-version claim.
 Code Mule therefore uses native structured output (Strategy A) to constrain the
 final agent message. The schema requires every report field, rejects additional
