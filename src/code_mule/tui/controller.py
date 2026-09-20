@@ -184,6 +184,14 @@ class TerminalController:
     def dispatch(self, line: str, *, visible: int = 1) -> CliCommandResult:
         """Parse and run one Boss line exactly as the one-shot CLI would."""
 
+        if line.strip().lower() in {"exit", "quit"}:
+            self.request_quit()
+            result = CliCommandResult(
+                CliExitCode.SUCCESS,
+                ("Leaving the persistent terminal. Project state was not modified.",),
+            )
+            self._record_result(line, result, visible=visible)
+            return result
         result = self._run(line)
         self._record_result(line, result, visible=visible)
         return result

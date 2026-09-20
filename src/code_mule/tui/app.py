@@ -161,7 +161,12 @@ def _run_curses(controller: TerminalController, *, stdout: TextIO) -> int:
     locale.setlocale(locale.LC_ALL, "")
 
     def loop(stdscr) -> int:
-        curses.curs_set(0)
+        try:
+            curses.curs_set(0)
+        except curses.error:
+            # Hiding the cursor is cosmetic. Some otherwise usable terminals
+            # reject this capability; the persistent session must stay open.
+            pass
         stdscr.nodelay(False)
         stdscr.timeout(REFRESH_MILLISECONDS)
         stdscr.keypad(True)

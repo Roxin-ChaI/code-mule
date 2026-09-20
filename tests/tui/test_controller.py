@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from code_mule.cli.contracts import CliExitCode
 from code_mule.domain.enums import HumanActionStatus, ProjectStatus
@@ -130,6 +131,20 @@ class InputAndDispatchTests(unittest.TestCase):
         self.assertEqual(commands.calls, ["status", "launch", "change"])
         self.assertFalse(control.should_quit)
 
+    def test_explicit_exit_is_the_only_command_that_closes_the_session(self):
+        state = replace(
+            make_project_state(),
+            project=replace(make_project_state().project, status=ProjectStatus.DONE),
+            human_actions=(),
+        )
+        control = controller(state=state)
+        control.dispatch("status")
+        self.assertFalse(control.should_quit)
+        result = control.dispatch("exit")
+        self.assertEqual(result.exit_code, CliExitCode.SUCCESS)
+        self.assertTrue(control.should_quit)
+        self.assertEqual(control.project_state().project.status, ProjectStatus.DONE)
+
     def test_only_one_command_runs_at_a_time(self):
         control = controller()
         control.state.busy = True
@@ -233,6 +248,42 @@ class RefreshAndEventTests(unittest.TestCase):
 
 
 class StreamAndFallbackTests(unittest.TestCase):
+    def test_done_tui_survives_unsupported_cursor_hiding_until_ctrl_c(self):
+        import curses
+        from code_mule.tui.app import _run_curses
+
+        state = replace(
+            make_project_state(),
+            project=replace(make_project_state().project, status=ProjectStatus.DONE),
+            human_actions=(),
+        )
+        control = controller(state=state)
+
+        class Screen:
+            def __init__(self):
+                self.keys = iter((None, "\x03"))
+                self.draws = 0
+
+            def nodelay(self, _value): pass
+            def timeout(self, _value): pass
+            def keypad(self, _value): pass
+            def getmaxyx(self): return (24, 80)
+            def erase(self): self.draws += 1
+            def addstr(self, *_values): pass
+            def refresh(self): pass
+            def get_wch(self): return next(self.keys)
+
+        screen = Screen()
+        with patch("curses.curs_set", side_effect=curses.error("unsupported")), patch(
+            "curses.wrapper", side_effect=lambda callback: callback(screen)
+        ):
+            code = _run_curses(control, stdout=io.StringIO())
+
+        self.assertEqual(code, 0)
+        self.assertGreaterEqual(screen.draws, 2)
+        self.assertTrue(control.should_quit)
+        self.assertEqual(control.project_state().project.status, ProjectStatus.DONE)
+
     def test_draw_repaints_every_line_and_survives_resize(self):
         from code_mule.tui.app import _draw
 
