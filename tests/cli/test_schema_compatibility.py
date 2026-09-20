@@ -201,7 +201,7 @@ class InstallationCompatibilityTests(unittest.TestCase):
         marker.write_text(
             "\n".join((
                 "Code Mule persistent installation",
-                "version: 0.1.1",
+                "version: 0.2.0",
                 f"prefix: {self.prefix}",
                 f"source: {ROOT}",
                 f"launcher: {self.launcher}",

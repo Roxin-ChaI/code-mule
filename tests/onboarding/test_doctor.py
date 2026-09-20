@@ -173,7 +173,7 @@ class DoctorServiceTests(unittest.TestCase):
         report = self.report(environment)
         rendered = "\n".join(render_doctor(report, verbose=True))
         self.assertNotIn("sk-doctor-secret", rendered)
-        self.assertIn("version  0.1.1", rendered)
+        self.assertIn("version  0.2.0", rendered)
 
     def test_doctor_via_composition_starts_no_runtime_and_writes_nothing(self):
         calls = []
