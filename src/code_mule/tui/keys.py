@@ -6,6 +6,7 @@ key curses delivered without leaking terminal control data.
 """
 
 from dataclasses import dataclass
+from enum import StrEnum
 
 
 KEY_NAMES = (
@@ -26,6 +27,48 @@ KEY_NAMES = (
     "TEXT",
     "UNKNOWN",
 )
+
+
+class InputKind(StrEnum):
+    CONTROL = "control"
+    TEXT = "text"
+
+
+@dataclass(frozen=True)
+class TerminalInputEvent:
+    """One decoded input unit with control semantics separated from text."""
+
+    kind: InputKind
+    key_name: str
+    text: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.key_name not in KEY_NAMES:
+            raise ValueError("key_name must use the safe terminal vocabulary")
+        if self.kind is InputKind.TEXT:
+            if self.key_name != "TEXT" or self.text is None or len(self.text) != 1:
+                raise ValueError("text input requires exactly one character")
+            if not self.text.isprintable() or self.text == ESCAPE:
+                raise ValueError("text input must be one printable character")
+        elif self.text is not None:
+            raise ValueError("control input cannot carry text")
+
+
+def input_event(key: object) -> TerminalInputEvent:
+    """Decode raw input without ever treating a control name as Boss text."""
+
+    if isinstance(key, TerminalInputEvent):
+        return key
+    if isinstance(key, str) and key in KEY_NAMES:
+        return TerminalInputEvent(InputKind.CONTROL, key)
+    name = key_name(key)
+    if name == "TEXT" and isinstance(key, str):
+        return TerminalInputEvent(InputKind.TEXT, name, key)
+    return TerminalInputEvent(InputKind.CONTROL, name)
+
+
+def control_event(key_name: str) -> TerminalInputEvent:
+    return TerminalInputEvent(InputKind.CONTROL, key_name)
 
 ESCAPE = "\x1b"
 MAX_ESCAPE_LENGTH = 8
@@ -176,9 +219,13 @@ __all__ = [
     "ESCAPE",
     "FALLBACK_SEQUENCES",
     "KEY_NAMES",
+    "InputKind",
     "MAX_ESCAPE_LENGTH",
     "SequenceTable",
+    "TerminalInputEvent",
     "TERMINFO_CAPABILITIES",
+    "control_event",
+    "input_event",
     "key_name",
     "resolve_sequence",
     "sequence_table",

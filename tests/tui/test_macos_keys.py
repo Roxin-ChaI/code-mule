@@ -14,6 +14,7 @@ from code_mule.tui.keys import (
     FALLBACK_SEQUENCES,
     KEY_NAMES,
     MAX_ESCAPE_LENGTH,
+    InputKind,
     SequenceTable,
     TERMINFO_CAPABILITIES,
     key_name,
@@ -108,15 +109,18 @@ class EscapeAggregationTests(unittest.TestCase):
         for split in (list("\x1bOF"), list("\x1b[F"), ["\x1bO", "F"]):
             with self.subTest(split=split):
                 screen = FakeScreen(split)
-                self.assertEqual(read_key_event(screen, table=xterm_table()), "KEY_END")
+                event = read_key_event(screen, table=xterm_table())
+                self.assertIsNotNone(event)
+                self.assertEqual(event.key_name, "KEY_END")
 
     def test_split_right_arrow_stays_key_right_and_never_end(self):
         for split in (list("\x1bOC"), list("\x1b[C")):
             with self.subTest(split=split):
                 screen = FakeScreen(split)
-                name = read_key_event(screen, table=xterm_table())
-                self.assertEqual(name, "KEY_RIGHT")
-                self.assertNotEqual(name, "KEY_END")
+                event = read_key_event(screen, table=xterm_table())
+                self.assertIsNotNone(event)
+                self.assertEqual(event.key_name, "KEY_RIGHT")
+                self.assertNotEqual(event.key_name, "KEY_END")
 
     def test_other_macos_shortcuts_are_unaffected(self):
         cases = {
@@ -130,27 +134,33 @@ class EscapeAggregationTests(unittest.TestCase):
         for sequence, expected in cases.items():
             with self.subTest(key=expected):
                 screen = FakeScreen(list(sequence))
-                self.assertEqual(read_key_event(screen, table=xterm_table()), expected)
+                event = read_key_event(screen, table=xterm_table())
+                self.assertIsNotNone(event)
+                self.assertEqual(event.key_name, expected)
 
     def test_unknown_sequences_resolve_to_unknown(self):
         for sequence in ("\x1b[9~", "\x1b[1;2C", "\x1b", "\x1bZZZZZZZZZZ"):
             with self.subTest(sequence=repr(sequence)):
                 screen = FakeScreen(list(sequence))
-                name = read_key_event(screen, table=xterm_table())
-                self.assertEqual(name, "UNKNOWN")
-                self.assertIn(name, KEY_NAMES)
-                self.assertNotIn("\x1b", name)
+                event = read_key_event(screen, table=xterm_table())
+                self.assertIsNotNone(event)
+                self.assertEqual(event.key_name, "UNKNOWN")
+                self.assertIn(event.key_name, KEY_NAMES)
+                self.assertNotIn("\x1b", event.key_name)
 
     def test_aggregation_is_bounded(self):
         screen = FakeScreen([ESCAPE] + ["x"] * 40)
-        name = read_key_event(screen, table=xterm_table())
-        self.assertEqual(name, "UNKNOWN")
+        event = read_key_event(screen, table=xterm_table())
+        self.assertIsNotNone(event)
+        self.assertEqual(event.key_name, "UNKNOWN")
         consumed = 1 + (40 - len(screen.keys))
         self.assertLessEqual(consumed, 1 + MAX_ESCAPE_LENGTH)
 
     def test_bare_escape_keypress_is_not_a_hang_and_restores_the_refresh_timeout(self):
         screen = FakeScreen([ESCAPE])
-        self.assertEqual(read_key_event(screen, table=xterm_table()), "UNKNOWN")
+        event = read_key_event(screen, table=xterm_table())
+        self.assertIsNotNone(event)
+        self.assertEqual(event.key_name, "UNKNOWN")
         self.assertEqual(screen.timeouts[0], 30)
         self.assertEqual(screen.timeouts[-1], 250)
 
@@ -167,7 +177,15 @@ class EscapeAggregationTests(unittest.TestCase):
         }
         for key, expected in cases.items():
             with self.subTest(key=expected):
-                self.assertEqual(read_key_event(FakeScreen([key]), table=xterm_table()), expected)
+                event = read_key_event(FakeScreen([key]), table=xterm_table())
+                self.assertIsNotNone(event)
+                self.assertEqual(event.key_name, expected)
+                if expected == "TEXT":
+                    self.assertIs(event.kind, InputKind.TEXT)
+                    self.assertEqual(event.text, key)
+                else:
+                    self.assertIs(event.kind, InputKind.CONTROL)
+                    self.assertIsNone(event.text)
 
 
 class EndBehaviourTests(unittest.TestCase):
@@ -178,7 +196,8 @@ class EndBehaviourTests(unittest.TestCase):
         _handle_key(control, body_end := read_key_event(
             FakeScreen(list("\x1bOF")), table=xterm_table()
         ), rows=45, cols=80)
-        self.assertEqual(body_end, "KEY_END")
+        self.assertIsNotNone(body_end)
+        self.assertEqual(body_end.key_name, "KEY_END")
         self.assertTrue(control.activity.following)
         self.assertEqual(control.key_display, "KEY_END")
         entries = control.activity.visible(10)

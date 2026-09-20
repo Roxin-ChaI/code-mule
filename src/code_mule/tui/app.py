@@ -17,9 +17,11 @@ from code_mule.state.models import ProjectState
 from .controller import PAGE_STEP, SCROLL_STEP, TerminalController
 from .keys import (
     ESCAPE,
-    KEY_NAMES,
     MAX_ESCAPE_LENGTH,
-    key_name,
+    InputKind,
+    TerminalInputEvent,
+    control_event,
+    input_event,
     resolve_sequence,
     sequence_table,
 )
@@ -194,7 +196,9 @@ def _read_key(stdscr):
         return None
 
 
-def read_key_event(stdscr, *, read_tail=None, table=None) -> str | None:
+def read_key_event(
+    stdscr, *, read_tail=None, table=None
+) -> TerminalInputEvent | None:
     """Read one key and resolve it to a safe name, aggregating escape tails.
 
     macOS Terminal delivers ``Fn+Right`` as the terminfo `kend` sequence
@@ -218,8 +222,8 @@ def read_key_event(stdscr, *, read_tail=None, table=None) -> str | None:
         ):
             # A read may hand back part of the sequence; collect the rest.
             remainder += tail_reader(stdscr)
-        return resolve_sequence(ESCAPE + remainder, resolved_table)
-    return key_name(key)
+        return control_event(resolve_sequence(ESCAPE + remainder, resolved_table))
+    return input_event(key)
 
 
 def _read_escape_tail(stdscr, *, table=None) -> str:
@@ -262,11 +266,10 @@ def _read_escape_tail(stdscr, *, table=None) -> str:
 
 
 def _handle_key(controller: TerminalController, key, *, rows: int, cols: int) -> bool:
-    import curses
-
     # Accept either a resolved name (from read_key_event) or a raw curses key,
     # so the aggregation layer and direct callers share one behaviour.
-    name = key if isinstance(key, str) and key in KEY_NAMES else key_name(key)
+    event = input_event(key)
+    name = event.key_name
     controller.note_key(name)
     activity_height = compute_layout(
         rows, cols, status_height=STATUS_SIZE, boss_height=BOSS_MIN_HEIGHT
@@ -301,8 +304,9 @@ def _handle_key(controller: TerminalController, key, *, rows: int, cols: int) ->
     if name == "BACKSPACE":
         controller.backspace()
         return True
-    if name == "TEXT" and isinstance(key, str):
-        controller.insert(key)
+    if event.kind is InputKind.TEXT:
+        assert event.text is not None
+        controller.insert(event.text)
         return True
     return False
 
