@@ -837,7 +837,29 @@ class ProductionCliComposition:
         except ValueError as error:
             raise InvalidCliProjectState("human action state is ambiguous") from error
         if action is None:
-            raise InvalidCliProjectState("no pending HumanAction")
+            lines = render_project(
+                state,
+                verbose=verbose,
+                heading="PROJECT INSPECTION",
+            )
+            session = state.runtime_sessions[-1] if state.runtime_sessions else None
+            if session is None:
+                lines += ("", "RUNTIME", "No runtime session has been recorded.")
+            else:
+                lines += (
+                    "",
+                    "RUNTIME",
+                    f"Status      {session.status.value.replace('_', ' ').title()}",
+                    f"Health      {session.health_status.value.replace('_', ' ').title()}",
+                    f"Access      {session.access_url or 'Not available'}",
+                )
+                if verbose:
+                    lines += (
+                        f"session_id: {session.id}",
+                        f"pid: {session.pid or '-'}",
+                    )
+            lines += ("", "Human action None", "No Boss action is pending.")
+            return CliCommandResult(CliExitCode.SUCCESS, lines)
         codex_version = None
         if verbose:
             probe = probe_codex_transport(self._environment)
