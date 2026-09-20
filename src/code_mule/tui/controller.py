@@ -263,7 +263,7 @@ class TerminalController:
     ) -> None:
         timestamp = datetime.now().astimezone()
         with self._lock:
-            self.activity.append(timestamp, ActivityKind.COMMAND, f"boss> {line}")
+            self.activity.append(timestamp, ActivityKind.COMMAND, f"me> {line}")
             for output in result.output[:40]:
                 self.activity.append(timestamp, ActivityKind.RESPONSE, output)
         self.state.last_exit_code = int(result.exit_code)

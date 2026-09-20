@@ -57,7 +57,7 @@ class InputAndDispatchTests(unittest.TestCase):
         self.assertEqual(result.exit_code, CliExitCode.SUCCESS)
         self.assertEqual(commands.calls, ["status"])
         self.assertEqual(control.buffered_input, "")
-        self.assertIn("boss> status", [entry.text for entry in control.activity.entries])
+        self.assertIn("me> status", [entry.text for entry in control.activity.entries])
 
     def test_invalid_command_is_reported_without_touching_state(self):
         control = controller()
@@ -167,12 +167,12 @@ class HumanActionRenderingTests(unittest.TestCase):
         self.assertIn("Actions: fail_project | acknowledge | answer", text)
         self.assertNotIn("--strategy", text)
         self.assertNotIn("resolve action-demo", text)
-        self.assertEqual(lines[-1], "boss> ")
+        self.assertEqual(lines[-1], "me> ")
 
     def test_boss_pane_is_just_the_prompt_without_a_pending_action(self):
         state = replace(make_project_state(), human_actions=())
         lines = boss_lines(state, pending=True, buffer="abc")
-        self.assertEqual(lines, ("boss> abc",))
+        self.assertEqual(lines, ("me> abc",))
 
     def test_no_action_is_ever_approved_automatically(self):
         commands = DemoCommands()
@@ -189,7 +189,8 @@ class HumanActionRenderingTests(unittest.TestCase):
         snapshot = build_snapshot(demo_state(), ("one", "two"), buffer="q", now=NOW)
         self.assertTrue(snapshot.status[0].startswith("CODE MULE"))
         self.assertEqual(snapshot.activity, ("one", "two"))
-        self.assertTrue(snapshot.pane("boss")[-1].startswith("boss>"))
+        self.assertTrue(snapshot.pane("boss")[-1].startswith("me>"))
+        self.assertNotIn("boss>", "\n".join(snapshot.pane("boss")))
         with self.assertRaises(ValueError):
             snapshot.pane("nope")
 
@@ -333,7 +334,7 @@ class StreamAndFallbackTests(unittest.TestCase):
         lines = out.getvalue().splitlines()
         self.assertTrue(lines[0].startswith("CODE MULE"))
         self.assertTrue(any(line.startswith("persistent UI unavailable") for line in lines))
-        self.assertTrue(any(line.startswith("boss>") for line in lines))
+        self.assertTrue(any(line.startswith("me>") for line in lines))
 
     def test_ctrl_c_requests_quit_without_mutating_state(self):
         from code_mule.tui.app import _handle_key

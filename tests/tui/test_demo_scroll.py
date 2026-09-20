@@ -82,7 +82,7 @@ class ScrollIndicatorTests(unittest.TestCase):
         self.assertTrue(lines[indicator_row].startswith("Activity "))
         self.assertIn("Follow ON", lines[indicator_row])
         # The indicator never consumes the Boss input row.
-        self.assertTrue(lines[-1].startswith("boss>"))
+        self.assertTrue(lines[-1].startswith("me>"))
 
     def test_indicator_tracks_scrolling_and_end_in_a_rendered_frame(self):
         control = demo_controller()
@@ -119,7 +119,7 @@ class ScrollIndicatorTests(unittest.TestCase):
             layout,
             status=("s",),
             activity=tuple(entry.text for entry in control.activity.visible(layout.activity_height)),
-            boss=("boss> ",),
+            boss=("me> ",),
         )
         with_indicator = render_screen(
             layout,
@@ -128,7 +128,7 @@ class ScrollIndicatorTests(unittest.TestCase):
                 entry.text
                 for entry in control.activity.visible(layout.activity_height - 1)
             ),
-            boss=("boss> ",),
+            boss=("me> ",),
             indicator="Activity 41-60 / 60 · Follow ON",
         )
         self.assertEqual(len(without), len(with_indicator))
@@ -188,7 +188,7 @@ class KeyObservabilityTests(unittest.TestCase):
         status_row = next(line for line in lines if line.startswith("Activity "))
         self.assertIn("Key: —", status_row)
         # The readout must never sit on, or displace, the Boss input row.
-        self.assertEqual(lines[-1].rstrip(), "boss>")
+        self.assertEqual(lines[-1].rstrip(), "me>")
 
     def test_readout_updates_through_the_real_key_handler(self):
         import curses
@@ -229,11 +229,11 @@ class KeyObservabilityTests(unittest.TestCase):
                 lines = fallback_lines(control, rows=rows, cols=cols)
                 self.assertEqual(len(lines), rows)
                 self.assertIn("Key: KEY_PPAGE", "\n".join(lines))
-                self.assertEqual(lines[-1].rstrip(), "boss>")
+                self.assertEqual(lines[-1].rstrip(), "me>")
         _handle_key(control, curses.KEY_RESIZE, rows=120, cols=200)
         lines = fallback_lines(control, rows=40, cols=120)
         self.assertIn("Key: KEY_RESIZE", "\n".join(lines))
-        self.assertEqual(lines[-1].rstrip(), "boss>")
+        self.assertEqual(lines[-1].rstrip(), "me>")
 
     def test_key_name_is_recorded_by_the_key_handler(self):
         import curses
@@ -290,7 +290,7 @@ class DemoFrameTests(unittest.TestCase):
             with self.subTest(rows=rows, cols=cols):
                 lines = fallback_lines(control, rows=rows, cols=cols)
                 self.assertEqual(len(lines), rows)
-                self.assertTrue(lines[-1].startswith("boss>"))
+                self.assertTrue(lines[-1].startswith("me>"))
                 self.assertIn("Activity ", "\n".join(lines))
 
     def test_non_tty_demo_output_still_reports_the_fallback(self):

@@ -81,7 +81,7 @@ class BossTextEntryTests(unittest.TestCase):
         control.join(timeout=5)
         self.assertEqual(commands.calls, ["status"])
         self.assertEqual(control.buffered_input, "")
-        self.assertIn("boss> status", [entry.text for entry in control.activity.entries])
+        self.assertIn("me> status", [entry.text for entry in control.activity.entries])
 
     def test_arrow_and_control_keys_never_enter_the_buffer(self):
         control, _commands = controller()

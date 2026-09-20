@@ -132,7 +132,7 @@ def render_project_diagnosis(
         lines += _no_change_delivery_lines(diagnosis.no_change_delivery)
     lines += (
         "",
-        "BOSS ACTION",
+        "ME ACTION",
         "",
         f"Required       {'Yes' if diagnosis.boss_action_required else 'No'}",
         f"Next           {diagnosis.recommended_next_action.value.title() if diagnosis.recommended_next_action.value == 'none' else diagnosis.recommended_next_action.value}",
@@ -189,7 +189,7 @@ def render_project(
             f"Reused      {view.reused_task_count} task(s) from earlier revisions",
         ) if view.reused_task_count else ()),
         f"Current     {view.current_task or 'None'}",
-        f"Boss action {view.boss_action or 'None'}",
+        f"Me action   {view.boss_action or 'None'}",
     )
     verification = next(
         (
@@ -404,9 +404,9 @@ def render_human_action(
                 for check in final_review.checks
             ),
             "",
-            "Code changes Not determined; the Boss must decide from the finding",
+            "Code changes Not determined; decision required from me",
             "Accept as-is No; final review has not approved completion",
-            "Suggested    Submit a precise Boss-directed change if correction is required",
+            "Suggested    Submit a precise change if correction is required",
         )
     if view.capability is not None:
         lines += (
@@ -530,7 +530,7 @@ def render_human_action(
                 lines += (
                     "",
                     "Request a correction:",
-                    '  code-mule change "<Boss correction>"',
+                    '  code-mule change "<my correction>"',
                     "Acknowledging only records awareness and pauses safely; it does not approve completion.",
                 )
             elif action.category is HumanActionCategory.RECOVERY_UNCERTAIN:

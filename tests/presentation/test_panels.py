@@ -74,10 +74,11 @@ class PanelIntegrationTests(TestCase):
 
     def test_status_shows_only_nonempty_boss_panel(self):
         source = make_project_state()
-        self.assertNotIn("BOSS ACTION", "\n".join(render_project(source, terminal=TerminalDashboard(80, True))))
+        self.assertNotIn("ME ACTION", "\n".join(render_project(source, terminal=TerminalDashboard(80, True))))
         state = replace(source, human_actions=(action(HumanActionCategory.WORKER_INPUT),))
         text = "\n".join(render_project(state, terminal=TerminalDashboard(80, True)))
-        self.assertIn("BOSS ACTION", text)
+        self.assertIn("ME ACTION", text)
+        self.assertNotIn("BOSS ACTION", text)
         self.assertIn("code-mule inspect", text)
 
     def test_diagnosis_projection_preserves_facts(self):

@@ -44,7 +44,7 @@ def project_dashboard(state, terminal: TerminalDashboard, lines, *, verbose=Fals
             sections.append(DashboardSection("DELIVERY HANDOFF", ("Unavailable for this historical state.",)))
     actions = tuple(action for action in state.human_actions if action.status is HumanActionStatus.PENDING)
     if actions:
-        sections.append(DashboardSection("BOSS ACTION", (row("Category", view.boss_action),) + tuple(action.summary for action in actions) + ("", "Next: code-mule inspect")))
+        sections.append(DashboardSection("ME ACTION", (row("Category", view.boss_action),) + tuple(action.summary for action in actions) + ("", "Next: code-mule inspect")))
     if verbose:
         sections.extend(internal(lines))
     return terminal.render(tuple(sections))

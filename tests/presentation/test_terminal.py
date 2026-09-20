@@ -13,7 +13,7 @@ class TerminalLayoutTests(TestCase):
                 lines = layout.render((DashboardSection("CODE MULE · My Project", ("Status         Ready", "Plan           —", "Progress       " + layout.progress(0, 0), "Current        None")),))
                 self.assertEqual(display_width(lines[0]), width - 2)
                 self.assertTrue(all(display_width(line) <= width for line in lines))
-                self.assertNotIn("BOSS ACTION", "\n".join(lines))
+                self.assertNotIn("ME ACTION", "\n".join(lines))
 
     def test_cjk_combining_and_emoji_display_cells(self):
         self.assertEqual(display_width("中文e\u0301"), 5)

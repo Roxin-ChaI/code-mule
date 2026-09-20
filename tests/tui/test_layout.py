@@ -93,7 +93,7 @@ class LayoutGeometryTests(unittest.TestCase):
                 )
                 self.assertTrue(lines[0].startswith("CODE MULE"))
                 self.assertIn("Project", lines[1])
-                self.assertTrue(lines[-1].startswith("boss>"))
+                self.assertTrue(lines[-1].startswith("me>"))
                 self.assertEqual(layout.status_height, 8)
                 self.assertGreaterEqual(layout.activity_height, 1)
                 self.assertEqual(
@@ -110,7 +110,7 @@ class LayoutGeometryTests(unittest.TestCase):
                 layout, lines = frame(rows, cols, state=make_project_state())
                 self.assertEqual(len(lines), rows)
                 self.assertLessEqual(max(display_width(line) for line in lines), cols)
-                self.assertTrue(lines[-1].startswith("boss>"))
+                self.assertTrue(lines[-1].startswith("me>"))
 
     def test_status_pane_content_is_derived_from_state(self):
         state = make_project_state()

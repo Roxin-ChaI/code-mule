@@ -88,7 +88,7 @@ def boss_lines(
         lines.append("Actions: " + _action_summary(state, action))
     if status_message:
         lines.append(_bounded(status_message, 200))
-    prompt = "boss> " + safe_text(buffer)
+    prompt = "me> " + safe_text(buffer)
     lines.append(prompt)
     return tuple(lines)
 
@@ -169,7 +169,7 @@ def build_snapshot(
                 "Status      No project state found",
             ),
             activity,
-            ("boss> " + safe_text(buffer),)
+            ("me> " + safe_text(buffer),)
             + (() if status_message is None else (_bounded(status_message),)),
             now,
             indicator,
