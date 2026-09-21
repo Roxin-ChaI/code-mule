@@ -53,10 +53,8 @@ def no_change_delivery_recovery_evidence(
         if event.event_type == "git.delivery_failed"
         and event.entity_id == action.task_id
         and event.timestamp == action.created_at
-        and event.metadata == {
-            "error_type": "EmptyGitChangeSet",
-            "stage": "ownership",
-        }
+        and event.metadata.get("error_type") == "EmptyGitChangeSet"
+        and event.metadata.get("stage") == "ownership"
     )
     attempts = tuple(
         item for item in state.execution_attempts if item.task_id == action.task_id

@@ -8,13 +8,20 @@ from .contracts import (
     GitCommitError,
     GitCommitResult,
     GitDeliveryMode,
+    GitDeliveryFailureCode,
+    GitDeliveryFailureDetails,
     GitNoCommitResult,
     NoChangeDeliveryRecoveryEvidence,
     GitDeliveryError,
     GitOwnershipError,
+    GitOwnershipStatus,
     GitStagingError,
     UnexpectedGitHead,
     WorkerVerificationError,
+)
+from .diagnostics import (
+    git_delivery_failure_evidence,
+    git_delivery_failure_metadata,
 )
 from .service import (
     GitCommandResult,
@@ -33,10 +40,13 @@ __all__ = [
     "GitCommitError",
     "GitCommitResult",
     "GitDeliveryMode",
+    "GitDeliveryFailureCode",
+    "GitDeliveryFailureDetails",
     "GitNoCommitResult",
     "NoChangeDeliveryRecoveryEvidence",
     "GitDeliveryError",
     "GitOwnershipError",
+    "GitOwnershipStatus",
     "GitStagingError",
     "GitWorkspaceIsolationError",
     "UnexpectedGitHead",
@@ -46,5 +56,7 @@ __all__ = [
     "GitDeliveryService",
     "commit_message",
     "run_git_command",
+    "git_delivery_failure_evidence",
+    "git_delivery_failure_metadata",
     "register_state_exclusion",
 ]

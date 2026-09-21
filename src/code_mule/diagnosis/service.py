@@ -27,6 +27,7 @@ from code_mule.recovery.uncertainty import (
     worker_uncertainty_evidence,
 )
 from code_mule.git_delivery.recovery import no_change_delivery_recovery_evidence
+from code_mule.git_delivery import git_delivery_failure_evidence
 from code_mule.revision import latest_revision
 from code_mule.project_verification import final_review_human_judgment_evidence
 
@@ -206,6 +207,11 @@ class ProjectDiagnosisService:
             if action is None
             else no_change_delivery_recovery_evidence(state, action)
         )
+        git_delivery_failure = (
+            None
+            if action is None
+            else git_delivery_failure_evidence(state, action)
+        )
         planning_metadata: dict[str, str] = {}
         manifest_handoff: dict[str, str] | None = None
         if action is not None:
@@ -284,7 +290,20 @@ class ProjectDiagnosisService:
                             "rejected invariant or field path."
                         )
                     }
-        if worker_uncertainty is not None:
+        if git_delivery_failure is not None:
+            classification = _Classification(
+                DiagnosisBlockerCategory.RECOVERY_UNCERTAIN,
+                DiagnosisStage.GIT_DELIVERY,
+                git_delivery_failure.safe_summary,
+                (
+                    DiagnosisRecoverability.RECOVERABLE
+                    if git_delivery_failure.retry_safe
+                    else DiagnosisRecoverability.UNCERTAIN
+                ),
+                True,
+                DiagnosisNextAction.INSPECT,
+            )
+        elif worker_uncertainty is not None:
             classification = _Classification(
                 DiagnosisBlockerCategory.RECOVERY_UNCERTAIN,
                 DiagnosisStage.WORKER_EXECUTION,
@@ -479,6 +498,7 @@ class ProjectDiagnosisService:
             ),
             worker_uncertainty=worker_uncertainty,
             no_change_delivery=no_change_delivery,
+            git_delivery_failure=git_delivery_failure,
             worker_failure_class=_worker_failure_class(
                 state, action, worker_uncertainty
             ),

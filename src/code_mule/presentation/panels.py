@@ -93,6 +93,14 @@ def diagnosis_dashboard(diagnosis, terminal, lines, *, verbose=False):
             row("Continuation", "Safe" if evidence.continuation_safe else "Blocked"),
             row("Commit", "Not required after approval"),
         )
+    if diagnosis.git_delivery_failure is not None:
+        evidence = diagnosis.git_delivery_failure
+        diagnosis_rows += (
+            row("Git failure", humanize_identifier(evidence.failure_code.value)),
+            row("Ownership", humanize_identifier(evidence.ownership_status.value)),
+            row("Retry safe", "Yes" if evidence.retry_safe else "No"),
+            row("Git reason", evidence.safe_summary),
+        )
     sections = (
         DashboardSection("PROJECT · " + diagnosis.project_name, (
             row("Status", status_label(diagnosis.project_status)),

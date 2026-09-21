@@ -130,6 +130,10 @@ def render_project_diagnosis(
             )
     if diagnosis.no_change_delivery is not None:
         lines += _no_change_delivery_lines(diagnosis.no_change_delivery)
+    if diagnosis.git_delivery_failure is not None:
+        lines += _git_delivery_failure_lines(
+            diagnosis.git_delivery_failure, verbose=verbose
+        )
     lines += (
         "",
         "ME ACTION",
@@ -478,6 +482,13 @@ def render_human_action(
         if no_change is not None:
             lines += ("", "NO-CHANGE DELIVERY REVIEW")
             lines += _no_change_delivery_lines(no_change)
+        if verbose:
+            from code_mule.git_delivery import git_delivery_failure_evidence
+
+            git_failure = git_delivery_failure_evidence(state, action)
+            if git_failure is not None:
+                lines += ("", "GIT DELIVERY FAILURE")
+                lines += _git_delivery_failure_lines(git_failure, verbose=True)
     lines += (f"Risk        {view.risk}", "", (
         "No delivery commit was created. Worker changes were preserved."
         if action.category is HumanActionCategory.WORKER_VERIFICATION
@@ -824,6 +835,27 @@ def _no_change_delivery_lines(evidence) -> tuple[str, ...]:
         "Continuation safe "
         + ("Yes" if evidence.continuation_safe else "No"),
         "Failure reason    Empty change set was rejected before review",
+    )
+
+
+def _git_delivery_failure_lines(evidence, *, verbose: bool) -> tuple[str, ...]:
+    from .labels import humanize_identifier
+
+    lines = (
+        "Git failure      " + humanize_identifier(evidence.failure_code.value),
+        f"Ownership       {humanize_identifier(evidence.ownership_status.value)}",
+        f"Retry safe      {'Yes' if evidence.retry_safe else 'No'}",
+        f"Reason          {evidence.safe_summary}",
+    )
+    if not verbose:
+        return lines
+    return lines + (
+        f"Baseline HEAD   {evidence.baseline_head or '-'}",
+        f"Current HEAD    {evidence.current_head or '-'}",
+        "Expected paths  " + (", ".join(evidence.expected_paths) or "None"),
+        "Actual paths    " + (", ".join(evidence.actual_paths) or "None"),
+        "Staged paths    " + (", ".join(evidence.staged_paths) or "None"),
+        f"Task commit     {evidence.task_commit or '-'}",
     )
 
 

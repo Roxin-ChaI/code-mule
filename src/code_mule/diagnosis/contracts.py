@@ -6,7 +6,10 @@ from enum import StrEnum
 from code_mule.domain import ProjectStatus
 from code_mule.domain.worker_verification import WorkerCheckStatus, WorkerCheckType
 from code_mule.recovery.contracts import WorkerUncertaintyEvidence
-from code_mule.git_delivery.contracts import NoChangeDeliveryRecoveryEvidence
+from code_mule.git_delivery.contracts import (
+    GitDeliveryFailureDetails,
+    NoChangeDeliveryRecoveryEvidence,
+)
 
 
 class DiagnosisBlockerCategory(StrEnum):
@@ -121,6 +124,7 @@ class ProjectDiagnosis:
     completion_head_candidate: str | None = None
     worker_uncertainty: WorkerUncertaintyEvidence | None = None
     no_change_delivery: NoChangeDeliveryRecoveryEvidence | None = None
+    git_delivery_failure: GitDeliveryFailureDetails | None = None
     worker_failure_class: str | None = None
     worker_transport_evidence_available: bool = False
 

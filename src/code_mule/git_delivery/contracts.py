@@ -6,6 +6,10 @@ from enum import StrEnum
 from code_mule.domain.worker_verification import WorkerVerificationCheck
 
 
+_DIAGNOSTIC_PATH_LIMIT = 100
+_DIAGNOSTIC_PATH_LENGTH = 240
+
+
 def _non_empty(value: str, field_name: str) -> None:
     if value == "":
         raise ValueError(f"{field_name} must not be empty")
@@ -23,6 +27,76 @@ def _paths(values: tuple[str, ...], field_name: str) -> None:
 class GitDeliveryMode(StrEnum):
     COMMIT_REQUIRED = "commit_required"
     NO_COMMIT_REQUIRED = "no_commit_required"
+
+
+class GitDeliveryFailureCode(StrEnum):
+    """Stable, non-secret classification for a failed Git delivery boundary."""
+
+    BASELINE_MISMATCH = "baseline_mismatch"
+    UNEXPECTED_HEAD_CHANGE = "unexpected_head_change"
+    UNRELATED_WORKTREE_CHANGES = "unrelated_worktree_changes"
+    UNRELATED_STAGED_CHANGES = "unrelated_staged_changes"
+    EXPECTED_PATHS_MISMATCH = "expected_paths_mismatch"
+    STAGING_FAILED = "staging_failed"
+    COMMIT_MISSING = "commit_missing"
+    COMMIT_CREATION_FAILED = "commit_creation_failed"
+    OWNERSHIP_UNCERTAIN = "ownership_uncertain"
+
+
+class GitOwnershipStatus(StrEnum):
+    NOT_VERIFIED = "not_verified"
+    VERIFIED = "verified"
+    MISMATCH = "mismatch"
+    UNCERTAIN = "uncertain"
+
+
+def _diagnostic_paths(values: tuple[str, ...], field_name: str) -> None:
+    if len(values) > _DIAGNOSTIC_PATH_LIMIT:
+        raise ValueError(f"{field_name} exceeds diagnostic path count")
+    _paths(values, field_name)
+    if any(
+        len(value) > _DIAGNOSTIC_PATH_LENGTH
+        or any(ord(character) < 32 for character in value)
+        for value in values
+    ):
+        raise ValueError(f"{field_name} exceeds diagnostic path bounds")
+
+
+@dataclass(frozen=True)
+class GitDeliveryFailureDetails:
+    """Bounded evidence safe to persist without raw Git output."""
+
+    failure_code: GitDeliveryFailureCode
+    baseline_head: str | None
+    current_head: str | None
+    expected_paths: tuple[str, ...]
+    actual_paths: tuple[str, ...]
+    staged_paths: tuple[str, ...]
+    task_commit: str | None
+    ownership_status: GitOwnershipStatus
+    retry_safe: bool
+    safe_summary: str
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("baseline_head", self.baseline_head),
+            ("current_head", self.current_head),
+            ("task_commit", self.task_commit),
+        ):
+            if value is not None and (not value or len(value) > 128):
+                raise ValueError(f"{name} exceeds diagnostic bounds")
+        for values, name in (
+            (self.expected_paths, "expected_paths"),
+            (self.actual_paths, "actual_paths"),
+            (self.staged_paths, "staged_paths"),
+        ):
+            _diagnostic_paths(values, name)
+        if type(self.retry_safe) is not bool:
+            raise ValueError("retry_safe must be boolean")
+        if not 1 <= len(self.safe_summary) <= 200 or any(
+            ord(character) < 32 for character in self.safe_summary
+        ):
+            raise ValueError("safe_summary exceeds diagnostic bounds")
 
 
 @dataclass(frozen=True)
@@ -147,6 +221,15 @@ class GitCommitResult:
 class GitDeliveryError(RuntimeError):
     """Base class for fail-closed Git delivery failures."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        details: GitDeliveryFailureDetails | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.details = details
+
 
 class DirtyGitBaseline(GitDeliveryError):
     """The repository contained changes before Task dispatch."""
@@ -196,8 +279,11 @@ __all__ = [
     "GitCommitError",
     "GitCommitResult",
     "GitDeliveryMode",
+    "GitDeliveryFailureCode",
+    "GitDeliveryFailureDetails",
     "GitDeliveryError",
     "GitOwnershipError",
+    "GitOwnershipStatus",
     "GitStagingError",
     "GitNoCommitResult",
     "NoChangeDeliveryRecoveryEvidence",

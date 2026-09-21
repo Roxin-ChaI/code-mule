@@ -39,6 +39,7 @@ from code_mule.git_delivery import (
     GitDeliveryError,
     WorkerVerificationError,
     GitOwnershipError,
+    git_delivery_failure_metadata,
 )
 from code_mule.progress import (
     ProgressEvent,
@@ -841,7 +842,7 @@ class TaskCycleService:
             ("Worker verification requires human action" if isinstance(error, WorkerVerificationError)
              else "Task Git delivery requires human action"),
             attempt=attempt,
-            metadata={"error_type": type(error).__name__, "stage": stage},
+            metadata=git_delivery_failure_metadata(error, stage),
         )
         self._emit_human_gate(
             state, task,
@@ -1141,7 +1142,7 @@ class TaskCycleService:
         stage: str,
     ) -> ProjectState:
         verification = isinstance(error, WorkerVerificationError)
-        metadata = {"error_type": type(error).__name__, "stage": stage}
+        metadata = git_delivery_failure_metadata(error, stage)
         if verification and error.check is not None:
             from code_mule.domain.worker_verification import safe_check_name
 
@@ -1158,8 +1159,13 @@ class TaskCycleService:
             metadata=metadata,
             category=(HumanActionCategory.WORKER_VERIFICATION if verification
                       else HumanActionCategory.RECOVERY_UNCERTAIN),
-            summary=("Worker verification blocked delivery" if verification
-                     else "Task Git delivery could not be completed safely"),
+            summary=(
+                "Worker verification blocked delivery"
+                if verification
+                else error.details.safe_summary
+                if error.details is not None
+                else "Task Git delivery could not be completed safely"
+            ),
             requested_action=("Complete the required verification before delivery" if verification
                               else "Inspect repository ownership and choose an explicit resolution"),
             risk=("Delivering without required verification would bypass Task quality gates" if verification
@@ -1222,7 +1228,7 @@ class TaskCycleService:
             state,
             task,
             event_types=("git.baseline_failed", "task.human_required"),
-            metadata={"error_type": type(error).__name__, "stage": "baseline"},
+            metadata=git_delivery_failure_metadata(error, "baseline"),
             category=HumanActionCategory.WORKSPACE_BLOCK,
             summary="Task workspace precondition was not satisfied",
             requested_action=(
