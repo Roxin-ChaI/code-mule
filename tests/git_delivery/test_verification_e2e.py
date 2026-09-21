@@ -106,9 +106,38 @@ class VerificationLifecycleTests(RepositoryCase):
         action = state.human_actions[-1]
         self.assertEqual(action.status.value, "pending")
         if mismatch:
-            self.assertEqual(event.metadata, {"error_type": "GitOwnershipError", "stage": "ownership"})
+            self.assertEqual(event.metadata["error_type"], "GitOwnershipError")
+            self.assertEqual(event.metadata["stage"], "ownership")
+            self.assertEqual(
+                event.metadata["failure_code"], "unrelated_worktree_changes"
+            )
+            self.assertEqual(event.metadata["baseline_head"], baseline)
+            self.assertEqual(event.metadata["current_head"], baseline)
+            self.assertIn("js/render-target.js", event.metadata["actual_paths"])
+            self.assertNotIn("js/render-target.js", event.metadata["expected_paths"])
+            self.assertEqual(event.metadata["staged_paths"], "[]")
+            self.assertEqual(event.metadata["task_commit"], "-")
+            self.assertEqual(event.metadata["ownership_status"], "mismatch")
+            self.assertEqual(event.metadata["retry_safe"], "false")
             self.assertIs(action.category, HumanActionCategory.RECOVERY_UNCERTAIN)
             self.assertIn("repository ownership", action.requested_action)
+            self.assertEqual(
+                action.summary,
+                "Repository contains changes outside the Worker-owned path set.",
+            )
+            before = state_path.read_bytes()
+            for command in ("inspect", "diagnose"):
+                out, err = StringIO(), StringIO()
+                code = main(
+                    [command, "--state-file", str(state_path), "--verbose"],
+                    stdout=out,
+                    stderr=err,
+                )
+                self.assertEqual(code, 0, err.getvalue())
+                self.assertIn("Unrelated worktree changes", out.getvalue())
+                self.assertIn("js/render-target.js", out.getvalue())
+                self.assertIn("Retry safe", out.getvalue())
+            self.assertEqual(state_path.read_bytes(), before)
         else:
             self.assertEqual(event.metadata["error_type"], "WorkerVerificationError")
             self.assertEqual(event.metadata["stage"], "verification")

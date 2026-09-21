@@ -10,6 +10,7 @@ from code_mule.domain.models import ExecutionReport, Task
 from code_mule.git_delivery import (
     DirtyGitBaseline,
     GitDeliveryMode,
+    GitDeliveryFailureCode,
     GitCommitError,
     GitDeliveryService,
     GitOwnershipError,
@@ -101,8 +102,14 @@ class GitDeliveryServiceTests(RepositoryCase):
 
     def test_dirty_baseline_fails_closed(self):
         (self.root / "README.md").write_text("external\n")
-        with self.assertRaises(DirtyGitBaseline):
+        with self.assertRaises(DirtyGitBaseline) as caught:
             self.service.capture_baseline("TASK-1")
+        self.assertIs(
+            caught.exception.details.failure_code,
+            GitDeliveryFailureCode.BASELINE_MISMATCH,
+        )
+        self.assertEqual(caught.exception.details.actual_paths, ("README.md",))
+        self.assertFalse(caught.exception.details.retry_safe)
 
     def test_partial_paths_are_measured_against_original_clean_baseline(self):
         baseline = self.service.capture_baseline("TASK-1")
@@ -118,17 +125,47 @@ class GitDeliveryServiceTests(RepositoryCase):
         baseline = self.service.capture_baseline("TASK-1")
         (self.root / "owned.py").write_text("owned\n")
         (self.root / "external.py").write_text("external\n")
-        with self.assertRaises(GitOwnershipError):
+        with self.assertRaises(GitOwnershipError) as unrelated:
             self.service.prepare_change_set(
                 baseline, report("owned.py"), ("owned.py",)
             )
+        self.assertIs(
+            unrelated.exception.details.failure_code,
+            GitDeliveryFailureCode.UNRELATED_WORKTREE_CHANGES,
+        )
+        self.assertEqual(
+            unrelated.exception.details.actual_paths, ("external.py", "owned.py")
+        )
         git(self.root, "add", "--", "owned.py", "external.py")
-        with self.assertRaises(GitOwnershipError):
+        with self.assertRaises(GitOwnershipError) as staged:
             self.service.prepare_change_set(
                 baseline,
                 report("owned.py", "external.py"),
                 ("owned.py", "external.py"),
             )
+        self.assertIs(
+            staged.exception.details.failure_code,
+            GitDeliveryFailureCode.UNRELATED_STAGED_CHANGES,
+        )
+        self.assertEqual(
+            staged.exception.details.staged_paths, ("external.py", "owned.py")
+        )
+
+    def test_missing_expected_path_has_typed_path_mismatch(self):
+        baseline = self.service.capture_baseline("TASK-1")
+        (self.root / "actual.py").write_text("actual\n")
+        with self.assertRaises(GitOwnershipError) as caught:
+            self.service.prepare_change_set(
+                baseline,
+                report("actual.py", "missing.py"),
+                ("actual.py", "missing.py"),
+            )
+        details = caught.exception.details
+        self.assertIs(
+            details.failure_code, GitDeliveryFailureCode.EXPECTED_PATHS_MISMATCH
+        )
+        self.assertEqual(details.expected_paths, ("actual.py", "missing.py"))
+        self.assertEqual(details.actual_paths, ("actual.py",))
 
     def test_verified_empty_change_is_explicit_no_commit_delivery(self):
         baseline = self.service.capture_baseline("TASK-1")
@@ -201,8 +238,15 @@ class GitDeliveryServiceTests(RepositoryCase):
         (self.root / "other.py").write_text("other\n")
         git(self.root, "add", "--", "other.py")
         git(self.root, "commit", "-q", "-m", "external")
-        with self.assertRaises(UnexpectedGitHead):
+        with self.assertRaises(UnexpectedGitHead) as caught:
             self.service.prepare_change_set(baseline, report("other.py"), ("other.py",))
+        details = caught.exception.details
+        self.assertIs(
+            details.failure_code, GitDeliveryFailureCode.UNEXPECTED_HEAD_CHANGE
+        )
+        self.assertEqual(details.baseline_head, baseline.baseline_head)
+        self.assertEqual(details.current_head, git(self.root, "rev-parse", "HEAD"))
+        self.assertIsNone(details.task_commit)
 
     def test_commit_failure_is_typed_and_does_not_retry(self):
         baseline = self.service.capture_baseline("TASK-1")
@@ -221,9 +265,87 @@ class GitDeliveryServiceTests(RepositoryCase):
             return original(arguments, cwd)
 
         self.service._runner = failing_commit
-        with self.assertRaises(GitCommitError):
+        with self.assertRaises(GitCommitError) as caught:
             self.service.commit(changes, task())
         self.assertEqual(commit_calls, 1)
+        self.assertIs(
+            caught.exception.details.failure_code,
+            GitDeliveryFailureCode.COMMIT_CREATION_FAILED,
+        )
+        self.assertFalse(caught.exception.details.retry_safe)
+
+    def test_commit_success_without_new_head_is_commit_missing(self):
+        baseline = self.service.capture_baseline("TASK-1")
+        (self.root / "owned.py").write_text("owned\n")
+        changes = self.service.prepare_change_set(
+            baseline, report("owned.py"), ("owned.py",)
+        )
+        original = self.service._runner
+
+        def false_success(arguments, cwd):
+            if tuple(arguments[:2]) == ("git", "commit"):
+                return type(
+                    "Result", (), {"returncode": 0, "stdout": "", "stderr": ""}
+                )()
+            return original(arguments, cwd)
+
+        self.service._runner = false_success
+        with self.assertRaises(GitCommitError) as caught:
+            self.service.commit(changes, task())
+        self.assertIs(
+            caught.exception.details.failure_code,
+            GitDeliveryFailureCode.COMMIT_MISSING,
+        )
+
+    def test_previous_task_commit_is_current_task_baseline(self):
+        first = self.service.capture_baseline("TASK-1")
+        (self.root / "first.py").write_text("first\n")
+        first_result = self.service.commit(
+            self.service.prepare_change_set(
+                first, report("first.py"), ("first.py",)
+            ),
+            task("Complete first task"),
+        )
+        second = self.service.capture_baseline("TASK-2")
+        self.assertEqual(second.baseline_head, first_result.commit_sha)
+        (self.root / "second.py").write_text("second\n")
+        second_report = replace(
+            report("second.py"), id="report-2", task_id="TASK-2"
+        )
+        second_task = replace(task("Complete second task"), id="TASK-2")
+        second_result = self.service.commit(
+            self.service.prepare_change_set(
+                second, second_report, ("second.py",)
+            ),
+            second_task,
+        )
+        self.assertEqual(
+            git(self.root, "rev-parse", f"{second_result.commit_sha}^"),
+            first_result.commit_sha,
+        )
+
+    def test_rc_rename_source_and_destination_form_one_owned_commit(self):
+        (self.root / "app.py").write_text("def main(): pass\n")
+        git(self.root, "add", "--", "app.py")
+        git(self.root, "commit", "-q", "-m", "feat: add app")
+        baseline = self.service.capture_baseline("TASK-1")
+        destination = self.root / "code_mule_service" / "service.py"
+        destination.parent.mkdir()
+        (self.root / "app.py").rename(destination)
+        changes = self.service.prepare_change_set(
+            baseline,
+            report("app.py", "code_mule_service/service.py"),
+            ("app.py", "code_mule_service/service.py"),
+        )
+        result = self.service.commit(changes, task("Move application service"))
+        self.assertEqual(
+            result.staged_paths, ("app.py", "code_mule_service/service.py")
+        )
+        self.assertEqual(git(self.root, "status", "--short"), "")
+        self.assertIn(
+            "app.py => code_mule_service/service.py",
+            git(self.root, "show", "--stat", "--oneline", "HEAD"),
+        )
 
 
 if __name__ == "__main__":
