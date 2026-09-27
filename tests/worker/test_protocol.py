@@ -441,7 +441,7 @@ class CodexAppServerClientTests(unittest.TestCase):
             client.wait_for_turn(thread_id, turn_id)
         self.assertTrue(holder["process"].terminated)
 
-    def test_unrelated_activity_does_not_refresh_but_retryable_current_error_does(self):
+    def test_unrelated_activity_and_retryable_error_do_not_refresh_inactivity(self):
         client, holder = make_client(timeout=0.2)
         client.initialize()
         thread_id = client.start_thread()
@@ -467,21 +467,32 @@ class CodexAppServerClientTests(unittest.TestCase):
             inactivity_timeout_seconds=120,
             max_turn_seconds=900,
         )
-        holder["process"].stdout.emit(
-            {
-                "method": "error",
-                "params": {
-                    "threadId": thread_id,
-                    "turnId": turn_id,
-                    "willRetry": True,
-                    "error": {"message": "temporary"},
-                },
-            }
-        )
-        holder["process"].stdout.emit(self._completed(thread_id, turn_id))
-        client._monotonic = ScriptedMonotonic(0, 100, 100, 121)
-        self.assertTrue(client.wait_for_turn(thread_id, turn_id).completed)
-        client.close()
+        retryable_error = {
+            "method": "error",
+            "params": {
+                "threadId": thread_id,
+                "turnId": turn_id,
+                "willRetry": True,
+                "error": {"message": "temporary"},
+            },
+        }
+        deadlines = []
+
+        def next_message(deadline):
+            deadlines.append(deadline)
+            if len(deadlines) == 1:
+                return retryable_error
+            raise CodexTurnTimeout("fake deadline reached")
+
+        client._next_message = next_message
+        client._monotonic = ScriptedMonotonic(0)
+        with self.assertRaises(CodexTurnInactivityTimeout):
+            client.wait_for_turn(thread_id, turn_id)
+        self.assertEqual(deadlines, [120, 120])
+        diagnostics = client.transport_diagnostics()
+        self.assertEqual(diagnostics.activity_count, 0)
+        self.assertEqual(diagnostics.events[-1].payload_category, "retryable_turn_error")
+        self.assertTrue(holder["process"].terminated)
 
     def test_wrong_turn_activity_does_not_refresh_inactivity_deadline(self):
         client, holder = make_client(timeout=0.2)

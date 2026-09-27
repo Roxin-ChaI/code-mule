@@ -612,7 +612,15 @@ class CodexAppServerClient:
                 method,
                 TransportDirection.FROM_WORKER,
                 correlation_id=self._event_correlation(params, thread_id, turn_id),
-                payload_category=_payload_category(params),
+                payload_category=(
+                    "retryable_turn_error"
+                    if method == "error"
+                    and isinstance(params, dict)
+                    and params.get("threadId") == thread_id
+                    and params.get("turnId") == turn_id
+                    and params.get("willRetry") is True
+                    else _payload_category(params)
+                ),
             )
             self._state = TransportState.TURN_ACTIVE
             if params is None:
@@ -694,7 +702,9 @@ class CodexAppServerClient:
                             params.get("error"), None, params.get("willRetry"),
                             activity_count, last_activity, started,
                         )
-                    issues.append("Codex reported a retryable turn error")
+                    retry_notice = "Codex reported a retryable turn error"
+                    if retry_notice not in issues:
+                        issues.append(retry_notice)
                 continue
 
             if method == TURN_COMPLETED_METHOD:
@@ -1246,11 +1256,10 @@ class CodexAppServerClient:
             )
         if method == "error":
             self._require_event_identity(params, method)
-            return (
-                params["threadId"] == thread_id
-                and params["turnId"] == turn_id
-                and params.get("willRetry") is True
-            )
+            # A provider retry is a protocol notification, not evidence that
+            # the Worker made progress. Repeated retry notices must not keep
+            # an otherwise idle turn alive until the hard deadline.
+            return False
         return False
 
     def _read_stdout(self, stream: IO[str]) -> None:

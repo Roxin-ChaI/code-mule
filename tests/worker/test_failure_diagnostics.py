@@ -56,7 +56,7 @@ class TurnFailureDiagnosticsTests(unittest.TestCase):
                 self.assertEqual(details.error_code, "internal_error")
                 self.assertNotIn(SECRET, str(caught.exception) + repr(details))
 
-    def test_retryable_error_continues_and_counts_as_valid_activity(self):
+    def test_retryable_error_continues_without_counting_as_activity(self):
         client, _ = self.client()
         client._pending_messages.extend([
             notification("turn/started", turn={"id": "turn-1"}),
@@ -66,7 +66,7 @@ class TurnFailureDiagnosticsTests(unittest.TestCase):
         with self.assertRaises(CodexTurnFailed) as caught:
             client.wait_for_turn("thread-1", "turn-1")
         self.assertIs(caught.exception.details.kind, CodexTurnFailureKind.TURN_FAILED)
-        self.assertEqual(caught.exception.details.activity_count, 2)
+        self.assertEqual(caught.exception.details.activity_count, 1)
 
     def test_retryable_error_can_finish_successfully_without_raw_issue(self):
         client, _ = self.client()
