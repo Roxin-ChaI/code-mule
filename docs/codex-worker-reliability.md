@@ -288,6 +288,15 @@ envelope is provably an extraction failure on the next run.
 the harness. Interrupting the run (Ctrl+C) preserves every workspace and every
 artifact; only a successful iteration's workspace is removed, and
 `--purge-failures` is the explicit opt-in that also removes failing ones.
+
+Current-turn `error` notifications with `willRetry=true` are recorded as
+bounded `retryable_turn_error` transport events, but are not productive Worker
+activity and do not refresh the inactivity deadline. MCP startup-status
+notifications are separate protocol events and likewise do not refresh it.
+The hard deadline remains unchanged, and Code Mule does not retry the Worker
+turn on timeout. A status notification alone cannot establish that MCP caused
+a later turn error; without a structured error code, its upstream cause is
+unknown.
 Artifacts are never deleted.
 
 ## Acceptance criteria
