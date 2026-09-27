@@ -3,6 +3,7 @@
 import importlib.util
 import io
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -39,6 +40,10 @@ class FakeSession:
         self.retryable_error_count = 7
         self.mcp_startup_error_count = 2
         self.last_retryable_error_code = "internal_error"
+        self.first_retryable_error_at = datetime(2026, 9, 27, 10, 17, tzinfo=UTC)
+        self.last_retryable_error_at = datetime(2026, 9, 27, 10, 18, tzinfo=UTC)
+        self.first_mcp_startup_error_at = datetime(2026, 9, 27, 10, 16, tzinfo=UTC)
+        self.last_mcp_startup_error_at = datetime(2026, 9, 27, 10, 19, tzinfo=UTC)
         self.__class__.instances.append(self)
 
     def start(self):
@@ -103,6 +108,14 @@ class ManualRc2ProbeTests(unittest.TestCase):
             self.assertTrue(payload["git"]["head_unchanged"])
             self.assertEqual(payload["diagnostics"]["retryable_error_count"], 7)
             self.assertEqual(payload["diagnostics"]["mcp_startup_error_count"], 2)
+            self.assertEqual(
+                payload["diagnostics"]["first_retryable_error_at"],
+                "2026-09-27T10:17:00+00:00",
+            )
+            self.assertEqual(
+                payload["diagnostics"]["last_mcp_startup_error_at"],
+                "2026-09-27T10:19:00+00:00",
+            )
             self.assertEqual(payload["diagnostics"]["upstream_error_count"], 7)
             self.assertEqual(payload["diagnostics"]["local_timeout_count"], 0)
             self.assertNotIn(_SECRET, artifact.read_text(encoding="utf-8"))

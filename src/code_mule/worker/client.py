@@ -143,6 +143,7 @@ _HANDLED_TURN_METHODS = frozenset(
         "turn/completed",
         "item/started",
         "item/completed",
+        "item/agentMessage/delta",
         "error",
     }
 )
@@ -252,6 +253,10 @@ class CodexAppServerClient:
         self._retryable_error_count = 0
         self._mcp_startup_error_count = 0
         self._last_retryable_error_code: str | None = None
+        self._first_retryable_error_at: datetime | None = None
+        self._last_retryable_error_at: datetime | None = None
+        self._first_mcp_startup_error_at: datetime | None = None
+        self._last_mcp_startup_error_at: datetime | None = None
         self._last_protocol_event_type: str | None = None
         self._last_protocol_event_at: datetime | None = None
 
@@ -276,6 +281,22 @@ class CodexAppServerClient:
     @property
     def last_retryable_error_code(self) -> str | None:
         return self._last_retryable_error_code
+
+    @property
+    def first_retryable_error_at(self) -> datetime | None:
+        return self._first_retryable_error_at
+
+    @property
+    def last_retryable_error_at(self) -> datetime | None:
+        return self._last_retryable_error_at
+
+    @property
+    def first_mcp_startup_error_at(self) -> datetime | None:
+        return self._first_mcp_startup_error_at
+
+    @property
+    def last_mcp_startup_error_at(self) -> datetime | None:
+        return self._last_mcp_startup_error_at
 
     @property
     def transport_state(self) -> TransportState:
@@ -644,9 +665,13 @@ class CodexAppServerClient:
                 and isinstance(params, dict)
                 and "error" in params
             ):
+                observed_at = self._now()
                 self._mcp_startup_error_count = min(
                     self._mcp_startup_error_count + 1, 1_000_000_000
                 )
+                if self._first_mcp_startup_error_at is None:
+                    self._first_mcp_startup_error_at = observed_at
+                self._last_mcp_startup_error_at = observed_at
             self._state = TransportState.TURN_ACTIVE
             if params is None:
                 # An unrelated or malformed notification must not destroy the
@@ -733,6 +758,10 @@ class CodexAppServerClient:
                         self._retryable_error_count + 1, 1_000_000_000
                     )
                     self._last_retryable_error_code = error_code
+                    observed_at = self._now()
+                    if self._first_retryable_error_at is None:
+                        self._first_retryable_error_at = observed_at
+                    self._last_retryable_error_at = observed_at
                     retry_notice = "Codex reported a retryable turn error"
                     if retry_notice not in issues:
                         issues.append(retry_notice)
@@ -1283,6 +1312,18 @@ class CodexAppServerClient:
                 raise CodexProtocolError(f"{method} is missing item")
             return (
                 params["threadId"] == thread_id
+                and params["turnId"] == turn_id
+            )
+        if method == "item/agentMessage/delta":
+            self._require_event_identity(params, method)
+            delta = params.get("delta")
+            if not isinstance(delta, str):
+                raise CodexProtocolError("agentMessage delta must be text")
+            # Only non-empty output from this turn is progress. Never retain
+            # the streamed text; reasoning and retry notices stay excluded.
+            return (
+                bool(delta)
+                and params["threadId"] == thread_id
                 and params["turnId"] == turn_id
             )
         if method == "error":

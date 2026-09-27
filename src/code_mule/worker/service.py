@@ -104,6 +104,22 @@ class CodexWorkerSession:
     def last_retryable_error_code(self) -> str | None:
         return getattr(self._client, "last_retryable_error_code", None)
 
+    @property
+    def first_retryable_error_at(self) -> datetime | None:
+        return getattr(self._client, "first_retryable_error_at", None)
+
+    @property
+    def last_retryable_error_at(self) -> datetime | None:
+        return getattr(self._client, "last_retryable_error_at", None)
+
+    @property
+    def first_mcp_startup_error_at(self) -> datetime | None:
+        return getattr(self._client, "first_mcp_startup_error_at", None)
+
+    @property
+    def last_mcp_startup_error_at(self) -> datetime | None:
+        return getattr(self._client, "last_mcp_startup_error_at", None)
+
     def start(self) -> None:
         if self._thread_id is not None:
             return

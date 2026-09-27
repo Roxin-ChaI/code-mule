@@ -145,6 +145,10 @@ def _safe_error_type(error: BaseException | None) -> str | None:
     return name if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", name) else "UnknownError"
 
 
+def _safe_timestamp(value: object) -> str | None:
+    return value.isoformat() if isinstance(value, datetime) and value.tzinfo else None
+
+
 def _diagnostics(session, error: BaseException | None, elapsed: float) -> dict[str, object]:
     transport = session.transport_diagnostics()
     retry_count = _bounded_count(getattr(session, "retryable_error_count", 0))
@@ -170,10 +174,22 @@ def _diagnostics(session, error: BaseException | None, elapsed: float) -> dict[s
         "turn_failure_kind": None if details is None else details.kind.value,
         "error_code": None if details is None else _safe_code(details.error_code),
         "retryable_error_count": retry_count,
+        "first_retryable_error_at": _safe_timestamp(
+            getattr(session, "first_retryable_error_at", None)
+        ),
+        "last_retryable_error_at": _safe_timestamp(
+            getattr(session, "last_retryable_error_at", None)
+        ),
         "last_retryable_error_code": _safe_code(
             getattr(session, "last_retryable_error_code", None)
         ),
         "mcp_startup_error_count": mcp_count,
+        "first_mcp_startup_error_at": _safe_timestamp(
+            getattr(session, "first_mcp_startup_error_at", None)
+        ),
+        "last_mcp_startup_error_at": _safe_timestamp(
+            getattr(session, "last_mcp_startup_error_at", None)
+        ),
         "upstream_error_count": retry_count + int(isinstance(error, CodexTurnFailed)),
         "local_timeout_count": int(isinstance(error, CodexTurnTimeout)),
         "timeout_kind": timeout_kind,

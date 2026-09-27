@@ -63,6 +63,8 @@ class RetryNotificationTimeoutTests(unittest.TestCase):
         self.assertEqual(diagnostics.activity_count, 1)
         self.assertEqual(client.retryable_error_count, 100)
         self.assertEqual(client.mcp_startup_error_count, 1)
+        self.assertIsNotNone(client.first_mcp_startup_error_at)
+        self.assertIsNotNone(client.last_retryable_error_at)
         self.assertIsNone(client.last_retryable_error_code)
         self.assertEqual(len(diagnostics.events), 20)
         self.assertTrue(all(
