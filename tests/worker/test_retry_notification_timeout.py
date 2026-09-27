@@ -61,6 +61,9 @@ class RetryNotificationTimeoutTests(unittest.TestCase):
         self.assertEqual(deadlines[:2], [120, 120])
         self.assertTrue(all(deadline == 130 for deadline in deadlines[2:]))
         self.assertEqual(diagnostics.activity_count, 1)
+        self.assertEqual(client.retryable_error_count, 100)
+        self.assertEqual(client.mcp_startup_error_count, 1)
+        self.assertIsNone(client.last_retryable_error_code)
         self.assertEqual(len(diagnostics.events), 20)
         self.assertTrue(all(
             event.event_type == "error"
