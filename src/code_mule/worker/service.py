@@ -92,6 +92,18 @@ class CodexWorkerSession:
             self._diagnostics = snapshot()
         return self._diagnostics
 
+    @property
+    def retryable_error_count(self) -> int:
+        return getattr(self._client, "retryable_error_count", 0)
+
+    @property
+    def mcp_startup_error_count(self) -> int:
+        return getattr(self._client, "mcp_startup_error_count", 0)
+
+    @property
+    def last_retryable_error_code(self) -> str | None:
+        return getattr(self._client, "last_retryable_error_code", None)
+
     def start(self) -> None:
         if self._thread_id is not None:
             return

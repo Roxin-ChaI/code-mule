@@ -249,6 +249,9 @@ class CodexAppServerClient:
         self._terminal: WorkerTurnTerminal | None = None
         self._activity_count = 0
         self._last_activity_at: datetime | None = None
+        self._retryable_error_count = 0
+        self._mcp_startup_error_count = 0
+        self._last_retryable_error_code: str | None = None
         self._last_protocol_event_type: str | None = None
         self._last_protocol_event_at: datetime | None = None
 
@@ -259,6 +262,20 @@ class CodexAppServerClient:
     @property
     def progress_errors(self) -> tuple[BaseException, ...]:
         return self._progress.errors
+
+    @property
+    def retryable_error_count(self) -> int:
+        """Exact bounded count for this process; no provider message retained."""
+
+        return self._retryable_error_count
+
+    @property
+    def mcp_startup_error_count(self) -> int:
+        return self._mcp_startup_error_count
+
+    @property
+    def last_retryable_error_code(self) -> str | None:
+        return self._last_retryable_error_code
 
     @property
     def transport_state(self) -> TransportState:
@@ -622,6 +639,14 @@ class CodexAppServerClient:
                     else _payload_category(params)
                 ),
             )
+            if (
+                method == "mcpServer/startupStatus/updated"
+                and isinstance(params, dict)
+                and "error" in params
+            ):
+                self._mcp_startup_error_count = min(
+                    self._mcp_startup_error_count + 1, 1_000_000_000
+                )
             self._state = TransportState.TURN_ACTIVE
             if params is None:
                 # An unrelated or malformed notification must not destroy the
@@ -690,7 +715,9 @@ class CodexAppServerClient:
                 if matches_thread and matches_turn:
                     self._require_event_identity(params, method)
                     event_count += 1
-                    self._safe_failure_code(params.get("error"), allow_none=False)
+                    error_code = self._safe_failure_code(
+                        params.get("error"), allow_none=False
+                    )
                     if "willRetry" in params and type(params["willRetry"]) is not bool:
                         raise self._fail(
                             TransportFailureKind.PROTOCOL_VIOLATION,
@@ -702,6 +729,10 @@ class CodexAppServerClient:
                             params.get("error"), None, params.get("willRetry"),
                             activity_count, last_activity, started,
                         )
+                    self._retryable_error_count = min(
+                        self._retryable_error_count + 1, 1_000_000_000
+                    )
+                    self._last_retryable_error_code = error_code
                     retry_notice = "Codex reported a retryable turn error"
                     if retry_notice not in issues:
                         issues.append(retry_notice)
