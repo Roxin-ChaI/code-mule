@@ -96,6 +96,15 @@ class CodexWorkerSession:
     def retryable_error_count(self) -> int:
         return getattr(self._client, "retryable_error_count", 0)
 
+    def upstream_diagnostics(self):
+        from .upstream import UpstreamDiagnostics
+        snapshot = getattr(self._client, "upstream_diagnostics", None)
+        return snapshot() if callable(snapshot) else UpstreamDiagnostics()
+
+    @property
+    def inactivity_elapsed_since_last_valid_activity(self) -> float | None:
+        return getattr(self._client, "inactivity_elapsed_since_last_valid_activity", None)
+
     @property
     def mcp_startup_error_count(self) -> int:
         return getattr(self._client, "mcp_startup_error_count", 0)

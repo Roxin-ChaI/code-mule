@@ -1128,6 +1128,7 @@ def _blocking_check_rows(
 
 def _render_worker_failure(state: ProjectState, action: HumanAction) -> tuple[str, ...]:
     from code_mule.worker.contracts import turn_failure_details_from_metadata
+    from code_mule.worker.upstream import category_for_code, upstream_from_json
 
     # Match the action's exact failure boundary, never a different Task/attempt.
     events = tuple(
@@ -1140,8 +1141,18 @@ def _render_worker_failure(state: ProjectState, action: HumanAction) -> tuple[st
         return ()
     event = events[0]
     details = turn_failure_details_from_metadata(event.metadata)
+    upstream = upstream_from_json(event.metadata.get("upstream_diagnostics"))
+    extra = _render_upstream_diagnostics(upstream)
     if details is None:
-        return ()
+        if upstream is None:
+            return ()
+        boundary = (
+            "local_timeout" if event.metadata.get("timeout_kind") in {"inactivity", "hard", "operation"}
+            else "transport_failure" if event.metadata.get("failure_class") in {
+                "transport_failure", "codex_process_failure"
+            } else "worker_failure"
+        )
+        return ("", "WORKER FAILURE", f"Failure boundary {boundary}") + extra
     age = details.last_activity_age_seconds
     return (
         "", "WORKER FAILURE",
@@ -1149,6 +1160,9 @@ def _render_worker_failure(state: ProjectState, action: HumanAction) -> tuple[st
         f"Failure kind   {details.kind.value}",
         f"Turn status    {details.turn_status or '-'}",
         f"Error code     {details.error_code or '-'}",
+        f"Error category {category_for_code(details.error_code)}",
+        f"HTTP status    {details.http_status_code or '-'}",
+        "Failure boundary final_upstream_turn_failure",
         f"Will retry     {'-' if details.will_retry is None else 'false'}",
         f"Activity count {details.activity_count}",
         f"Last activity  {'-' if age is None else f'{age:.1f}s before failure'}",
@@ -1156,7 +1170,32 @@ def _render_worker_failure(state: ProjectState, action: HumanAction) -> tuple[st
         f"Thread ID      {details.thread_id}",
         f"Turn ID        {details.turn_id}",
         f"Failure time   {event.timestamp.isoformat()}",
-    )
+    ) + extra
+
+
+def _render_upstream_diagnostics(upstream) -> tuple[str, ...]:
+    if upstream is None:
+        return ()
+    lines = ()
+    for label, summary in (("Retryable upstream error", upstream.retryable),
+                           ("Final upstream turn failure", upstream.final)):
+        if summary is None:
+            continue
+        first, last = summary.first, summary.last
+        lines += (
+            "", label,
+            f"Count          {summary.count}",
+            f"First error    {first.at.isoformat()}",
+            f"Last error     {last.at.isoformat()}",
+            f"Retryable      {str(last.retryable).lower() if last.retryable is not None else '-'}",
+            f"Safe code      {last.info.code or '-'}",
+            f"Safe category  {last.info.category}",
+            f"Code source    {last.info.source}",
+            f"HTTP status    {last.info.http_status_code or '-'}",
+            f"Thread ID      {last.thread_id}",
+            f"Turn ID        {last.turn_id}",
+        )
+    return lines
 
 
 def render_project_cancellation_requested(

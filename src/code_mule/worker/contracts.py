@@ -14,6 +14,7 @@ from code_mule.transport import (
     WorkerFailureClass,
     failure_class_for,
 )
+from .upstream import SAFE_ERROR_CODES, UpstreamDiagnostics, category_for_code, upstream_from_json
 
 
 def _require_non_empty(value: str, field_name: str) -> None:
@@ -29,6 +30,7 @@ class CodexWorkerError(RuntimeError):
     """
 
     transport_failure_kind: TransportFailureKind | None = None
+    upstream: UpstreamDiagnostics | None = None
 
     @property
     def failure_class(self) -> WorkerFailureClass | None:
@@ -92,10 +94,7 @@ class CodexTurnFailureKind(StrEnum):
 
 
 # Only exact structured codes are retained; unknown codes and prose are omitted.
-SAFE_TURN_ERROR_CODES = frozenset({
-    "rate_limit_exceeded", "context_window_exceeded", "internal_error",
-    "server_error", "model_not_found", "insufficient_quota",
-})
+SAFE_TURN_ERROR_CODES = SAFE_ERROR_CODES
 
 
 @dataclass(frozen=True)
@@ -109,6 +108,8 @@ class CodexTurnFailureDetails:
     activity_count: int
     last_activity_age_seconds: float | None
     turn_elapsed_seconds: float
+    http_status_code: int | None = None
+    upstream: UpstreamDiagnostics | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, CodexTurnFailureKind):
@@ -129,6 +130,18 @@ class CodexTurnFailureDetails:
             raise ValueError("terminal failure cannot request retry")
         if self.error_code is not None and self.error_code not in SAFE_TURN_ERROR_CODES:
             raise ValueError("error code is not allowlisted")
+        if self.http_status_code is not None and (
+            type(self.http_status_code) is not int or not 100 <= self.http_status_code <= 599
+        ):
+            raise ValueError("HTTP status must be bounded")
+        if self.upstream is not None and not isinstance(self.upstream, UpstreamDiagnostics):
+            raise ValueError("upstream diagnostics must be typed")
+        if self.upstream is not None:
+            for summary in (self.upstream.retryable, self.upstream.final):
+                if summary is not None and (summary.last.thread_id, summary.last.turn_id) != (
+                    self.thread_id, self.turn_id
+                ):
+                    raise ValueError("upstream diagnostics belong to a different turn")
         if type(self.activity_count) is not int or not 0 <= self.activity_count <= 1_000_000_000:
             raise ValueError("activity count must be bounded")
         if self.turn_elapsed_seconds is None:
@@ -243,6 +256,7 @@ def worker_failure_metadata(error: CodexWorkerError) -> dict[str, str]:
     """Return bounded diagnostic metadata without model or environment content."""
 
     metadata = {"error_type": type(error).__name__}
+    upstream = getattr(error, "upstream", None)
     kind = error.transport_failure_kind
     if kind is not None:
         metadata["transport_failure_kind"] = kind.value
@@ -253,12 +267,14 @@ def worker_failure_metadata(error: CodexWorkerError) -> dict[str, str]:
         metadata["request_id"] = str(error.request_id)
     if isinstance(error, CodexTurnFailed) and error.details is not None:
         details = error.details
+        upstream = details.upstream or upstream
         metadata.update({
             "failure_kind": details.kind.value,
             "thread_id": details.thread_id,
             "turn_id": details.turn_id,
             "activity_count": str(details.activity_count),
             "turn_elapsed_seconds": format(details.turn_elapsed_seconds, ".6f"),
+            "error_category": category_for_code(details.error_code),
         })
         if details.turn_status is not None:
             metadata["turn_status"] = details.turn_status
@@ -266,6 +282,8 @@ def worker_failure_metadata(error: CodexWorkerError) -> dict[str, str]:
             metadata["will_retry"] = str(details.will_retry).lower()
         if details.error_code is not None:
             metadata["error_code"] = details.error_code
+        if details.http_status_code is not None:
+            metadata["http_status_code"] = str(details.http_status_code)
         if details.last_activity_age_seconds is not None:
             metadata["last_activity_age_seconds"] = format(details.last_activity_age_seconds, ".6f")
     if isinstance(error, CodexTurnTimeout):
@@ -310,6 +328,8 @@ def worker_failure_metadata(error: CodexWorkerError) -> dict[str, str]:
             value = getattr(error, attribute, None)
             if type(value) is bool:
                 metadata[name] = str(value).lower()
+    if isinstance(upstream, UpstreamDiagnostics):
+        metadata["upstream_diagnostics"] = upstream.to_json()
     return metadata
 
 
@@ -323,6 +343,9 @@ def turn_failure_details_from_metadata(metadata: dict[str, str]) -> CodexTurnFai
     if metadata.get("error_type") != "CodexTurnFailed":
         return None
     try:
+        upstream = upstream_from_json(metadata.get("upstream_diagnostics"))
+        if "upstream_diagnostics" in metadata and upstream is None:
+            return None
         retry = metadata.get("will_retry")
         if retry not in (None, "false"):
             return None
@@ -338,6 +361,8 @@ def turn_failure_details_from_metadata(metadata: dict[str, str]) -> CodexTurnFai
                 if "last_activity_age_seconds" in metadata else None
             ),
             turn_elapsed_seconds=float(metadata["turn_elapsed_seconds"]),
+            http_status_code=(int(metadata["http_status_code"]) if "http_status_code" in metadata else None),
+            upstream=upstream,
         )
     except (KeyError, TypeError, ValueError, OverflowError):
         return None

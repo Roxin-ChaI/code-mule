@@ -36,7 +36,6 @@ from .contracts import (
     CodexTurnFailed,
     CodexTurnFailureDetails,
     CodexTurnFailureKind,
-    SAFE_TURN_ERROR_CODES,
     CodexTurnHardTimeout,
     CodexTurnInactivityTimeout,
     CodexTurnTimeout,
@@ -65,6 +64,9 @@ from .protocol import (
     parse_worker_input_request,
     request_message,
     server_response_message,
+)
+from .upstream import (
+    UpstreamDiagnostics, UpstreamErrorObservation, UpstreamErrorSummary, safe_error_info,
 )
 from code_mule.transport import (
     MAX_EVENT_RING,
@@ -251,6 +253,8 @@ class CodexAppServerClient:
         self._activity_count = 0
         self._last_activity_at: datetime | None = None
         self._retryable_error_count = 0
+        self._upstream = UpstreamDiagnostics()
+        self._inactivity_elapsed_at_failure: float | None = None
         self._mcp_startup_error_count = 0
         self._last_retryable_error_code: str | None = None
         self._first_retryable_error_at: datetime | None = None
@@ -273,6 +277,13 @@ class CodexAppServerClient:
         """Exact bounded count for this process; no provider message retained."""
 
         return self._retryable_error_count
+
+    def upstream_diagnostics(self) -> UpstreamDiagnostics:
+        return self._upstream
+
+    @property
+    def inactivity_elapsed_since_last_valid_activity(self) -> float | None:
+        return self._inactivity_elapsed_at_failure
 
     @property
     def mcp_startup_error_count(self) -> int:
@@ -494,6 +505,7 @@ class CodexAppServerClient:
         else:
             error = CodexAppServerDisconnected(message)
         error.transport_failure_kind = kind
+        error.upstream = self._upstream
         return error
 
     def initialize(self) -> None:
@@ -576,6 +588,8 @@ class CodexAppServerClient:
             )
         self._thread_id = thread_id
         self._turn_id = turn_id
+        self._upstream = UpstreamDiagnostics()
+        self._inactivity_elapsed_at_failure = None
         self._state = TransportState.TURN_STARTED
         return turn_id
 
@@ -604,6 +618,10 @@ class CodexAppServerClient:
                     hard_deadline, inactivity_deadline
                 )
             except CodexTurnTimeout as error:
+                error.upstream = self._upstream
+                self._inactivity_elapsed_at_failure = (
+                    None if last_activity is None else max(0.0, self._monotonic() - last_activity)
+                )
                 self._failure_kind = error.transport_failure_kind
                 self._process_alive_at_failure = (
                     None if self._process is None else self._process.poll() is None
@@ -748,6 +766,9 @@ class CodexAppServerClient:
                             TransportFailureKind.PROTOCOL_VIOLATION,
                             "error notification has invalid willRetry",
                         )
+                    self._observe_upstream_error(
+                        params.get("error"), params.get("willRetry"), thread_id, turn_id
+                    )
                     if params.get("willRetry") is not True:
                         raise self._turn_failure(
                             CodexTurnFailureKind.ERROR_NOTIFICATION, thread_id, turn_id,
@@ -845,8 +866,24 @@ class CodexAppServerClient:
             raise CodexProtocolError("turn error must be an object")
         if "message" in error and not isinstance(error["message"], str):
             raise CodexProtocolError("turn error message has invalid type")
-        code = error.get("code")
-        return code if isinstance(code, str) and code in SAFE_TURN_ERROR_CODES else None
+        return safe_error_info(error).code
+
+    def _observe_upstream_error(self, error, retryable, thread_id, turn_id) -> None:
+        try:
+            observation = UpstreamErrorObservation(
+                self._now(), retryable, safe_error_info(error), thread_id, turn_id
+            )
+            previous = self._upstream.retryable if retryable is True else self._upstream.final
+            summary = (
+                UpstreamErrorSummary(1, observation, observation)
+                if previous is None else previous.append(observation)
+            )
+            self._upstream = (
+                UpstreamDiagnostics(summary, self._upstream.final)
+                if retryable is True else UpstreamDiagnostics(self._upstream.retryable, summary)
+            )
+        except (TypeError, ValueError):
+            raise CodexProtocolError("upstream error diagnostics are malformed") from None
 
     @staticmethod
     def _tolerant_params(message: dict[str, object]) -> dict[str, object] | None:
@@ -889,6 +926,7 @@ class CodexAppServerClient:
         activity_count, last_activity, started,
     ) -> CodexTurnFailed:
         code = self._safe_failure_code(error)
+        info = safe_error_info(error)
         failed_at = self._monotonic()
         try:
             details = CodexTurnFailureDetails(
@@ -897,6 +935,8 @@ class CodexAppServerClient:
                 activity_count=activity_count,
                 last_activity_age_seconds=(None if last_activity is None else failed_at - last_activity),
                 turn_elapsed_seconds=failed_at - started,
+                http_status_code=info.http_status_code,
+                upstream=self._upstream,
             )
         except (TypeError, ValueError):
             raise CodexProtocolError("turn failure diagnostics are malformed") from None
@@ -908,7 +948,10 @@ class CodexAppServerClient:
         self._process_alive_at_failure = (
             None if self._process is None else self._process.poll() is None
         )
-        return CodexTurnFailed(details=details)
+        self._inactivity_elapsed_at_failure = details.last_activity_age_seconds
+        failure = CodexTurnFailed(details=details)
+        failure.upstream = self._upstream
+        return failure
 
     def _project_activity(
         self, method: str, params: dict[str, object]

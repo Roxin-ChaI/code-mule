@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from datetime import UTC, datetime
 import json
+import math
 from pathlib import Path
 import re
 import shutil
@@ -30,6 +31,7 @@ from code_mule.worker import (  # noqa: E402
 )
 from code_mule.worker.contracts import SAFE_TURN_ERROR_CODES  # noqa: E402
 from code_mule.worker.service import CodexWorkerSession  # noqa: E402
+from code_mule.worker.upstream import UpstreamDiagnostics, category_for_code  # noqa: E402
 
 
 SERVICE_SOURCE = '''\
@@ -154,6 +156,30 @@ def _diagnostics(session, error: BaseException | None, elapsed: float) -> dict[s
     retry_count = _bounded_count(getattr(session, "retryable_error_count", 0))
     mcp_count = _bounded_count(getattr(session, "mcp_startup_error_count", 0))
     details = error.details if isinstance(error, CodexTurnFailed) else None
+    snapshot = getattr(session, "upstream_diagnostics", None)
+    upstream = snapshot() if callable(snapshot) else getattr(error, "upstream", None)
+    if not isinstance(upstream, UpstreamDiagnostics):
+        upstream = details.upstream if details is not None else None
+    if not isinstance(upstream, UpstreamDiagnostics):
+        upstream = UpstreamDiagnostics()
+    if upstream.retryable is not None:
+        retry_count = upstream.retryable.count
+    final = upstream.final
+    final_code = final.last.info.code if final else (details.error_code if details else None)
+    age = (
+        details.last_activity_age_seconds if details else
+        getattr(session, "inactivity_elapsed_since_last_valid_activity", None)
+    )
+    if type(age) not in (int, float) or not math.isfinite(age) or not 0 <= age <= 1_000_000_000:
+        age = None
+    boundary = (
+        "final_upstream_turn_failure" if isinstance(error, CodexTurnFailed)
+        else "local_timeout" if isinstance(error, CodexTurnTimeout)
+        else "transport_failure" if isinstance(error, CodexWorkerError)
+        and error.failure_class is not None
+        and error.failure_class.value in {"transport_failure", "codex_process_failure"}
+        else "worker_failure" if error is not None else "completed"
+    )
     failure_kind = (
         None if not isinstance(error, CodexWorkerError)
         or error.transport_failure_kind is None
@@ -173,14 +199,28 @@ def _diagnostics(session, error: BaseException | None, elapsed: float) -> dict[s
         "failure_kind": failure_kind,
         "turn_failure_kind": None if details is None else details.kind.value,
         "error_code": None if details is None else _safe_code(details.error_code),
+        "failure_boundary": boundary,
+        "upstream_diagnostics": upstream.to_payload(),
+        "upstream_retry_count": upstream.retryable.count if upstream.retryable else retry_count,
+        "final_upstream_error_count": final.count if final else 0,
+        "final_upstream_category": category_for_code(final_code),
+        "final_upstream_code": final_code,
+        "final_upstream_http_status_code": (
+            final.last.info.http_status_code if final else (details.http_status_code if details else None)
+        ),
+        "inactivity_elapsed_since_last_valid_activity": age,
+        "timeout_triggered": isinstance(error, CodexTurnTimeout),
         "retryable_error_count": retry_count,
         "first_retryable_error_at": _safe_timestamp(
+            upstream.retryable.first.at if upstream.retryable else
             getattr(session, "first_retryable_error_at", None)
         ),
         "last_retryable_error_at": _safe_timestamp(
+            upstream.retryable.last.at if upstream.retryable else
             getattr(session, "last_retryable_error_at", None)
         ),
         "last_retryable_error_code": _safe_code(
+            upstream.retryable.last.info.code if upstream.retryable else
             getattr(session, "last_retryable_error_code", None)
         ),
         "mcp_startup_error_count": mcp_count,
@@ -190,7 +230,7 @@ def _diagnostics(session, error: BaseException | None, elapsed: float) -> dict[s
         "last_mcp_startup_error_at": _safe_timestamp(
             getattr(session, "last_mcp_startup_error_at", None)
         ),
-        "upstream_error_count": retry_count + int(isinstance(error, CodexTurnFailed)),
+        "upstream_error_count": min(retry_count + (final.count if final else 0), 1_000_000_000),
         "local_timeout_count": int(isinstance(error, CodexTurnTimeout)),
         "timeout_kind": timeout_kind,
         "activity_count": 0 if transport is None else transport.activity_count,
@@ -262,6 +302,13 @@ def run_probe(root: Path, *, session_factory=CodexWorkerSession) -> int:
     print(f"Probe: {outcome}")
     print(f"Workspace preserved: {workspace}")
     print(f"Safe diagnostics: {artifact}")
+    diagnostics = payload["diagnostics"]
+    print(f"Failure boundary: {diagnostics['failure_boundary']}")
+    print(f"Upstream retries: {diagnostics['upstream_retry_count']}")
+    print(f"Final upstream: {diagnostics['final_upstream_category']} / {diagnostics['final_upstream_code'] or '-'}")
+    print(f"Inactivity since last valid activity: {diagnostics['inactivity_elapsed_since_last_valid_activity']}")
+    print(f"Local timeout triggered: {diagnostics['timeout_triggered']}")
+    print(f"MCP startup errors (independent): {diagnostics['mcp_startup_error_count']}")
     return 0 if passed else 130 if isinstance(error, KeyboardInterrupt) else 1
 
 
