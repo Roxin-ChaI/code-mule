@@ -12,7 +12,10 @@ from contextlib import redirect_stderr, redirect_stdout
 
 from code_mule.domain.models import ExecutionReport
 from code_mule.transport import ChannelState, TransportDiagnostics
-from code_mule.worker import CodexTurnInactivityTimeout
+from code_mule.worker import CodexTurnFailed, CodexTurnFailureDetails, CodexTurnFailureKind, CodexTurnInactivityTimeout
+from code_mule.worker.upstream import (
+    UpstreamDiagnostics, UpstreamErrorObservation, UpstreamErrorSummary, safe_error_info,
+)
 
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "manual_rc2_worker_probe.py"
@@ -64,6 +67,9 @@ class FakeSession:
 
     def close(self):
         self.closed += 1
+
+    def upstream_diagnostics(self):
+        return getattr(self.failure, "upstream", None) or UpstreamDiagnostics()
 
     def transport_diagnostics(self):
         return TransportDiagnostics(
@@ -146,6 +152,44 @@ class ManualRc2ProbeTests(unittest.TestCase):
                 self.probe.main([])
         self.assertEqual(caught.exception.code, 2)
         self.assertEqual(FakeSession.instances, [])
+
+    def test_final_upstream_probe_summary_is_safe_and_not_a_timeout(self):
+        now = datetime(2026, 10, 2, 14, 21, tzinfo=UTC)
+        retry = UpstreamErrorObservation(now, True, safe_error_info({
+            "codexErrorInfo": {"responseStreamDisconnected": {"httpStatusCode": 502}}
+        }), "thread-1", "turn-1")
+        final = UpstreamErrorObservation(now, False, safe_error_info({
+            "codexErrorInfo": {"responseTooManyFailedAttempts": {"httpStatusCode": 503}}
+        }), "thread-1", "turn-1")
+        snapshot = UpstreamDiagnostics(
+            UpstreamErrorSummary(4, retry, retry), UpstreamErrorSummary(1, final, final)
+        )
+        details = CodexTurnFailureDetails(
+            CodexTurnFailureKind.ERROR_NOTIFICATION, "thread-1", "turn-1", None,
+            False, final.info.code, 3, 112.5, 141.9, 503, snapshot,
+        )
+        FakeSession.failure = CodexTurnFailed(_SECRET, details=details)
+        FakeSession.failure.upstream = snapshot
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                result = self.probe.run_probe(root, session_factory=FakeSession)
+            text = (root / "probe-diagnostics.json").read_text()
+            diagnostics = json.loads(text)["diagnostics"]
+            self.assertEqual(result, 1)
+            self.assertEqual(diagnostics["upstream_retry_count"], 4)
+            self.assertEqual(diagnostics["upstream_error_count"], 5)
+            self.assertEqual(diagnostics["final_upstream_category"], "upstream_retry_exhaustion")
+            self.assertEqual(diagnostics["final_upstream_code"], "responseTooManyFailedAttempts")
+            self.assertEqual(diagnostics["inactivity_elapsed_since_last_valid_activity"], 112.5)
+            self.assertFalse(diagnostics["timeout_triggered"])
+            self.assertEqual(diagnostics["failure_boundary"], "final_upstream_turn_failure")
+            self.assertEqual(diagnostics["mcp_startup_error_count"], 2)
+            self.assertIn("Upstream retries: 4", output.getvalue())
+            self.assertNotIn(_SECRET, text + output.getvalue())
+            session = FakeSession.instances[0]
+            self.assertEqual((session.executions, session.closed), (1, 1))
 
 
 if __name__ == "__main__":  # pragma: no cover

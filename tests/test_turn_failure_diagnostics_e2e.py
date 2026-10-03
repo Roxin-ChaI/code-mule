@@ -58,7 +58,18 @@ class TurnFailurePersistenceE2E(unittest.TestCase):
                         (workspace / "partial.py").write_text("# partial work preserved\n")
                         process.stdout.emit(notification("turn/started", turn={"id": "turn-1"}))
                         process.stdout.emit(notification("item/started", item={"type": "commandExecution"}))
-                        process.stdout.emit(failure_message(kind))
+                        if kind is CodexTurnFailureKind.ERROR_NOTIFICATION:
+                            process.stdout.emit(notification("error", willRetry=True, error={
+                                "message": SECRET, "codexErrorInfo": {
+                                    "responseStreamDisconnected": {"httpStatusCode": 502}
+                                },
+                            }))
+                            process.stdout.emit(notification("error", willRetry=False, error={
+                                "message": SECRET, "additionalDetails": SECRET,
+                                "codexErrorInfo": {"responseTooManyFailedAttempts": {"httpStatusCode": 503}},
+                            }))
+                        else:
+                            process.stdout.emit(failure_message(kind))
 
                 client, holder = make_client(handler, timeout=10)
                 sessions = []
@@ -114,12 +125,23 @@ class TurnFailurePersistenceE2E(unittest.TestCase):
                 details = turn_failure_details_from_metadata(event.metadata)
                 self.assertIs(details.kind, kind)
                 self.assertEqual(details.activity_count, 2)
-                self.assertEqual(details.error_code, "internal_error")
+                self.assertEqual(details.error_code,
+                                 "responseTooManyFailedAttempts" if kind is CodexTurnFailureKind.ERROR_NOTIFICATION
+                                 else "internal_error")
                 self.assertNotIn(SECRET, repr(serialize_project_state(state)))
                 before = state_file.read_bytes()
                 verbose = "\n".join(composition.inspect(verbose=True).output)
                 self.assertIn("Failure kind   " + kind.value, verbose)
                 self.assertIn("Activity count 2", verbose)
+                if kind is CodexTurnFailureKind.ERROR_NOTIFICATION:
+                    self.assertEqual(details.upstream.retryable.count, 1)
+                    self.assertEqual(details.upstream.final.count, 1)
+                    self.assertEqual(details.http_status_code, 503)
+                    self.assertIn("Retryable upstream error", verbose)
+                    self.assertIn("Final upstream turn failure", verbose)
+                    self.assertIn("upstream_retry_exhaustion", verbose)
+                    self.assertIn("HTTP status    503", verbose)
+                    self.assertIn("Failure boundary final_upstream_turn_failure", verbose)
                 self.assertNotIn(SECRET, verbose)
                 self.assertNotIn("WORKER FAILURE", "\n".join(composition.inspect().output))
                 self.assertEqual(state_file.read_bytes(), before)
